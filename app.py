@@ -1,15 +1,15 @@
 import os, re, warnings, tempfile, subprocess
 from collections import defaultdict
 from pathlib import Path
-
+ 
 import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
-
+ 
 warnings.filterwarnings("ignore")
-
+ 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
@@ -19,7 +19,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
+ 
 # ─────────────────────────────────────────────────────────────────────────────
 # CSS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ st.markdown("""
 .clearfix{clear:both;}
 </style>
 """, unsafe_allow_html=True)
-
+ 
 # ─────────────────────────────────────────────────────────────────────────────
 # STOP-WORDS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -66,7 +66,7 @@ _SW = {
     "let","some","just","also","even","only","into","over","under","both","such",
     "than","then","but","not","nor","yet","so","either","neither","versus","vs",
 }
-
+ 
 # ─────────────────────────────────────────────────────────────────────────────
 # PATH HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -75,10 +75,10 @@ def _app_dir() -> Path:
         return Path(__file__).resolve().parent
     except NameError:
         return Path(os.getcwd())
-
+ 
 EXCEL_FOLDER = _app_dir() / "excel_files"
-
-
+ 
+ 
 def find_excel_files(folder: str) -> list:
     p = Path(folder)
     if not p.is_dir():
@@ -87,8 +87,8 @@ def find_excel_files(folder: str) -> list:
         f.name for f in p.iterdir()
         if f.suffix.lower() in (".xlsx", ".xls") and not f.name.startswith("~")
     )
-
-
+ 
+ 
 # ─────────────────────────────────────────────────────────────────────────────
 # LOCATION NAME EXTRACTION
 # ─────────────────────────────────────────────────────────────────────────────
@@ -103,8 +103,8 @@ def location_from_name(fname: str) -> str:
     n = re.sub(r"__\d+_*$", "", n)
     n = re.sub(r"[_]+", " ", n).strip()
     return n if n else fname
-
-
+ 
+ 
 # ─────────────────────────────────────────────────────────────────────────────
 # SAVE UPLOADED FILES
 # ─────────────────────────────────────────────────────────────────────────────
@@ -115,8 +115,8 @@ def save_uploads(file_bytes_tuple: tuple) -> str:
         with open(os.path.join(tmp, name), "wb") as fh:
             fh.write(data)
     return tmp
-
-
+ 
+ 
 # ─────────────────────────────────────────────────────────────────────────────
 # XLS -> XLSX via LibreOffice (using soffice.py wrapper if available)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -153,8 +153,8 @@ def ensure_readable(original_path: str) -> str:
     except Exception:
         pass
     return original_path
-
-
+ 
+ 
 # ─────────────────────────────────────────────────────────────────────────────
 # LOAD ONE FILE – all sheets via openpyxl with data_only=True
 # Returns dict of sheet_name -> list of (row_idx, col_idx, value)
@@ -177,12 +177,12 @@ def load_file_raw(original_path: str) -> dict:
     except Exception as e:
         st.sidebar.warning(f"⚠️ {os.path.basename(original_path)}: {e}")
     return sheets
-
-
+ 
+ 
 def load_file(original_path: str) -> dict:
     return load_file_raw(original_path)
-
-
+ 
+ 
 # ─────────────────────────────────────────────────────────────────────────────
 # HEADER DETECTION (for Analytics / Chart tabs)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -196,8 +196,8 @@ def best_header_row(df: pd.DataFrame) -> int:
         if score > best_score:
             best_score, best_row = score, i
     return best_row
-
-
+ 
+ 
 def smart_header(df: pd.DataFrame) -> pd.DataFrame:
     hr = best_header_row(df)
     hdr = df.iloc[hr].fillna("").astype(str).str.strip()
@@ -211,15 +211,15 @@ def smart_header(df: pd.DataFrame) -> pd.DataFrame:
     data = df.iloc[hr + 1:].copy()
     data.columns = cols
     return data.dropna(how="all").reset_index(drop=True)
-
-
+ 
+ 
 def to_numeric(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     for col in out.columns:
         out[col] = pd.to_numeric(out[col], errors="ignore")
     return out
-
-
+ 
+ 
 # ─────────────────────────────────────────────────────────────────────────────
 # MULTI-SECTION HEADER MAP
 # Detects ALL header-like rows and assigns each data cell the header above it.
@@ -240,42 +240,42 @@ def _detect_all_header_rows(df: pd.DataFrame) -> set:
         n_filled = filled_vals.shape[0]
         if n_filled < 2:
             continue
-
+ 
         # Count non-numeric (label) cells
         label_mask = filled_mask & (~row.str.match(r"^-?\d+\.?\d*[eE]?[+-]?\d*$"))
         n_labels = label_mask.sum()
         n_unique = filled_vals.nunique()
-
+ 
         # Ratio checks
         label_ratio = n_labels / max(n_filled, 1)
         unique_ratio = n_unique / max(n_filled, 1)
-
+ 
         # Count repeated text values (data rows have many "SUBSCRIBED", "RACK" etc.)
         value_counts = filled_vals.value_counts()
         n_repeated = (value_counts > 1).sum()  # how many values appear more than once
-
+ 
         # A true header row should have:
         # 1. Very high label ratio (almost all text)
         # 2. Very high unique ratio (column names are different)
         # 3. Low repetition (data rows repeat values like RATED, BUNDLED, RACK)
         is_header = False
-
+ 
         # Strong header: mostly unique labels, very few repeats
         if (label_ratio >= 0.80 and unique_ratio >= 0.75
                 and n_repeated <= max(2, n_filled * 0.15) and n_unique >= 3):
             is_header = True
-
+ 
         # Also detect sub-headers (like "Billing Model", "Space", "Power Capacity")
         # These tend to have few filled cells but all unique text
         if (n_filled <= 10 and n_filled >= 2 and label_ratio >= 0.90
                 and unique_ratio >= 0.80 and n_repeated <= 1):
             is_header = True
-
+ 
         if is_header:
             hr_set.add(i)
     return hr_set
-
-
+ 
+ 
 def _build_cell_col_map(df: pd.DataFrame):
     hr_set = _detect_all_header_rows(df)
     hr_maps = {}
@@ -298,8 +298,8 @@ def _build_cell_col_map(df: pd.DataFrame):
                     break
             cell_map[(r, c)] = name
     return cell_map, hr_set
-
-
+ 
+ 
 # ─────────────────────────────────────────────────────────────────────────────
 # BUILD FULL CORPUS — reads EVERY non-empty cell from EVERY position
 # Uses openpyxl data_only=True to get computed values, not formulas.
@@ -309,14 +309,14 @@ def _build_cell_col_map(df: pd.DataFrame):
 def build_corpus(file_list: tuple, folder: str):
     corpus = []
     row_records = defaultdict(dict)
-
+ 
     for fname in file_list:
         full = os.path.join(folder, fname)
         if not os.path.isfile(full):
             continue
         path = ensure_readable(full)
         loc = location_from_name(fname)
-
+ 
         # Use openpyxl with data_only=True to get computed cell values
         try:
             from openpyxl import load_workbook
@@ -335,7 +335,7 @@ def build_corpus(file_list: tuple, folder: str):
                     continue
                 _index_df(df, fname, loc, sh, corpus, row_records)
             continue
-
+ 
         for sh in wb.sheetnames:
             ws = wb[sh]
             # Read ALL cells into a DataFrame
@@ -353,7 +353,7 @@ def build_corpus(file_list: tuple, folder: str):
             df = df.replace({"None": np.nan, "none": np.nan})
             _index_df(df, fname, loc, sh, corpus, row_records)
         wb.close()
-
+ 
     meta = {
         "total_cells": len(corpus),
         "total_files": len({x["file"] for x in corpus}),
@@ -362,12 +362,12 @@ def build_corpus(file_list: tuple, folder: str):
         "locations": sorted({x["location"] for x in corpus}),
     }
     return corpus, dict(row_records), meta
-
-
+ 
+ 
 def _index_df(df, fname, loc, sh, corpus, row_records):
     """Index every non-empty cell in a DataFrame into the corpus."""
     cell_map, hr_set = _build_cell_col_map(df)
-
+ 
     for r in range(df.shape[0]):
         for c in range(df.shape[1]):
             raw = df.iat[r, c]
@@ -391,8 +391,8 @@ def _index_df(df, fname, loc, sh, corpus, row_records):
             })
             if not is_hdr:
                 row_records[key][ch] = v
-
-
+ 
+ 
 # ─────────────────────────────────────────────────────────────────────────────
 # LOCATION MATCHER
 # ─────────────────────────────────────────────────────────────────────────────
@@ -411,8 +411,8 @@ def find_matching_locations(query: str, all_locs: list) -> list:
                     matches.append(loc)
                 break
     return matches
-
-
+ 
+ 
 # ─────────────────────────────────────────────────────────────────────────────
 # SIDEBAR
 # ─────────────────────────────────────────────────────────────────────────────
@@ -420,20 +420,20 @@ st.sidebar.image("https://img.icons8.com/fluency/96/data-center.png", width=70)
 st.sidebar.title("🏢 Capacity Tracker")
 st.sidebar.markdown("---")
 st.sidebar.subheader("📁 Data Source")
-
+ 
 uploaded_files = st.sidebar.file_uploader(
     "Upload Excel files (overrides folder)",
     type=["xlsx", "xls"], accept_multiple_files=True,
 )
-
+ 
 if uploaded_files:
     file_bytes = tuple((f.name, f.read()) for f in uploaded_files)
     data_dir = save_uploads(file_bytes)
 else:
     data_dir = str(EXCEL_FOLDER)
-
+ 
 excel_files = find_excel_files(data_dir)
-
+ 
 if not excel_files:
     st.error(
         "### ⚠️ No Excel files found\n\n"
@@ -443,35 +443,35 @@ if not excel_files:
         f"Looking in: `{data_dir}`"
     )
     st.stop()
-
+ 
 loc_map = {f: location_from_name(f) for f in excel_files}
 st.sidebar.success(f"✅ {len(excel_files)} file(s) found")
-
+ 
 st.sidebar.subheader("🏙️ Location")
 selected_file = st.sidebar.selectbox(
     "Location", excel_files, format_func=lambda x: loc_map[x]
 )
 all_sheets = load_file(os.path.join(data_dir, selected_file))
-
+ 
 st.sidebar.subheader("📋 Sheet")
 selected_sheet = st.sidebar.selectbox("Sheet", list(all_sheets.keys()))
-
+ 
 raw_df = all_sheets[selected_sheet]
 df_clean = to_numeric(smart_header(raw_df))
 num_cols = df_clean.select_dtypes(include="number").columns.tolist()
 cat_cols = [c for c in df_clean.columns if c not in num_cols]
-
+ 
 st.sidebar.markdown("---")
 st.sidebar.caption(
     f"📊 {len(num_cols)} numeric · {len(df_clean)} rows · {len(excel_files)} file(s)"
 )
-
+ 
 # ─────────────────────────────────────────────────────────────────────────────
 # BUILD CORPUS (once, before all tabs)
 # ─────────────────────────────────────────────────────────────────────────────
 with st.spinner("🔍 Indexing every cell across all files…"):
     corpus, row_records, meta = build_corpus(tuple(excel_files), data_dir)
-
+ 
 if not corpus:
     st.error(
         "⚠️ **No data indexed.**\n\n"
@@ -479,7 +479,7 @@ if not corpus:
         "Upload files via the sidebar or place them in `excel_files/`."
     )
     st.stop()
-
+ 
 # ─────────────────────────────────────────────────────────────────────────────
 # TABS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -489,8 +489,8 @@ tabs = st.tabs([
     "🤖 AI Agent", "💬 AI Smart Query",
 ])
 loc_label = loc_map[selected_file]
-
-
+ 
+ 
 # ═══════════════════════════════════════════════════════
 # TAB 0 – OVERVIEW
 # ═══════════════════════════════════════════════════════
@@ -530,8 +530,8 @@ with tabs[0]:
                    for c in df_clean.columns],
     })
     st.dataframe(ci, use_container_width=True)
-
-
+ 
+ 
 # ═══════════════════════════════════════════════════════
 # TAB 1 – RAW DATA
 # ═══════════════════════════════════════════════════════
@@ -548,8 +548,8 @@ with tabs[1]:
     st.markdown("---")
     st.subheader("🗃️ Raw Excel (no header processing)")
     st.dataframe(raw_df, use_container_width=True, height=280)
-
-
+ 
+ 
 # ═══════════════════════════════════════════════════════
 # TAB 2 – ANALYTICS
 # ═══════════════════════════════════════════════════════
@@ -601,8 +601,8 @@ with tabs[2]:
                          color_continuous_scale="Viridis", title=f"{af.title()} of {ac} by {gc}")
             fig.update_layout(xaxis_tickangle=-35, height=400)
             st.plotly_chart(fig, use_container_width=True)
-
-
+ 
+ 
 # ═══════════════════════════════════════════════════════
 # TAB 3 – CHARTS
 # ═══════════════════════════════════════════════════════
@@ -617,7 +617,7 @@ with tabs[3]:
     else:
         def _s(label, opts, idx=0, key=None):
             return st.selectbox(label, opts, index=min(idx, max(0, len(opts) - 1)), key=key)
-
+ 
         if ctype == "Bar Chart":
             xc = _s("X", cat_cols or df_clean.columns.tolist(), key="bx")
             yc = _s("Y", num_cols, key="by")
@@ -628,7 +628,7 @@ with tabs[3]:
                          orientation="v" if ori == "Vertical" else "h", title=f"{yc} by {xc}")
             fig.update_layout(height=480)
             st.plotly_chart(fig, use_container_width=True)
-
+ 
         elif ctype == "Grouped Bar":
             xc = _s("X", cat_cols or df_clean.columns.tolist(), key="gbx")
             ycs = st.multiselect("Y", num_cols, default=num_cols[:3])
@@ -637,7 +637,7 @@ with tabs[3]:
                              x=xc, y=ycs, barmode="group")
                 fig.update_layout(height=460)
                 st.plotly_chart(fig, use_container_width=True)
-
+ 
         elif ctype == "Line Chart":
             xc = _s("X", df_clean.columns.tolist(), key="lx")
             ycs = st.multiselect("Y", num_cols, default=num_cols[:2])
@@ -646,7 +646,7 @@ with tabs[3]:
                               x=xc, y=ycs, markers=True)
                 fig.update_layout(height=450)
                 st.plotly_chart(fig, use_container_width=True)
-
+ 
         elif ctype == "Scatter Plot":
             xc = _s("X", num_cols, 0, "sc_x")
             yc = _s("Y", num_cols, 1, "sc_y")
@@ -658,7 +658,7 @@ with tabs[3]:
                              color_continuous_scale="Rainbow")
             fig.update_layout(height=480)
             st.plotly_chart(fig, use_container_width=True)
-
+ 
         elif ctype == "Area Chart":
             xc = _s("X", df_clean.columns.tolist(), key="ax")
             ycs = st.multiselect("Y", num_cols, default=num_cols[:3])
@@ -666,7 +666,7 @@ with tabs[3]:
                 fig = px.area(df_clean[[xc] + ycs].dropna(subset=ycs, how="all"), x=xc, y=ycs)
                 fig.update_layout(height=450)
                 st.plotly_chart(fig, use_container_width=True)
-
+ 
         elif ctype == "Bubble Chart":
             if len(num_cols) >= 3:
                 xc = _s("X", num_cols, 0, "bu_x")
@@ -683,7 +683,7 @@ with tabs[3]:
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("Need >= 3 numeric columns.")
-
+ 
         elif ctype == "Heatmap (Correlation)":
             sel = st.multiselect("Columns", num_cols, default=num_cols[:12])
             if len(sel) >= 2:
@@ -691,7 +691,7 @@ with tabs[3]:
                                 color_continuous_scale="RdBu_r", aspect="auto")
                 fig.update_layout(height=540)
                 st.plotly_chart(fig, use_container_width=True)
-
+ 
         elif ctype == "Box Plot":
             yc = _s("Value", num_cols, key="bp_v")
             xc = _s("Group", ["None"] + cat_cols, key="bp_g")
@@ -702,7 +702,7 @@ with tabs[3]:
                          color_discrete_sequence=px.colors.qualitative.Pastel)
             fig.update_layout(height=450)
             st.plotly_chart(fig, use_container_width=True)
-
+ 
         elif ctype == "Funnel Chart":
             xc = _s("Stage", cat_cols or df_clean.columns.tolist(), key="fn_x")
             yc = _s("Value", num_cols, key="fn_y")
@@ -712,7 +712,7 @@ with tabs[3]:
             fig = px.funnel(d, x=yc, y=xc)
             fig.update_layout(height=450)
             st.plotly_chart(fig, use_container_width=True)
-
+ 
         elif ctype == "Waterfall / Cumulative":
             yc = _s("Column", num_cols, key="wf_y")
             d = df_clean[yc].dropna().reset_index(drop=True)
@@ -724,7 +724,7 @@ with tabs[3]:
                                      mode="lines+markers"))
             fig.update_layout(title=f"Cumulative: {yc}", height=450, barmode="group")
             st.plotly_chart(fig, use_container_width=True)
-
+ 
         elif ctype == "3-D Scatter":
             if len(num_cols) >= 3:
                 xc = _s("X", num_cols, 0, "3x")
@@ -740,8 +740,8 @@ with tabs[3]:
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("Need >= 3 numeric columns.")
-
-
+ 
+ 
 # ═══════════════════════════════════════════════════════
 # TAB 4 – DISTRIBUTIONS
 # ═══════════════════════════════════════════════════════
@@ -771,7 +771,7 @@ with tabs[4]:
                                color_discrete_sequence=["#17a572"])
             fig.update_layout(showlegend=False)
             st.plotly_chart(fig, use_container_width=True)
-
+ 
         st.markdown('<div class="sec-title">🗺️ Treemap</div>', unsafe_allow_html=True)
         tmc_list = [c for c in df_clean.columns if c not in num_cols and 1 < df_clean[c].nunique() <= 50]
         if tmc_list and num_cols:
@@ -784,13 +784,13 @@ with tabs[4]:
                                  color_continuous_scale="Turbo")
                 fig.update_layout(height=440)
                 st.plotly_chart(fig, use_container_width=True)
-
+ 
         st.markdown('<div class="sec-title">🎻 Violin</div>', unsafe_allow_html=True)
         vc = st.selectbox("Column", num_cols, key="vc")
         fig = px.violin(df_clean[vc].dropna(), y=vc, box=True, points="outliers",
                         color_discrete_sequence=["#c0392b"])
         st.plotly_chart(fig, use_container_width=True)
-
+ 
         sun_cats = [c for c in df_clean.columns if c not in num_cols and 1 < df_clean[c].nunique() <= 40]
         if len(sun_cats) >= 2 and num_cols:
             st.markdown('<div class="sec-title">🌡️ Sunburst</div>', unsafe_allow_html=True)
@@ -806,8 +806,8 @@ with tabs[4]:
                                   color_continuous_scale="RdYlGn")
                 fig.update_layout(height=480)
                 st.plotly_chart(fig, use_container_width=True)
-
-
+ 
+ 
 # ═══════════════════════════════════════════════════════
 # TAB 5 – QUERY ENGINE (selected sheet)
 # ═══════════════════════════════════════════════════════
@@ -816,7 +816,7 @@ with tabs[5]:
     st.info("For **cross-file search** use the **💬 AI Smart Query** tab.")
     query = st.text_input("Question",
                           placeholder="e.g. Total subscription / Max capacity / List customers")
-
+ 
     def run_query(q, df, nc):
         ql = q.lower()
         res = []
@@ -859,7 +859,7 @@ with tabs[5]:
             res.append("ℹ️ Try: **sum / average / max / min / count / "
                        "median / unique / missing / list**")
         return "\n\n".join(res)
-
+ 
     if query:
         st.markdown(run_query(query, df_clean, num_cols))
     st.markdown("---")
@@ -887,14 +887,14 @@ with tabs[5]:
             r = f"{r:,.4f}"
         st.success(f"**{op}** of `{sc}`"
                    f"{f' (where {fc}={fv})' if fv else ''} -> **{r}**")
-
-
+ 
+ 
 # ═══════════════════════════════════════════════════════
 # TAB 6 – MULTI-LOCATION
 # ═══════════════════════════════════════════════════════
 with tabs[6]:
     st.subheader("🌍 Cross-Location Comparison")
-
+ 
     @st.cache_data(show_spinner=False)
     def load_all_summ(files, folder):
         summ = {}
@@ -907,7 +907,7 @@ with tabs[6]:
                     summ[f"{loc_map[f]} | {sh}"] = {
                         "df": dfc, "num_cols": nc, "file": f, "sheet": sh}
         return summ
-
+ 
     all_summ = load_all_summ(tuple(excel_files), data_dir)
     if all_summ:
         comp_col = st.selectbox("Compare by column",
@@ -943,8 +943,8 @@ with tabs[6]:
                 fillcolor="rgba(42,82,152,.25)", line=dict(color="#2a5298", width=2)))
             fig3.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 1])), height=500)
             st.plotly_chart(fig3, use_container_width=True)
-
-
+ 
+ 
 # ═══════════════════════════════════════════════════════
 # TAB 7 – AI AGENT
 # ═══════════════════════════════════════════════════════
@@ -994,8 +994,8 @@ with tabs[7]:
                  color_continuous_scale="Blues", title="Rows per location")
     fig.update_layout(xaxis_tickangle=-30, height=360)
     st.plotly_chart(fig, use_container_width=True)
-
-
+ 
+ 
 # ═══════════════════════════════════════════════════════════════════════════
 # TAB 8 – AI SMART QUERY
 # Searches EVERY cell at ANY row, ANY column, ANYWHERE in ANY sheet.
@@ -1007,34 +1007,34 @@ with tabs[8]:
         "The engine reads **every row · every column · every sheet · every file** "
         "and returns a direct answer with charts and downloadable results."
     )
-
+ 
     qi1, qi2, qi3, qi4, qi5 = st.columns(5)
     qi1.markdown(f'<div class="kcard kcard-blue"><h2>{meta["total_cells"]:,}</h2><p>Cells Indexed</p></div>', unsafe_allow_html=True)
     qi2.markdown(f'<div class="kcard kcard-green"><h2>{meta["total_files"]}</h2><p>Files</p></div>', unsafe_allow_html=True)
     qi3.markdown(f'<div class="kcard kcard-purple"><h2>{meta["total_sheets"]}</h2><p>Sheets</p></div>', unsafe_allow_html=True)
     qi4.markdown(f'<div class="kcard kcard-orange"><h2>{meta["total_rows"]:,}</h2><p>Data Rows</p></div>', unsafe_allow_html=True)
     qi5.markdown(f'<div class="kcard kcard-teal"><h2>{len(meta["locations"])}</h2><p>Locations</p></div>', unsafe_allow_html=True)
-
+ 
     with st.expander("🔧 Optional: Narrow scope before asking", expanded=False):
         scope_locs = st.multiselect("Limit to locations (blank = ALL)",
                                     meta["locations"], default=[], key="slocs")
         scope_sheets = st.multiselect("Limit to sheets (blank = ALL)",
                                       sorted({x["sheet"] for x in corpus}),
                                       default=[], key="ssheets")
-
+ 
     def _is_num(v):
         try:
             float(v)
             return True
         except Exception:
             return False
-
+ 
     # ── Core AI engine ──────────────────────────────────────────────────────
     def ai_smart_query(question: str) -> dict:
         q = question.strip()
         ql = q.lower()
         sig = [w for w in re.findall(r"[a-z0-9]{3,}", ql) if w not in _SW]
-
+ 
         f_sum = any(x in ql for x in ["total", "sum", "aggregate"])
         f_avg = any(x in ql for x in ["average", "mean", "avg"])
         f_max = any(x in ql for x in ["maximum", "highest", "largest", "max"])
@@ -1050,10 +1050,10 @@ with tabs[8]:
         f_topn = re.search(r"\btop\s*(\d+)\b", ql)
         f_botn = re.search(r"\bbottom\s*(\d+)\b", ql)
         f_num = f_sum or f_avg or f_max or f_min or f_cnt or f_stat or f_pct
-
+ 
         out = {"answer": "", "table": None, "chart_df": None, "chart_cfg": None,
                "cell_hits": [], "sub_tables": []}
-
+ 
         # Scope + location filtering
         wc = list(corpus)
         if scope_locs:
@@ -1063,20 +1063,20 @@ with tabs[8]:
         matched_locs = find_matching_locations(q, meta["locations"])
         if matched_locs:
             wc = [c for c in wc if c["location"] in matched_locs]
-
+ 
         if not wc:
             out["answer"] = (f"❓ No data found.\n\n"
                              f"**Available locations:** {', '.join(meta['locations'])}\n\n"
                              f"Try: *List all customers* or *Find CISCO*")
             return out
-
+ 
         _OP = {"total", "sum", "avg", "mean", "max", "min", "count", "list", "find", "show",
                "all", "average", "maximum", "minimum", "highest", "lowest", "top", "bottom",
                "describe", "statistics", "stats", "summary", "unique", "distinct", "sheet",
                "column", "row", "missing", "null", "percent", "percentage", "ratio", "share",
                "number", "across", "compare", "location", "locations", "customer", "customers",
                "capacity", "power", "usage", "rack", "space", "subscription", "billing"}
-
+ 
         def best_col_kw(sl):
             cands = [w for w in sl if w not in _OP and len(w) >= 3]
             best, bn = None, 0
@@ -1091,7 +1091,7 @@ with tabs[8]:
                     if n > bn:
                         bn, best = n, w
             return best
-
+ 
         def _match_col_header(kw, header):
             """Flexible column header matching."""
             hl = header.lower()
@@ -1115,7 +1115,7 @@ with tabs[8]:
                         if s in hl:
                             return True
             return False
-
+ 
         def num_pairs_for_kw(kw):
             """Find numeric values for cells whose column header matches kw."""
             res = []
@@ -1128,7 +1128,7 @@ with tabs[8]:
                     except ValueError:
                         pass
             return res
-
+ 
         def num_pairs_for_any_sig(sig_words):
             """Try each significant word and return the best-matching set."""
             best_kw = None
@@ -1141,7 +1141,7 @@ with tabs[8]:
                     best_pairs = pairs
                     best_kw = w
             return best_kw, best_pairs
-
+ 
         def build_rows_df(keys):
             recs = []
             for key in keys:
@@ -1151,9 +1151,9 @@ with tabs[8]:
                     rd.update(rec)
                     recs.append(rd)
             return pd.DataFrame(recs) if recs else pd.DataFrame()
-
+ 
         loc_str = " in " + ", ".join(matched_locs) if matched_locs else ""
-
+ 
         # INTENT: Sheet listing
         if f_shts and not f_num:
             seen = set()
@@ -1170,7 +1170,7 @@ with tabs[8]:
             out["answer"] = f"Found **{len(tbl)}** sheet(s){loc_str}."
             out["table"] = tbl
             return out
-
+ 
         # INTENT: Missing values
         if f_miss:
             mrows = []
@@ -1196,7 +1196,7 @@ with tabs[8]:
             else:
                 out["answer"] = "✅ No missing values found."
             return out
-
+ 
         # INTENT: Column listing
         if f_cols and not f_num:
             kw = best_col_kw(sig)
@@ -1219,7 +1219,7 @@ with tabs[8]:
             out["answer"] = f"Found **{len(tbl)}** column(s){loc_str}."
             out["table"] = tbl
             return out
-
+ 
         # INTENT: Row count
         if f_rows and f_cnt and not sig:
             crows = []
@@ -1241,12 +1241,12 @@ with tabs[8]:
             out["chart_df"] = tbl.groupby("Location")["Rows"].sum().reset_index()
             out["chart_cfg"] = {"x": "Location", "y": "Rows", "title": "Data Rows per Location"}
             return out
-
+ 
         # INTENT: Numeric aggregation
         if f_num:
             # Try finding by significant keywords first
             kw, pairs = num_pairs_for_any_sig(sig)
-
+ 
             # If no match from sig words, try matching common domain keywords
             if not pairs:
                 domain_kws = ["subscription", "capacity", "power", "usage", "rack",
@@ -1257,7 +1257,7 @@ with tabs[8]:
                         if pairs:
                             kw = dkw
                             break
-
+ 
             if pairs:
                 vals = [v for v, _ in pairs]
                 s_all = pd.Series(vals)
@@ -1313,7 +1313,7 @@ with tabs[8]:
                                              "Row #": c["row"] + 1, "Col #": c["col"] + 1,
                                              "Column": c["col_header"], "Value": v} for v, c in bot])})
                 return out
-
+ 
             # If still no numeric match, try ALL numeric cells
             if f_sum or f_avg or f_max or f_min or f_cnt:
                 all_nums = []
@@ -1342,7 +1342,7 @@ with tabs[8]:
                                      f"Showing aggregation across **all numeric cells**{loc_str}:\n\n"
                                      + "\n".join(parts))
                     return out
-
+ 
         # INTENT: Unique values
         if f_uniq and sig:
             kw = best_col_kw(sig)
@@ -1361,7 +1361,7 @@ with tabs[8]:
                 out["answer"] = f"Found **{len(uvals)}** unique value(s) in columns matching **'{kw}'**{loc_str}."
                 out["table"] = tbl
                 return out
-
+ 
         # INTENT: Free-text entity/keyword search
         if sig:
             quoted = re.findall(r'"([^"]+)"', q)
@@ -1376,25 +1376,25 @@ with tabs[8]:
                         terms.append(w)
                 if not terms:
                     terms = sig
-
+ 
             hit_cells = [cell for cell in wc if not cell["is_header"]
                          and any(t in cell["value"].lower() for t in terms)]
             hit_keys = {(c["file"], c["location"], c["sheet"], c["row"]) for c in hit_cells}
             full_df = build_rows_df(hit_keys)
-
+ 
             loc_freq = defaultdict(int)
             sh_freq = defaultdict(int)
             for c in hit_cells:
                 loc_freq[c["location"]] += 1
                 sh_freq[f"{c['location']} | {c['sheet']}"] += 1
-
+ 
             lf_df = (pd.DataFrame(list(loc_freq.items()), columns=["Location", "Hits"])
                      .sort_values("Hits", ascending=False))
             cell_list = [{"📍 Location": c["location"], "📋 Sheet": c["sheet"],
                           "Row #": c["row"] + 1, "Col #": c["col"] + 1,
                           "Column Header": c["col_header"], "Value": c["value"]}
                          for c in hit_cells[:60]]
-
+ 
             out["answer"] = (f"Found **{len(hit_cells):,}** cell(s) matching "
                              f"**'{', '.join(terms[:4])}'**{loc_str}\n"
                              f"across **{len(loc_freq)}** location(s) and "
@@ -1428,7 +1428,7 @@ with tabs[8]:
                                          "Row #": c["row"] + 1, "Col": c["col_header"], "Value": v}
                                         for v, c in top])})
             return out
-
+ 
         # Fallback
         out["answer"] = ("❓ No match found.\n\n**Try:**\n"
                          "• *List all customers*  |  *List all customers in Noida*\n"
@@ -1437,15 +1437,16 @@ with tabs[8]:
                          "*Average power usage*  |  *Top 10 subscription*\n"
                          "• *Unique billing models*  |  *Show missing values*  |  *Show all sheets*")
         return out
-
+ 
     # ── Render ──────────────────────────────────────────────────────────────
-    def render_answer(res: dict):
+    def render_answer(res: dict, turn_idx: int = 0):
         st.markdown(f'<div class="ans-box">{res["answer"]}</div>', unsafe_allow_html=True)
         if res.get("table") is not None and not res["table"].empty:
             tbl = res["table"].reset_index(drop=True)
-            st.dataframe(tbl, use_container_width=True, height=min(520, 48 + len(tbl) * 36))
+            st.dataframe(tbl, use_container_width=True, height=min(520, 48 + len(tbl) * 36),
+                         key=f"tbl_{turn_idx}")
             st.download_button("⬇️ Download result CSV", tbl.to_csv(index=False).encode(),
-                               "ai_result.csv", "text/csv", key=f"dl_{id(res)}")
+                               "ai_result.csv", "text/csv", key=f"dl_{turn_idx}")
         if res.get("chart_cfg") and res.get("chart_df") is not None:
             cfg = res["chart_cfg"]
             cdf = res["chart_df"]
@@ -1454,10 +1455,11 @@ with tabs[8]:
                              x=cfg["x"], y=cfg["y"], color=cfg["y"],
                              color_continuous_scale="Viridis", title=cfg["title"], height=400)
                 fig.update_layout(xaxis_tickangle=-30)
-                st.plotly_chart(fig, use_container_width=True)
-        for si in res.get("sub_tables", []):
+                st.plotly_chart(fig, use_container_width=True, key=f"chart_{turn_idx}")
+        for si_idx, si in enumerate(res.get("sub_tables", [])):
             with st.expander(si["label"], expanded=True):
-                st.dataframe(si["df"], use_container_width=True)
+                st.dataframe(si["df"], use_container_width=True,
+                             key=f"sub_{turn_idx}_{si_idx}")
         if res.get("cell_hits"):
             with st.expander(f"🔬 Cell-level matches — first {len(res['cell_hits'])} shown",
                              expanded=False):
@@ -1470,16 +1472,16 @@ with tabs[8]:
                                 f'Value: <b>{ch["Value"]}</b>'
                                 f'</div>', unsafe_allow_html=True)
         st.markdown('<div class="clearfix"></div>', unsafe_allow_html=True)
-
+ 
     # ── Chat history ─────────────────────────────────────────────────────────
     if "aisq_hist" not in st.session_state:
         st.session_state.aisq_hist = []
-    for turn in st.session_state.aisq_hist:
+    for tidx, turn in enumerate(st.session_state.aisq_hist):
         st.markdown(f'<div class="q-user">🧑 {turn["q"]}</div>', unsafe_allow_html=True)
         st.markdown('<div class="clearfix"></div>', unsafe_allow_html=True)
-        render_answer(turn["res"])
+        render_answer(turn["res"], turn_idx=tidx)
         st.markdown("---")
-
+ 
     # ── Input bar ────────────────────────────────────────────────────────────
     st.markdown("---")
     ic, bc, cc = st.columns([8, 1, 1])
@@ -1494,7 +1496,7 @@ with tabs[8]:
         if st.button("🗑️ Clear", use_container_width=True):
             st.session_state.aisq_hist = []
             st.rerun()
-
+ 
     # ── Example chips ─────────────────────────────────────────────────────────
     st.markdown("**💡 Click any example to ask instantly:**")
     examples = [
@@ -1515,14 +1517,14 @@ with tabs[8]:
             if cols[j].button(ex, key=f"chip_{ex}", use_container_width=True):
                 user_q = ex
                 ask_btn = True
-
+ 
     if ask_btn and user_q.strip():
         with st.spinner(f"Scanning every cell for: **{user_q}** …"):
             answer = ai_smart_query(user_q)
         st.session_state.aisq_hist.append({"q": user_q, "res": answer})
         st.rerun()
-
-
+ 
+ 
 # ─────────────────────────────────────────────────────────────────────────────
 # FOOTER
 # ─────────────────────────────────────────────────────────────────────────────
