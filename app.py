@@ -1356,22 +1356,22 @@ with tabs[8]:
         ql = q.lower()
         sig = [w for w in re.findall(r"[a-z0-9]{3,}", ql) if w not in _SW]
 
-        f_sum = any(x in ql for x in ["total","sum","aggregate"])
-        f_avg = any(x in ql for x in ["average","mean","avg"])
-        f_max = any(x in ql for x in ["maximum","highest","largest","max","top value"])
-        f_min = any(x in ql for x in ["minimum","lowest","smallest","min"])
-        f_cnt = any(x in ql for x in ["count","how many","number of"])
+        f_sum  = any(x in ql for x in ["total","sum","aggregate"])
+        f_avg  = any(x in ql for x in ["average","mean","avg"])
+        f_max  = any(x in ql for x in ["maximum","highest","largest","max","top value"])
+        f_min  = any(x in ql for x in ["minimum","lowest","smallest","min"])
+        f_cnt  = any(x in ql for x in ["count","how many","number of"])
         f_stat = any(x in ql for x in ["statistics","stats","describe","summary","all stats"])
         f_uniq = any(x in ql for x in ["unique","distinct","different"])
         f_miss = any(x in ql for x in ["missing","null","blank","empty"])
         f_cols = any(x in ql for x in ["column","columns","field","header","headers"])
         f_topn = re.search(r"\btop\s*(\d+)\b", ql)
         f_botn = re.search(r"\bbottom\s*(\d+)\b", ql)
-        f_num = (f_sum or f_avg or f_max or f_min or f_cnt or f_stat
-                 or bool(f_topn) or bool(f_botn))
+        f_num  = (f_sum or f_avg or f_max or f_min or f_cnt or f_stat
+                  or bool(f_topn) or bool(f_botn))
         f_cust = any(x in ql for x in ["customer","customers","client","clients","name","names"])
-        f_list = any(x in ql for x in ["list","show","display"])
-        f_pct = any(x in ql for x in ["percent","percentage","%","share"])
+        f_list = any(x in ql for x in ["list","show","display","all"])
+        f_pct  = any(x in ql for x in ["percent","percentage","%","share"])
 
         out = {
             "answer": "", "table": None, "chart_df": None,
@@ -1386,6 +1386,7 @@ with tabs[8]:
 
         col_kws = [w for w in sig if w not in _OP_VERBS]
 
+        # ── helpers ──────────────────────────────────────────────────
         def npkw(kw):
             res = []
             for cell in wc:
@@ -1403,8 +1404,7 @@ with tabs[8]:
             for w in kws:
                 p = npkw(w)
                 if len(p) > len(bp):
-                    bp = p
-                    bk = w
+                    bp = p; bk = w
             return bk, bp
 
         def build_rows_df(row_nums):
@@ -1417,43 +1417,50 @@ with tabs[8]:
                     recs.append(rd)
             return pd.DataFrame(recs) if recs else pd.DataFrame()
 
-        # ── INTENT: List customers / names ──
-        if (f_cust or (f_list and not f_num)) and not f_num:
-            found = []
+        # words that are column-like (match a header) vs value-like (found in data)
+        def _col_match_score(w):
+            cnt = sum(1 for c in wc if c["is_header"] and _mcol(w, c["value"]))
+            return cnt
+
+        def _val_match_rows(terms):
+            rows = set()
+            cells = []
             for cell in wc:
                 if cell["is_header"]:
                     continue
-                ch = cell["col_header"].lower()
-                if any(x in ch for x in ["customer","name","client","company"]):
-                    found.append({
-                        "Row #": cell["row"] + 1,
-                        "Column": cell["col_header"],
-                        "Value": cell["value"],
-                    })
-            if found:
-                tbl = pd.DataFrame(found).drop_duplicates(subset=["Value"])
-                out["answer"] = f"Found **{len(tbl)}** customer/name entries across all rows and columns."
-                out["table"] = tbl
-            else:
-                out["answer"] = (
-                    "No columns with 'Customer', 'Name', or 'Client' in header found.\n"
-                    "Try: *List all rows* or search by keyword."
-                )
-            return out
+                if any(t in cell["value"].lower() for t in terms):
+                    rows.add(cell["row"])
+                    cells.append(cell)
+            return sorted(rows), cells
 
-        # ── INTENT: Missing values ──
+        def _attr_rows(attr_kw, row_nums):
+            res = []
+            for cell in wc:
+                if cell["is_header"] or cell["row"] not in set(row_nums):
+                    continue
+                if _mcol(attr_kw, cell["col_header"]):
+                    res.append(cell)
+            return res
+
+        def _known_col_headers():
+            seen, out2 = set(), []
+            for c in wc:
+                if c["is_header"]:
+                    v = c["value"].strip()
+                    if v and v not in seen:
+                        seen.add(v); out2.append(v)
+            return out2
+
+        # ── INTENT: Missing values ──────────────────────────────────
         if f_miss:
             dfc = to_numeric(smart_header(raw_df))
             mr = []
             for col in dfc.columns:
                 mc = int(dfc[col].isna().sum())
                 if mc > 0:
-                    mr.append({
-                        "Column": col,
-                        "Missing Count": mc,
-                        "Missing %": f"{mc/max(len(dfc),1)*100:.1f}%",
-                        "Non-Null": len(dfc) - mc,
-                    })
+                    mr.append({"Column": col, "Missing Count": mc,
+                               "Missing %": f"{mc/max(len(dfc),1)*100:.1f}%",
+                               "Non-Null": len(dfc) - mc})
             if mr:
                 tbl = pd.DataFrame(mr).sort_values("Missing Count", ascending=False)
                 out["answer"] = f"Found **{len(tbl)}** column(s) with missing values."
@@ -1462,29 +1469,23 @@ with tabs[8]:
                 out["answer"] = "✅ No missing values found in this sheet."
             return out
 
-        # ── INTENT: Column listing ──
+        # ── INTENT: Column listing ──────────────────────────────────
         if f_cols and not f_num:
-            seen = set()
-            cr = []
+            seen, cr = set(), []
             for cell in wc:
                 if not cell["is_header"]:
                     continue
                 ch = cell["value"].strip()
-                if ch in ("", "nan"):
+                if ch in ("", "nan") or ch in seen:
                     continue
-                if ch not in seen:
-                    seen.add(ch)
-                    cr.append({
-                        "Column Header": ch,
-                        "At Row": cell["row"] + 1,
-                        "At Col": cell["col"] + 1,
-                    })
+                seen.add(ch)
+                cr.append({"Column Header": ch, "At Row": cell["row"]+1, "At Col": cell["col"]+1})
             tbl = pd.DataFrame(cr) if cr else pd.DataFrame()
             out["answer"] = f"Found **{len(tbl)}** unique column header(s) in this sheet."
             out["table"] = tbl
             return out
 
-        # ── INTENT: Numeric aggregation ──
+        # ── INTENT: Numeric aggregation ─────────────────────────────
         if f_num:
             kw, pairs = npbest(col_kws)
             if not pairs:
@@ -1492,175 +1493,260 @@ with tabs[8]:
                             "space","consumption","kw","kva","sqft","revenue"]:
                     if dkw in ql:
                         pairs = npkw(dkw)
-                        if pairs:
-                            kw = dkw
-                            break
+                        if pairs: kw = dkw; break
             if pairs:
                 vals = [v for v, _ in pairs]
-                sa = pd.Series(vals)
+                sa   = pd.Series(vals)
                 parts = []
-                if f_sum or f_stat:
-                    parts.append(f"**Total (Sum):** {sa.sum():,.4f}")
-                if f_avg or f_stat:
-                    parts.append(f"**Average (Mean):** {sa.mean():,.4f}")
-                if f_max or f_stat:
-                    parts.append(f"**Maximum:** {sa.max():,.4f}")
-                if f_min or f_stat:
-                    parts.append(f"**Minimum:** {sa.min():,.4f}")
-                if f_cnt or f_stat:
-                    parts.append(f"**Count:** {sa.count():,}")
+                if f_sum  or f_stat: parts.append(f"**Total (Sum):** {sa.sum():,.4f}")
+                if f_avg  or f_stat: parts.append(f"**Average (Mean):** {sa.mean():,.4f}")
+                if f_max  or f_stat: parts.append(f"**Maximum:** {sa.max():,.4f}")
+                if f_min  or f_stat: parts.append(f"**Minimum:** {sa.min():,.4f}")
+                if f_cnt  or f_stat: parts.append(f"**Count:** {sa.count():,}")
                 if f_stat:
-                    parts.append(
-                        f"**Median:** {sa.median():,.4f} | "
-                        f"**Std Dev:** {sa.std():,.4f} | "
-                        f"**Range:** {sa.max()-sa.min():,.4f}"
-                    )
+                    parts.append(f"**Median:** {sa.median():,.4f} | "
+                                 f"**Std Dev:** {sa.std():,.4f} | "
+                                 f"**Range:** {sa.max()-sa.min():,.4f}")
                 if f_pct:
-                    all_nums = [float(c["value"]) for c in wc
-                                if not c["is_header"] and _is_num(c["value"])]
-                    grand = sum(all_nums) if all_nums else 1
+                    grand = sum(float(c["value"]) for c in wc
+                                if not c["is_header"] and _is_num(c["value"])) or 1
                     parts.append(f"**% of Sheet Total:** {sa.sum()/grand*100:.2f}%")
                 if (f_topn or f_botn) and not (f_sum or f_avg or f_max or f_min or f_cnt or f_stat):
                     parts.append(f"**Count:** {sa.count():,}")
                     parts.append(f"**Total (Sum):** {sa.sum():,.4f}")
 
-                detail = [
-                    {"Row #": c["row"]+1, "Col #": c["col"]+1,
-                     "Column Header": c["col_header"], "Value": v}
-                    for v, c in pairs
-                ]
+                detail = [{"Row #": c["row"]+1, "Col #": c["col"]+1,
+                           "Column Header": c["col_header"], "Value": v}
+                          for v, c in pairs]
                 tbl = pd.DataFrame(detail).sort_values("Value", ascending=False)
-                out["answer"] = (
-                    f"Results for **'{kw}'** — **{len(vals):,} values** found:\n\n"
-                    + "\n".join(parts)
-                )
+                out["answer"] = (f"Results for **'{kw}'** — **{len(vals):,} values** found:\n\n"
+                                 + "\n".join(parts))
                 out["table"] = tbl
 
-                if f_topn:
-                    n = int(f_topn.group(1))
-                    top = sorted(pairs, key=lambda x: x[0], reverse=True)[:n]
+                # also show full rows that contain these values
+                paired_rows = sorted({c["row"] for _, c in pairs})
+                full_rows_df = build_rows_df(paired_rows)
+                if not full_rows_df.empty:
                     out["sub_tables"].append({
-                        "label": f"🏆 Top {n} — {kw}",
-                        "df": pd.DataFrame([
-                            {"Row": c["row"]+1, "Column": c["col_header"], "Value": v}
-                            for v, c in top
-                        ]),
+                        "label": f"📋 Full Row Data for '{kw}' ({len(paired_rows)} rows)",
+                        "df": full_rows_df,
+                    })
+
+                if f_topn:
+                    n   = int(f_topn.group(1))
+                    top = sorted(pairs, key=lambda x: x[0], reverse=True)[:n]
+                    top_rows = sorted({c["row"] for _, c in top})
+                    top_full = build_rows_df(top_rows)
+                    out["sub_tables"].append({
+                        "label": f"🏆 Top {n} — '{kw}' (full rows)",
+                        "df": top_full if not top_full.empty else pd.DataFrame(
+                            [{"Row": c["row"]+1, "Column": c["col_header"], "Value": v}
+                             for v, c in top]),
                     })
                 if f_botn:
-                    n = int(f_botn.group(1))
+                    n   = int(f_botn.group(1))
                     bot = sorted(pairs, key=lambda x: x[0])[:n]
+                    bot_rows = sorted({c["row"] for _, c in bot})
+                    bot_full = build_rows_df(bot_rows)
                     out["sub_tables"].append({
-                        "label": f"🔻 Bottom {n} — {kw}",
-                        "df": pd.DataFrame([
-                            {"Row": c["row"]+1, "Column": c["col_header"], "Value": v}
-                            for v, c in bot
-                        ]),
+                        "label": f"🔻 Bottom {n} — '{kw}' (full rows)",
+                        "df": bot_full if not bot_full.empty else pd.DataFrame(
+                            [{"Row": c["row"]+1, "Column": c["col_header"], "Value": v}
+                             for v, c in bot]),
                     })
                 return out
 
-            # Fallback: all numeric cells
-            anums = [
-                (float(c["value"]), c)
-                for c in wc
-                if not c["is_header"] and _is_num(c["value"])
-            ]
+            # fallback – all numeric cells
+            anums = [(float(c["value"]), c) for c in wc
+                     if not c["is_header"] and _is_num(c["value"])]
             if anums:
                 vals = [v for v, _ in anums]
-                sa = pd.Series(vals)
+                sa   = pd.Series(vals)
                 parts = []
-                if f_sum:
-                    parts.append(f"**Sum ALL numeric cells:** {sa.sum():,.4f}")
-                if f_avg:
-                    parts.append(f"**Avg ALL numeric cells:** {sa.mean():,.4f}")
-                if f_max:
-                    parts.append(f"**Max ALL numeric cells:** {sa.max():,.4f}")
-                if f_min:
-                    parts.append(f"**Min ALL numeric cells:** {sa.min():,.4f}")
-                if f_cnt:
-                    parts.append(f"**Count ALL numeric cells:** {sa.count():,}")
+                if f_sum:  parts.append(f"**Sum ALL numeric cells:** {sa.sum():,.4f}")
+                if f_avg:  parts.append(f"**Avg ALL numeric cells:** {sa.mean():,.4f}")
+                if f_max:  parts.append(f"**Max ALL numeric cells:** {sa.max():,.4f}")
+                if f_min:  parts.append(f"**Min ALL numeric cells:** {sa.min():,.4f}")
+                if f_cnt:  parts.append(f"**Count ALL numeric cells:** {sa.count():,}")
                 if f_stat:
-                    parts.append(
-                        f"**Sum:** {sa.sum():,.4f} | **Avg:** {sa.mean():,.4f} | "
-                        f"**Max:** {sa.max():,.4f} | **Min:** {sa.min():,.4f} | "
-                        f"**Median:** {sa.median():,.4f} | **Std Dev:** {sa.std():,.4f}"
-                    )
-                out["answer"] = (
-                    "No column matched your keywords. Results from **ALL numeric cells** in sheet:\n\n"
-                    + "\n".join(parts)
-                )
+                    parts.append(f"**Sum:** {sa.sum():,.4f} | **Avg:** {sa.mean():,.4f} | "
+                                 f"**Max:** {sa.max():,.4f} | **Min:** {sa.min():,.4f} | "
+                                 f"**Median:** {sa.median():,.4f} | **Std Dev:** {sa.std():,.4f}")
+                out["answer"] = ("No column matched your keywords. "
+                                 "Results from **ALL numeric cells** in sheet:\n\n"
+                                 + "\n".join(parts))
                 return out
 
-        # ── INTENT: Unique values ──
+        # ── INTENT: Unique values ────────────────────────────────────
         if f_uniq:
             for w in col_kws or sig:
-                uv = set()
-                sr = []
+                uv, sr = set(), []
                 for cell in wc:
-                    if cell["is_header"]:
-                        continue
+                    if cell["is_header"]: continue
                     if _mcol(w, cell["col_header"]):
                         uv.add(cell["value"])
-                        sr.append({
-                            "Column": cell["col_header"],
-                            "Value": cell["value"],
-                            "Row #": cell["row"] + 1,
-                        })
+                        sr.append({"Column": cell["col_header"],
+                                   "Value": cell["value"], "Row #": cell["row"]+1})
                 if uv:
-                    tbl = pd.DataFrame(sr).drop_duplicates(subset=["Value"]) if sr else pd.DataFrame()
+                    tbl = pd.DataFrame(sr).drop_duplicates(subset=["Value"])
                     out["answer"] = f"**{len(uv)}** unique value(s) found for **'{w}'**."
                     out["table"] = tbl
                     return out
 
-        # ── INTENT: Free-text keyword/entity search ──
-        if sig:
+        # ── INTENT: Cross-column relational lookup ───────────────────
+        # Handles queries like:
+        #   "power of CISCO"  /  "subscription for HDFC"
+        #   "CISCO power"  /  "HDFC capacity and rack"
+        #   "what is billing for TCS"  /  "show rack where customer is WIPRO"
+        if not f_num:
+            # strip op verbs to get candidate tokens
+            tokens = [w for w in sig if w not in _OP_VERBS]
+
+            # score each token: col_score = how well it matches a column header
+            #                   val_score = how many data cells contain it
+            col_scores = {w: _col_match_score(w) for w in tokens}
+            val_scores = {w: sum(1 for c in wc
+                                 if not c["is_header"] and w in c["value"].lower())
+                          for w in tokens}
+
+            attr_toks  = [w for w in tokens if col_scores.get(w, 0) > 0]
+            entity_toks = [w for w in tokens if val_scores.get(w, 0) > 0]
+
+            # also try multi-word entity from the raw query (quoted or unquoted)
             quoted = re.findall(r'"([^"]+)"', q)
             if quoted:
-                terms = [quoted[0].lower()]
+                entity_phrase = [quoted[0].lower()]
+                entity_rows_q, entity_cells_q = _val_match_rows(entity_phrase)
+                if entity_rows_q:
+                    entity_toks = entity_phrase
+                    entity_rows, entity_cells = entity_rows_q, entity_cells_q
+                else:
+                    entity_rows, entity_cells = [], []
             else:
-                terms = [w for w in sig if any(w in cell["value"].lower() for cell in wc)]
-                if not terms:
-                    terms = sig
+                entity_rows, entity_cells = _val_match_rows(entity_toks)
 
-            hit_cells = [
-                cell for cell in wc
-                if not cell["is_header"]
-                and any(t in cell["value"].lower() for t in terms)
-            ]
-            hit_rows = sorted({c["row"] for c in hit_cells})
-            full_df = build_rows_df(hit_rows)
-            cell_list = [
-                {
-                    "Row #": c["row"]+1, "Col #": c["col"]+1,
-                    "Column Header": c["col_header"], "Value": c["value"],
-                }
-                for c in hit_cells[:100]
-            ]
-            out["answer"] = (
-                f"Found **{len(hit_cells):,}** cell(s) matching "
-                f"**'{', '.join(terms[:4])}'** across **{len(hit_rows):,}** row(s)."
-            )
-            out["table"] = full_df if not full_df.empty else None
-            out["cell_hits"] = cell_list
+            # ── Case 1: We have BOTH attribute (column) AND entity (value) tokens ──
+            if attr_toks and entity_rows:
+                recs = []
+                for rn in sorted(entity_rows):
+                    row_data = rr.get(rn, {})
+                    if not row_data:
+                        continue
+                    rd = {"Row #": rn + 1}
+                    # ① matched entity cells → show what was found
+                    for c in entity_cells:
+                        if c["row"] == rn:
+                            rd[f"[Matched] {c['col_header']}"] = c["value"]
+                    # ② requested attribute columns from same row
+                    for at in attr_toks:
+                        for col_h, val in row_data.items():
+                            if _mcol(at, col_h):
+                                rd[col_h] = val
+                    recs.append(rd)
 
-            if not full_df.empty:
-                for col in full_df.columns:
-                    if any(x in col.lower() for x in ["customer","name","client"]):
-                        cdf = full_df[["Row #", col]].drop_duplicates()
-                        out["sub_tables"].append({"label": f"👤 Names ({len(cdf)})", "df": cdf})
-                        break
+                if recs:
+                    tbl = pd.DataFrame(recs)
+                    entity_disp = ", ".join(f"'{t}'" for t in entity_toks[:3])
+                    attr_disp   = ", ".join(f"'{t}'" for t in attr_toks[:3])
+                    out["answer"] = (
+                        f"Cross-column lookup — entity **{entity_disp}** "
+                        f"found in **{len(entity_rows)}** row(s).\n\n"
+                        f"Showing **{attr_disp}** column value(s) for those rows:"
+                    )
+                    out["table"] = tbl
+
+                    # also offer the full rows as a sub-table
+                    full_rows_df = build_rows_df(entity_rows)
+                    if not full_rows_df.empty:
+                        out["sub_tables"].append({
+                            "label": f"📋 All Column Values for Matching Rows ({len(entity_rows)})",
+                            "df": full_rows_df,
+                        })
+                    return out
+
+            # ── Case 2: Only entity found → show ALL columns of matching rows ──
+            if entity_rows:
+                full_df = build_rows_df(entity_rows)
+                match_disp = ", ".join(f"'{t}'" for t in entity_toks[:4])
+                out["answer"] = (
+                    f"Found **{len(entity_cells):,}** cell(s) matching **{match_disp}** "
+                    f"across **{len(entity_rows):,}** row(s).\n\n"
+                    f"Showing **all column values** for every matching row:"
+                )
+                out["table"] = full_df if not full_df.empty else None
+                # highlight which cells matched
+                out["cell_hits"] = [
+                    {"Row #": c["row"]+1, "Col #": c["col"]+1,
+                     "Column Header": c["col_header"], "Value": c["value"]}
+                    for c in entity_cells[:100]
+                ]
+                return out
+
+            # ── Case 3: Only attribute/column tokens → list all values in that column ──
+            if attr_toks:
+                best_attr = max(attr_toks, key=lambda w: col_scores[w])
+                sr = []
+                seen_rows = set()
+                for cell in wc:
+                    if cell["is_header"]: continue
+                    if _mcol(best_attr, cell["col_header"]):
+                        row_data = rr.get(cell["row"], {})
+                        if cell["row"] not in seen_rows:
+                            seen_rows.add(cell["row"])
+                            rd = {"Row #": cell["row"]+1, "Column": cell["col_header"],
+                                  "Value": cell["value"]}
+                            sr.append(rd)
+                if sr:
+                    tbl = pd.DataFrame(sr)
+                    out["answer"] = (
+                        f"Found **{len(sr)}** value(s) in column(s) matching **'{best_attr}'**.\n\n"
+                        f"Showing the value for every row in that column:"
+                    )
+                    out["table"] = tbl
+                    # full rows
+                    full_rows_df = build_rows_df(list(seen_rows))
+                    if not full_rows_df.empty:
+                        out["sub_tables"].append({
+                            "label": f"📋 Full Row Data for '{best_attr}' ({len(seen_rows)} rows)",
+                            "df": full_rows_df,
+                        })
+                    return out
+
+        # ── INTENT: List customers / names (fallback) ────────────────
+        if (f_cust or f_list) and not f_num:
+            found = []
+            for cell in wc:
+                if cell["is_header"]: continue
+                ch = cell["col_header"].lower()
+                if any(x in ch for x in ["customer","name","client","company"]):
+                    found.append({"Row #": cell["row"]+1,
+                                  "Column": cell["col_header"], "Value": cell["value"]})
+            if found:
+                tbl = pd.DataFrame(found).drop_duplicates(subset=["Value"])
+                out["answer"] = f"Found **{len(tbl)}** customer/name entries."
+                out["table"] = tbl
+                # full rows
+                name_rows = sorted({r["Row #"]-1 for r in found})
+                full_rows_df = build_rows_df(name_rows)
+                if not full_rows_df.empty:
+                    out["sub_tables"].append({
+                        "label": f"📋 Full Row Data for All Customers ({len(name_rows)} rows)",
+                        "df": full_rows_df,
+                    })
+            else:
+                out["answer"] = ("No 'Customer/Name/Client' columns found. "
+                                 "Try: *Find CISCO* or *Show all rows*")
             return out
 
         out["answer"] = (
             "❓ Could not match your query.\n\n"
-            "**Try examples:**\n"
-            "- *List all customers*\n"
-            "- *Find CISCO* (any name)\n"
-            "- *Total subscription*\n"
-            "- *Top 10 power*\n"
-            "- *Average capacity*\n"
-            "- *Show all columns*\n"
-            "- *How many missing values*\n"
-            "- *Statistics of usage*"
+            "**Try relational queries like:**\n"
+            "- *Power of CISCO* · *Subscription for HDFC* · *WIPRO capacity*\n"
+            "- *Show rack where customer is TCS*\n\n"
+            "**Or standard queries:**\n"
+            "- *List all customers* · *Find CISCO* · *Total subscription*\n"
+            "- *Top 10 power* · *Average capacity* · *Statistics of usage*\n"
+            "- *Show all columns* · *How many missing values*"
         )
         return out
 
@@ -1709,17 +1795,26 @@ with tabs[8]:
         st.markdown('<div class="clearfix"></div>', unsafe_allow_html=True)
 
     # ── Suggested queries ──
-    with st.expander("💡 Suggested Queries", expanded=False):
+    with st.expander("💡 Suggested Queries (click to expand)", expanded=False):
         st.markdown("""
-**Operations:**
+**🔗 Cross-Column Relational Lookups (NEW):**
+- `Power of CISCO` — find CISCO in any column, show its power value
+- `Subscription for HDFC` — find HDFC rows, show subscription column
+- `WIPRO capacity` — find WIPRO, show capacity from same rows
+- `Rack of TCS` — find TCS, show rack details
+- `Billing for Infosys` — find Infosys rows, show billing column
+- `Show power where customer is CISCO` — filter then retrieve
+- `HDFC power subscription rack` — find HDFC, show multiple columns
+
+**📊 Numeric Operations:**
 - `Total subscription` · `Average capacity` · `Max power` · `Min rack`
 - `Count customers` · `Top 10 power` · `Bottom 5 usage`
 - `Statistics of capacity` · `Percentage of subscription`
 
-**Search:**
+**🔍 Search:**
 - `Find CISCO` · `List all customers` · `Show HDFC` · `Find Mumbai`
 
-**Info:**
+**ℹ️ Info:**
 - `Show all columns` · `How many missing values` · `Unique values of rack`
 """)
 
