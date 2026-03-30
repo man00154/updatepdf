@@ -263,7 +263,7 @@ def _app_dir():
     except NameError:
         return Path(os.getcwd())
 
-EXCEL_FOLDER = _app_dir() / "attached_assets"
+EXCEL_FOLDER = _app_dir() / "excel_files"
 
 
 def _location_key(fname):
