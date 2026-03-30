@@ -545,6 +545,52 @@ html, body, button, input, select, textarea {
 """, unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════
+# DATAFRAME DISPLAY PATCH — forces dark text on white
+# background regardless of CSS/theme issues.
+# Applies pandas Styler cell-level properties which
+# Streamlit 1.28+ passes directly to the canvas grid.
+# ═══════════════════════════════════════════════════════
+import pandas.io.formats.style as _pd_style
+
+_CELL_PROPS = {
+    "background-color": "#ffffff",
+    "color": "#0f172a",
+    "font-size": "13px",
+    "font-weight": "500",
+}
+_HEADER_STYLES = [
+    {"selector": "thead th",
+     "props": [("background-color", "#1e3a8a"),
+               ("color", "#ffffff"),
+               ("font-weight", "800"),
+               ("font-size", "13px"),
+               ("border-bottom", "2px solid #1e40af")]},
+    {"selector": "tbody tr:hover td",
+     "props": [("background-color", "#f0f9ff")]},
+]
+
+def _styled(df):
+    """Return a white-background, dark-text Styler for any DataFrame."""
+    if isinstance(df, _pd_style.Styler):
+        # Already styled (e.g. background_gradient) — just ensure text is dark
+        try:
+            return df.set_properties(**{"color": "#0f172a", "font-size": "13px"})
+        except Exception:
+            return df
+    try:
+        return (pd.DataFrame(df) if not isinstance(df, pd.DataFrame) else df
+                ).style.set_properties(**_CELL_PROPS).set_table_styles(_HEADER_STYLES)
+    except Exception:
+        return df
+
+_orig_st_dataframe = st.dataframe
+def _patched_dataframe(data=None, *args, **kwargs):
+    """Replacement for st.dataframe that always applies readable styling."""
+    _orig_st_dataframe(_styled(data) if data is not None else data, *args, **kwargs)
+
+st.dataframe = _patched_dataframe
+
+# ═══════════════════════════════════════════════════════
 # STOP WORDS
 # ═══════════════════════════════════════════════════════
 _SW = {
