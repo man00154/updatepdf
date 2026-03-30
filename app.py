@@ -304,15 +304,82 @@ html, body, button, input, select, textarea {
 }
 
 /* ════════════════════════════════
-   DATAFRAMES — crisp white
+   DATAFRAMES — crisp white + readable
 ════════════════════════════════ */
+/* Outer wrapper */
 [data-testid="stTabsContent"] .stDataFrame,
 [data-testid="stTabsContent"] .dvn-scroller,
-.stDataFrame, .dvn-scroller {
+.stDataFrame, .dvn-scroller,
+[data-testid="stDataFrame"],
+[data-testid="stDataFrameResizable"] {
     background: #ffffff !important;
     border: 1.5px solid #e2e8f0 !important;
     border-radius: 10px !important;
-    box-shadow: 0 2px 10px rgba(0,0,0,.07);
+    box-shadow: 0 2px 10px rgba(0,0,0,.08);
+}
+
+/* Glide Data Grid CSS custom properties — forces dark text on white cells */
+.dvn-scroller,
+[data-testid="stDataFrame"] .dvn-scroller {
+    --gdg-bg-cell:              #ffffff !important;
+    --gdg-bg-cell-medium:       #f8fafc !important;
+    --gdg-bg-header:            #f1f5f9 !important;
+    --gdg-bg-header-hovered:    #e2e8f0 !important;
+    --gdg-bg-header-has-focus:  #dbeafe !important;
+    --gdg-text-dark:            #0f172a !important;
+    --gdg-text-medium:          #374151 !important;
+    --gdg-text-light:           #64748b !important;
+    --gdg-border-color:         #e2e8f0 !important;
+    --gdg-accent-color:         #4f46e5 !important;
+    --gdg-accent-light:         rgba(79,70,241,.12) !important;
+    --gdg-selection-color:      rgba(79,70,241,.2) !important;
+    --gdg-header-font-style:    700 !important;
+    color: #0f172a !important;
+}
+
+/* Fallback: all child elements of the data grid → dark text */
+.dvn-scroller *,
+[data-testid="stDataFrame"] *,
+[data-testid="stDataFrameResizable"] * {
+    color: #0f172a !important;
+}
+
+/* Static HTML tables (st.table) */
+[data-testid="stTable"] table,
+.stTable table {
+    width: 100%; border-collapse: collapse;
+    background: #ffffff !important;
+    border-radius: 10px; overflow: hidden;
+    box-shadow: 0 2px 10px rgba(0,0,0,.08);
+}
+[data-testid="stTable"] thead th,
+.stTable thead th {
+    background: #f1f5f9 !important;
+    color: #0f172a !important;
+    font-weight: 800 !important;
+    font-size: 0.84rem !important;
+    padding: 10px 14px !important;
+    border-bottom: 2px solid #e2e8f0 !important;
+    text-align: left !important;
+    letter-spacing: 0.3px;
+}
+[data-testid="stTable"] tbody td,
+.stTable tbody td {
+    color: #1e293b !important;
+    font-weight: 500 !important;
+    font-size: 0.9rem !important;
+    padding: 9px 14px !important;
+    border-bottom: 1px solid #f1f5f9 !important;
+    background: #ffffff !important;
+}
+[data-testid="stTable"] tbody tr:hover td,
+.stTable tbody tr:hover td {
+    background: #f8fafc !important;
+    color: #0f172a !important;
+}
+[data-testid="stTable"] tbody tr:nth-child(even) td,
+.stTable tbody tr:nth-child(even) td {
+    background: #fafbfc !important;
 }
 
 /* ════════════════════════════════
