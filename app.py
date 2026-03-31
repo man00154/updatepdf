@@ -2223,10 +2223,7 @@ with tabs[8]:
     with ic:
         user_q = st.text_input(
             "Ask anything about the data:",
-            placeholder=(
-                "e.g. Total subscription · Find CISCO · Top 10 power · "
-                "Average capacity · Customers in Noida"
-            ),
+            placeholder="Type your query here and press Ask...",
             key=f"sq_input_{scope_key}",
             label_visibility="collapsed",
         )
