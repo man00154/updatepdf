@@ -1502,6 +1502,21 @@ with tabs[8]:
         ])
         f_list = any(x in ql for x in ["list","show","display","all","get all"])
 
+        # Detect type-filter values early (caged, metered, bundled, uncaged, etc.)
+        _TYPE_FILTER_WORDS = [
+            "caged", "uncaged", "metered", "bundled", "un-caged",
+            "unmetered", "shared", "dedicated", "colocation", "colo",
+            "managed", "unmanaged", "hosted", "virtual",
+        ]
+        _early_quoted_types = re.findall(r'"([^"]+)"', ql)
+        _early_type_vals = []
+        if _early_quoted_types:
+            _early_type_vals = [t.strip().lower() for t in _early_quoted_types]
+        else:
+            for _tw in _TYPE_FILTER_WORDS:
+                if re.search(r'\b' + re.escape(_tw) + r'\b', ql):
+                    _early_type_vals.append(_tw)
+
         # Location filter from query text
         location_filter = None
         if use_all:
@@ -1511,6 +1526,14 @@ with tabs[8]:
                     break
 
         col_kws = [w for w in sig if w not in _SQ_OP_VERBS]
+
+        # If type filter words are found with customer intent, remove them from col_kws
+        # so the customer intent path handles filtering (not the cross-column path)
+        if _early_type_vals and (f_cust or f_list):
+            col_kws = [w for w in col_kws if w not in _early_type_vals
+                       and w not in {"caged","uncaged","metered","bundled","unmetered",
+                                     "shared","dedicated","colocation","colo",
+                                     "managed","unmanaged","hosted","virtual"}]
 
         # ── Helpers ─────────────────────────────────────────────────
         def _loc_filter(cells):
@@ -1629,6 +1652,32 @@ with tabs[8]:
             out["table"]  = tbl
             return out
 
+        # ── INTENT: Value-type filter (caged/metered/bundled/uncaged etc.) ──────
+        # Triggered when user asks for a specific type/category without customer context
+        if _early_type_vals and not f_num and not f_cust and not f_cols and not f_miss and not f_uniq:
+            src = _loc_filter(wc)
+            type_disp = ", ".join(f"'{v}'" for v in _early_type_vals)
+            scope_txt = "across all files" if use_all else "in this sheet"
+            # Find all rows where any cell value matches the type filter
+            type_row_keys = set()
+            for cell in src:
+                if cell["is_header"]:
+                    continue
+                val_l = cell["value"].lower().strip()
+                for tv in _early_type_vals:
+                    if val_l == tv or re.search(r'\b' + re.escape(tv) + r'\b', val_l):
+                        type_row_keys.add(_rr_key(cell))
+                        break
+            if type_row_keys:
+                # Build full rows for matching keys
+                all_matching_cells = [c for c in src if not c["is_header"] and _rr_key(c) in type_row_keys]
+                full_rows_df = _build_rows_df(all_matching_cells)
+                out["answer"] = (
+                    f"Found **{len(type_row_keys):,}** row(s) with type {type_disp} {scope_txt}."
+                )
+                out["table"] = full_rows_df if not full_rows_df.empty else None
+                return out
+
         # ── INTENT: List customers ──────────────────────────────────
         if (f_cust or f_list) and not f_num and not col_kws:
             src = _loc_filter(wc)
@@ -1636,11 +1685,72 @@ with tabs[8]:
                 "customer", "name", "client", "company",
                 "account", "organisation", "organization",
             ]
+
+            # Use the type filter values already detected above
+            type_filter_vals = _early_type_vals
+
             found_cells = [
                 c for c in src
                 if not c["is_header"]
                 and any(x in c["col_header"].lower() for x in cust_kws)
             ]
+
+            # If type filter words detected, find rows where ANY cell in that row
+            # matches the type value, then return only customer cells from those rows
+            if type_filter_vals and found_cells:
+                # Collect all row keys that contain a cell matching the type value
+                # Use word-boundary matching to avoid "caged" matching inside "uncaged"
+                def _type_val_match(cell_val, type_vals):
+                    val_l = cell_val.lower().strip()
+                    for tv in type_vals:
+                        # Exact match
+                        if val_l == tv:
+                            return True
+                        # Word-boundary match (tv as whole word inside val_l)
+                        if re.search(r'\b' + re.escape(tv) + r'\b', val_l):
+                            return True
+                    return False
+
+                type_row_keys = set()
+                for cell in src:
+                    if cell["is_header"]:
+                        continue
+                    if _type_val_match(cell["value"], type_filter_vals):
+                        type_row_keys.add(_rr_key(cell))
+                # Filter customer cells to only those rows
+                if type_row_keys:
+                    found_cells = [
+                        c for c in found_cells
+                        if _rr_key(c) in type_row_keys
+                    ]
+                    type_disp = ", ".join(f"'{v}'" for v in type_filter_vals)
+                    scope_txt = "across all files" if use_all else "in this sheet"
+                    rows_data = []
+                    for cell in found_cells:
+                        entry = {}
+                        if use_all:
+                            entry["Location"] = cell.get("location", "")
+                            entry["Sheet"]    = cell.get("sheet", "")
+                        entry["Row #"]  = cell["row"] + 1
+                        entry["Column"] = cell["col_header"]
+                        entry["Value"]  = cell["value"]
+                        rows_data.append(entry)
+                    tbl = pd.DataFrame(rows_data).drop_duplicates(subset=["Value"]) if rows_data else pd.DataFrame()
+                    out["answer"] = (
+                        f"Found **{len(tbl)}** customer(s) of type {type_disp} {scope_txt}."
+                    )
+                    out["table"] = tbl if not tbl.empty else None
+                    full_rows_df = _build_rows_df(found_cells)
+                    if not full_rows_df.empty:
+                        out["sub_tables"].append({
+                            "label": f"📋 Full Row Data ({len(found_cells)} rows)",
+                            "df": full_rows_df,
+                        })
+                else:
+                    type_disp = ", ".join(f"'{v}'" for v in type_filter_vals)
+                    out["answer"] = f"No customers of type {type_disp} found."
+                return out
+
             if found_cells:
                 rows_data = []
                 for cell in found_cells:
@@ -1665,10 +1775,7 @@ with tabs[8]:
                         "df": full_rows_df,
                     })
             else:
-                out["answer"] = (
-                    "No 'Customer/Name/Client' columns found. "
-                    "Try: _Find CISCO_ or _Show all rows_"
-                )
+                out["answer"] = "No 'Customer/Name/Client' columns found in the data."
             return out
 
         # ── INTENT: Numeric aggregation ─────────────────────────────
@@ -2012,22 +2119,7 @@ with tabs[8]:
                 out["table"] = tbl
                 return out
 
-        out["answer"] = (
-            "❓ Could not match your query to any data.\n\n"
-            "**Try relational queries like:**\n"
-            "- _Power of CISCO_ · _Subscription for HDFC_ · _WIPRO capacity_\n"
-            "- _Find Infosys_ · _HDFC power subscription rack_\n\n"
-            "**Numeric queries:**\n"
-            "- _Total subscription_ · _Average capacity_ · _Max power_\n"
-            "- _Top 10 power_ · _Bottom 5 usage_ · _Count customers_\n"
-            "- _Statistics of capacity_ · _Percentage of subscription_\n\n"
-            "**Info queries:**\n"
-            "- _List all customers_ · _Show all columns_ · _Unique values of rack_\n"
-            "- _How many missing values_ · _Show all rows_\n\n"
-            "**Location-specific (All Files scope):**\n"
-            "- _Total power in Airoli_ · _Customers in Noida_\n"
-            "- _Average subscription at Bangalore_\n"
-        )
+        out["answer"] = "❓ No matching data found for your query. Please refine your search terms."
         return out
 
     # ── Render ────────────────────────────────────────────────────
@@ -2089,33 +2181,26 @@ with tabs[8]:
                     )
         st.markdown('<div class="clearfix"></div>', unsafe_allow_html=True)
 
-    # ── Suggested queries ─────────────────────────────────────────
-    with st.expander("💡 Suggested Queries (click to expand)", expanded=False):
+    # ── Query help ────────────────────────────────────────────────
+    with st.expander("💡 Query Help (click to expand)", expanded=False):
         st.markdown("""
-**🔗 Cross-Column Relational Lookups:**
-- `Power of CISCO` — find CISCO in any column, show its power value
-- `Subscription for HDFC` — find HDFC rows, show subscription column
-- `WIPRO capacity` — find WIPRO, show capacity from same rows
-- `Rack of TCS` — find TCS, show rack details
-- `Billing for Infosys` — find Infosys rows, show billing column
-- `HDFC power subscription rack` — find HDFC, show multiple columns
+**🔗 Relational Lookups** — find a name/entity and show related column values:
+- `Power of [Customer Name]`  ·  `Subscription for [Company]`  ·  `[Company] capacity`
 
-**🌍 Location-Specific (select "All Files" scope):**
-- `Total subscription in Airoli`
-- `Customers in Noida` · `Power at Bangalore`
-- `Average capacity in Rabale` · `Max rack in Vashi`
+**🔖 Type/Category Filtering** — filter customers by their type or category:
+- `List caged customers`  ·  `Show metered customers`  ·  `List bundled customers`
+- `List uncaged customers`  ·  `Customers that are shared`  ·  `Dedicated customers`
+
+**🌍 Location-Specific** (select "All Files" scope):
+- `Total subscription in [Location]`  ·  `Customers in [Location]`  ·  `Power at [Location]`
 
 **📊 Numeric Operations:**
-- `Total subscription` · `Average capacity` · `Max power` · `Min rack`
-- `Count customers` · `Top 10 power` · `Bottom 5 usage`
-- `Statistics of capacity` · `Percentage of subscription`
+- `Total [column]`  ·  `Average [column]`  ·  `Max [column]`  ·  `Min [column]`
+- `Count customers`  ·  `Top 10 [column]`  ·  `Bottom 5 [column]`  ·  `Statistics of [column]`
 
-**🔍 Search:**
-- `Find CISCO` · `List all customers` · `Show HDFC` · `Find Mumbai`
-
-**ℹ️ Info:**
-- `Show all columns` · `How many missing values` · `Unique values of rack`
-- `Show all rows`
+**🔍 Search & Browse:**
+- `Find [Name]`  ·  `List all customers`  ·  `Show [Company]`
+- `Unique values of [column]`  ·  `Show all rows`  ·  `Show all columns`
 """)
 
     # ── Chat history ─────────────────────────────────────────────
