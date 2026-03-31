@@ -2222,6 +2222,183 @@ with tabs[8]:
                     )
         st.markdown('<div class="clearfix"></div>', unsafe_allow_html=True)
 
+    # ════════════════════════════════════════════════════════════
+    # SMART CELL VALUE SEARCH
+    # ════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.markdown('<div class="sec-title">🔎 Smart Cell-Value Search</div>', unsafe_allow_html=True)
+    st.caption(
+        "Search every file, sheet, row and column by any cell value. "
+        "Returns all matching rows with their full column context."
+    )
+
+    def _cell_value_search(search_val, match_mode, use_all_scope, max_rows=2000):
+        """
+        Scan the indexed corpus (or current-sheet cells) for cells whose
+        value matches *search_val* according to *match_mode*.
+
+        Returns a list of dicts with keys:
+          Location, Sheet, Row #, Col #, Column Header, Matched Value
+        and a second list of unique row-key tuples for full-row lookup.
+        """
+        sv = search_val.strip()
+        if not sv:
+            return [], []
+
+        svl = sv.lower()
+        src = corpus if use_all_scope else sq_cells
+
+        hits = []
+        row_keys = []
+        seen_keys = set()
+
+        for cell in src:
+            if cell["is_header"]:
+                continue
+            val = cell["value"]
+            vl  = val.lower()
+
+            matched = False
+            if match_mode == "Exact (case-insensitive)":
+                matched = (vl == svl)
+            elif match_mode == "Contains (partial match)":
+                matched = (svl in vl)
+            elif match_mode == "Starts with":
+                matched = vl.startswith(svl)
+            elif match_mode == "Ends with":
+                matched = vl.endswith(svl)
+
+            if not matched:
+                continue
+
+            rk = _rr_key(cell)
+            entry = {}
+            if use_all_scope:
+                entry["Location"] = cell.get("location", "")
+                entry["Sheet"]    = cell.get("sheet", "")
+            entry["Row #"]          = cell["row"] + 1
+            entry["Col #"]          = cell["col"] + 1
+            entry["Column Header"]  = cell["col_header"]
+            entry["Matched Value"]  = val
+            hits.append(entry)
+
+            if rk not in seen_keys:
+                seen_keys.add(rk)
+                row_keys.append(rk)
+
+            if len(hits) >= max_rows:
+                break
+
+        return hits, row_keys
+
+    def _build_full_rows_from_keys(row_keys, use_all_scope):
+        """Return a DataFrame with every column value for each matched row."""
+        rr_src = row_records if use_all_scope else sq_rows
+        recs = []
+        for key in row_keys:
+            row_data = rr_src.get(key, {})
+            if not row_data:
+                continue
+            rd = {}
+            if use_all_scope:
+                if isinstance(key, tuple):
+                    rd["Location"] = key[1]
+                    rd["Sheet"]    = key[2]
+                    rd["Row #"]    = key[3] + 1
+                else:
+                    rd["Row #"] = key + 1
+            else:
+                rd["Row #"] = (key + 1) if isinstance(key, int) else key[-1] + 1
+            rd.update(row_data)
+            recs.append(rd)
+        return pd.DataFrame(recs) if recs else pd.DataFrame()
+
+    cvs_c1, cvs_c2, cvs_c3 = st.columns([4, 2, 1])
+    with cvs_c1:
+        cvs_input = st.text_input(
+            "Cell value to search for:",
+            placeholder="e.g. Airtel, caged, 100, Live, Noida…",
+            key="cvs_input",
+        )
+    with cvs_c2:
+        cvs_mode = st.selectbox(
+            "Match mode",
+            ["Contains (partial match)", "Exact (case-insensitive)", "Starts with", "Ends with"],
+            key="cvs_mode",
+        )
+    with cvs_c3:
+        cvs_scope = st.radio(
+            "Scope",
+            ["All Files", "This Sheet"],
+            key="cvs_scope",
+            horizontal=False,
+        )
+
+    cvs_btn = st.button("🔍 Search Cell Values", type="primary", key="cvs_run")
+
+    if cvs_btn and cvs_input.strip():
+        use_all_cvs = cvs_scope == "All Files"
+        with st.spinner(f"Scanning {'all files' if use_all_cvs else 'current sheet'} for '{cvs_input}'…"):
+            hits, row_keys = _cell_value_search(cvs_input, cvs_mode, use_all_cvs)
+
+        if not hits:
+            st.warning(
+                f"No cells found matching **'{cvs_input}'** "
+                f"({'all files' if use_all_cvs else 'current sheet'}) "
+                f"using mode **{cvs_mode}**."
+            )
+        else:
+            st.success(
+                f"Found **{len(hits):,}** matching cell(s) across "
+                f"**{len(row_keys):,}** unique row(s)."
+            )
+
+            hits_df = pd.DataFrame(hits)
+            st.markdown("**Matching Cells**")
+            st.dataframe(hits_df, use_container_width=True,
+                         height=min(520, 60 + len(hits_df) * 36),
+                         key="cvs_hits_df")
+            st.download_button(
+                "⬇️ Download Matching Cells CSV",
+                hits_df.to_csv(index=False).encode(),
+                "cell_value_search_hits.csv",
+                "text/csv",
+                key="cvs_hits_dl",
+            )
+
+            full_rows_df = _build_full_rows_from_keys(row_keys, use_all_cvs)
+            if not full_rows_df.empty:
+                with st.expander(
+                    f"📋 Full Row Data for All {len(row_keys):,} Matching Rows "
+                    f"(all columns shown)",
+                    expanded=True,
+                ):
+                    st.dataframe(
+                        full_rows_df,
+                        use_container_width=True,
+                        height=min(600, 60 + len(full_rows_df) * 36),
+                        key="cvs_full_df",
+                    )
+                    st.download_button(
+                        "⬇️ Download Full Rows CSV",
+                        full_rows_df.to_csv(index=False).encode(),
+                        "cell_value_search_full_rows.csv",
+                        "text/csv",
+                        key="cvs_full_dl",
+                    )
+
+            if use_all_cvs and "Location" in hits_df.columns and hits_df["Location"].nunique() > 1:
+                loc_counts = hits_df["Location"].value_counts().reset_index()
+                loc_counts.columns = ["Location", "Matches"]
+                fig_cvs = px.bar(
+                    loc_counts, x="Location", y="Matches",
+                    color="Matches", color_continuous_scale="Viridis",
+                    title=f"Matches for '{cvs_input}' by Location",
+                    height=380,
+                )
+                fig_cvs.update_layout(xaxis_tickangle=-30, **DARK)
+                st.plotly_chart(fig_cvs, use_container_width=True, key="cvs_chart")
+
     # ── Query help ────────────────────────────────────────────────
     with st.expander("💡 Query Help (click to expand)", expanded=False):
         st.markdown("""
