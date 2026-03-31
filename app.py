@@ -2271,7 +2271,12 @@ with tabs[8]:
             if not matched:
                 continue
 
-            rk = _rr_key(cell)
+            # Inline row-key logic (avoids dependency on _rr_key which is
+            # scoped inside smart_corpus_query)
+            if use_all_scope:
+                rk = (cell["file"], cell["location"], cell["sheet"], cell["row"])
+            else:
+                rk = cell["row"]
             entry = {}
             if use_all_scope:
                 entry["Location"] = cell.get("location", "")
@@ -2398,6 +2403,69 @@ with tabs[8]:
                 )
                 fig_cvs.update_layout(xaxis_tickangle=-30, **DARK)
                 st.plotly_chart(fig_cvs, use_container_width=True, key="cvs_chart")
+
+    # ── NL Query inside Cell-Value Search section ─────────────────
+    st.markdown("---")
+    st.markdown('<div class="sec-title">💬 Ask About the Data</div>', unsafe_allow_html=True)
+    st.caption(
+        "Type a natural-language question about any file, sheet, row or column. "
+        "Examples: 'total subscription kw', 'list all caged customers', 'top 5 by power'."
+    )
+
+    cvs_nl_scope_col, cvs_nl_stat_col = st.columns([3, 1])
+    with cvs_nl_scope_col:
+        cvs_nl_scope = st.radio(
+            "Query scope:",
+            ["🌍 All Files (entire corpus)", f"📄 Current Sheet ({loc_label} › {selected_sheet})"],
+            horizontal=True,
+            key="cvs_nl_scope",
+        )
+    with cvs_nl_stat_col:
+        st.markdown(
+            f'<div class="kcard kcard-teal" style="padding:10px 14px;">'
+            f'<h2 style="font-size:1.3rem;">{meta["total_cells"]:,}</h2>'
+            f'<p>Indexed cells</p></div>',
+            unsafe_allow_html=True,
+        )
+
+    cvs_use_all = cvs_nl_scope.startswith("🌍")
+
+    cvs_nl_hist_key = f"cvs_nl_hist_{'all' if cvs_use_all else f'{selected_file}_{selected_sheet}'}"
+    if cvs_nl_hist_key not in st.session_state:
+        st.session_state[cvs_nl_hist_key] = []
+
+    for tidx, turn in enumerate(st.session_state[cvs_nl_hist_key]):
+        st.markdown(f'<div class="q-user">🧑 {turn["q"]}</div>', unsafe_allow_html=True)
+        st.markdown('<div class="clearfix"></div>', unsafe_allow_html=True)
+        sq_render_answer(turn["res"], tidx + 1000)
+        st.markdown("---")
+
+    cvs_nl_ic, cvs_nl_bc, cvs_nl_cc = st.columns([8, 1, 1])
+    with cvs_nl_ic:
+        cvs_nl_q = st.text_input(
+            "Ask anything about the data:",
+            placeholder="e.g. total subscription kw, list caged customers, top 5 by power…",
+            key=f"cvs_nl_input_{'all' if cvs_use_all else f'{selected_file}_{selected_sheet}'}",
+            label_visibility="collapsed",
+        )
+    with cvs_nl_bc:
+        cvs_nl_ask = st.button(
+            "Ask ▶", type="primary", use_container_width=True,
+            key=f"cvs_nl_ask_{'all' if cvs_use_all else f'{selected_file}_{selected_sheet}'}",
+        )
+    with cvs_nl_cc:
+        if st.button(
+            "Clear 🗑", use_container_width=True,
+            key=f"cvs_nl_clear_{'all' if cvs_use_all else f'{selected_file}_{selected_sheet}'}",
+        ):
+            st.session_state[cvs_nl_hist_key] = []
+            st.rerun()
+
+    if cvs_nl_ask and cvs_nl_q.strip():
+        with st.spinner("🔍 Searching every file, sheet, row and column…"):
+            cvs_nl_res = smart_corpus_query(cvs_nl_q, use_all=cvs_use_all)
+        st.session_state[cvs_nl_hist_key].append({"q": cvs_nl_q, "res": cvs_nl_res})
+        st.rerun()
 
     # ── Query help ────────────────────────────────────────────────
     with st.expander("💡 Query Help (click to expand)", expanded=False):
