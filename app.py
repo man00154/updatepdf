@@ -2267,6 +2267,8 @@ with tabs[8]:
                 matched = vl.startswith(svl)
             elif match_mode == "Ends with":
                 matched = vl.endswith(svl)
+            elif match_mode == "Any Case (contains, ignore upper/lower)":
+                matched = (svl in vl)
 
             if not matched:
                 continue
@@ -2328,7 +2330,13 @@ with tabs[8]:
     with cvs_c2:
         cvs_mode = st.selectbox(
             "Match mode",
-            ["Contains (partial match)", "Exact (case-insensitive)", "Starts with", "Ends with"],
+            [
+                "Contains (partial match)",
+                "Exact (case-insensitive)",
+                "Starts with",
+                "Ends with",
+                "Any Case (contains, ignore upper/lower)",
+            ],
             key="cvs_mode",
         )
     with cvs_c3:
@@ -2487,43 +2495,3 @@ with tabs[8]:
 - Search any value across all files, sheets, rows and columns
 - List all customers, show all rows, show all columns
 """)
-
-    # ── Chat history ─────────────────────────────────────────────
-    scope_key = "all" if use_corpus else f"{selected_file}_{selected_sheet}"
-    hist_key  = f"sq_hist_{scope_key}"
-    if hist_key not in st.session_state:
-        st.session_state[hist_key] = []
-
-    for tidx, turn in enumerate(st.session_state[hist_key]):
-        st.markdown(
-            f'<div class="q-user">🧑 {turn["q"]}</div>', unsafe_allow_html=True
-        )
-        st.markdown('<div class="clearfix"></div>', unsafe_allow_html=True)
-        sq_render_answer(turn["res"], tidx)
-        st.markdown("---")
-
-    # ── Input bar ─────────────────────────────────────────────────
-    st.markdown("---")
-    ic, bc, cc = st.columns([8, 1, 1])
-    with ic:
-        user_q = st.text_input(
-            "Ask anything about the data:",
-            placeholder="",
-            key=f"sq_input_{scope_key}",
-            label_visibility="collapsed",
-        )
-    with bc:
-        ask_btn = st.button(
-            "Ask ▶", type="primary", use_container_width=True,
-            key=f"sq_ask_{scope_key}",
-        )
-    with cc:
-        if st.button("Clear 🗑", use_container_width=True, key=f"sq_clear_{scope_key}"):
-            st.session_state[hist_key] = []
-            st.rerun()
-
-    if ask_btn and user_q.strip():
-        with st.spinner("🔍 Searching every file, sheet, row and column…"):
-            res = smart_corpus_query(user_q, use_all=use_corpus)
-        st.session_state[hist_key].append({"q": user_q, "res": res})
-        st.rerun()
