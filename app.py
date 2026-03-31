@@ -1283,510 +1283,805 @@ with tabs[7]:
         st.plotly_chart(fig_fs, use_container_width=True)
 
 
+
+
 # ═══════════════════════════════════════════════════════
 # TAB 8 – AI SMART QUERY (Natural Language)
 # ═══════════════════════════════════════════════════════
 with tabs[8]:
     st.markdown("## 💬 AI Smart Query")
-    st.markdown(
-        f"Querying: **{loc_label}** › **{selected_sheet}**  "
-        f"_(change file/sheet in sidebar)_"
-    )
 
+    # ── Scope selector ──────────────────────────────────────────
+    scope_col1, scope_col2 = st.columns([3, 1])
+    with scope_col1:
+        search_scope = st.radio(
+            "Search scope:",
+            ["🌍 All Files (entire corpus)", f"📄 Current Sheet ({loc_label} › {selected_sheet})"],
+            horizontal=True,
+            key="sq_scope",
+        )
+    with scope_col2:
+        st.markdown(
+            f'<div class="kcard kcard-blue" style="padding:10px 14px;">'
+            f'<h2 style="font-size:1.4rem;">{meta["total_cells"]:,}</h2>'
+            f'<p>Total indexed cells</p></div>',
+            unsafe_allow_html=True,
+        )
+
+    use_corpus = search_scope.startswith("🌍")
+
+    # ── Stats bar ───────────────────────────────────────────────
     qi1, qi2, qi3, qi4 = st.columns(4)
-    qi1.markdown(
-        f'<div class="kcard kcard-blue"><h2>{sq_meta["total_cells"]:,}</h2>'
-        f"<p>Total Cells in Sheet</p></div>", unsafe_allow_html=True,
-    )
-    qi2.markdown(
-        f'<div class="kcard kcard-green"><h2>{sq_meta["total_data"]:,}</h2>'
-        f"<p>Data Cells</p></div>", unsafe_allow_html=True,
-    )
-    qi3.markdown(
-        f'<div class="kcard kcard-purple"><h2>{sq_meta["total_rows"]:,}</h2>'
-        f"<p>Data Rows</p></div>", unsafe_allow_html=True,
-    )
-    qi4.markdown(
-        f'<div class="kcard kcard-cyan"><h2>{sq_meta["total_headers"]:,}</h2>'
-        f"<p>Header Cells</p></div>", unsafe_allow_html=True,
-    )
+    if use_corpus:
+        qi1.markdown(
+            f'<div class="kcard kcard-blue"><h2>{meta["total_cells"]:,}</h2>'
+            f"<p>Total Cells (All Files)</p></div>", unsafe_allow_html=True,
+        )
+        qi2.markdown(
+            f'<div class="kcard kcard-green"><h2>{meta["total_files"]}</h2>'
+            f"<p>Files Indexed</p></div>", unsafe_allow_html=True,
+        )
+        qi3.markdown(
+            f'<div class="kcard kcard-purple"><h2>{meta["total_sheets"]}</h2>'
+            f"<p>Sheets Indexed</p></div>", unsafe_allow_html=True,
+        )
+        qi4.markdown(
+            f'<div class="kcard kcard-cyan"><h2>{meta["total_rows"]:,}</h2>'
+            f"<p>Data Rows</p></div>", unsafe_allow_html=True,
+        )
+    else:
+        qi1.markdown(
+            f'<div class="kcard kcard-blue"><h2>{sq_meta["total_cells"]:,}</h2>'
+            f"<p>Sheet Cells</p></div>", unsafe_allow_html=True,
+        )
+        qi2.markdown(
+            f'<div class="kcard kcard-green"><h2>{sq_meta["total_data"]:,}</h2>'
+            f"<p>Data Cells</p></div>", unsafe_allow_html=True,
+        )
+        qi3.markdown(
+            f'<div class="kcard kcard-purple"><h2>{sq_meta["total_rows"]:,}</h2>'
+            f"<p>Data Rows</p></div>", unsafe_allow_html=True,
+        )
+        qi4.markdown(
+            f'<div class="kcard kcard-cyan"><h2>{sq_meta["total_headers"]:,}</h2>'
+            f"<p>Header Cells</p></div>", unsafe_allow_html=True,
+        )
 
-    def _is_num(v):
+    # ════════════════════════════════════════════════════════════
+    # SMART QUERY ENGINE
+    # ════════════════════════════════════════════════════════════
+
+    def _sq_is_num(v):
+        """Return (True, float_val) or (False, None)."""
         try:
-            float(v)
-            return True
+            fv = float(str(v).replace(",", "").replace(" ", "").strip())
+            return True, fv
         except Exception:
-            return False
+            return False, None
 
-    _OP_VERBS = {
+    # Expanded synonym map covering actual column names in capacity tracker files
+    _SQ_SYN = {
+        "subscription": [
+            "subscription", "subscribed", "subscript", "subscriptionkw",
+            "sub", "contracted",
+        ],
+        "capacity": [
+            "capacity", "capac", "totalcapacity", "installedcapacity",
+            "total capacity", "installed capacity",
+        ],
+        "power": [
+            "power", "kw", "kva", "watt", "watts", "powerload",
+            "load", "powerallocation",
+        ],
+        "usage": [
+            "usage", "utilization", "utilisation", "consumption",
+            "consumed", "actual", "actualusage",
+        ],
+        "rack": [
+            "rack", "racks", "rackunits", "rackunit",
+            "noofracks", "numberofracks", "no of rack",
+        ],
+        "space": [
+            "space", "sqft", "sq ft", "sq.ft", "area", "floorspace",
+            "cabinets", "cabinet",
+        ],
+        "customer": [
+            "customer", "name", "customers", "client", "clients",
+            "customername", "customer name", "clientname", "company",
+            "organization", "organisation", "account",
+        ],
+        "billing": [
+            "billing", "bill", "invoice", "billed", "amount",
+            "monthlybilling",
+        ],
+        "ownership": [
+            "ownership", "owned", "owner", "ownertype", "owner type",
+        ],
+        "revenue": [
+            "revenue", "income", "earning", "earnings", "arr",
+        ],
+        "location": [
+            "location", "site", "dc", "datacenter", "data center",
+            "city", "region",
+        ],
+        "status": [
+            "status", "live", "active", "inactive", "commissioned",
+            "customer status", "operational",
+        ],
+        "sno": ["sno", "sr no", "sr. no", "serial", "sl no", "srno"],
+        "sector": ["sector", "industry", "vertical", "segment"],
+        "hall": ["hall", "floor", "zone", "wing", "block"],
+        "ups": ["ups", "ups capacity", "ups load"],
+        "cooling": ["cooling", "crac", "precision cooling"],
+    }
+
+    def _sq_mcol(kw, hdr):
+        """Multi-strategy column header matching."""
+        hl   = hdr.lower().strip()
+        kwl  = kw.lower().strip()
+        if not kwl:
+            return False
+        # Direct containment
+        if kwl in hl or hl in kwl:
+            return True
+        # Strip punctuation/spaces
+        _strip = lambda s: re.sub(r"[\s\(\)\[\]\.,:;\-_/]", "", s)
+        hl_c  = _strip(hl)
+        kwl_c = _strip(kwl)
+        if kwl_c and (kwl_c in hl_c or hl_c in kwl_c):
+            return True
+        # Synonym lookup
+        for key, syns in _SQ_SYN.items():
+            if kwl in syns or kwl == key:
+                for s in syns:
+                    sc = _strip(s)
+                    if sc and (sc in hl_c or hl_c in sc):
+                        return True
+        # Token overlap
+        kw_words = {w for w in re.findall(r"[a-z0-9]+", kwl) if len(w) >= 3}
+        hl_words = {w for w in re.findall(r"[a-z0-9]+", hl)}
+        if kw_words and kw_words & hl_words:
+            return True
+        return False
+
+    _SQ_OP_VERBS = {
         "total","sum","avg","mean","max","min","count","list","find",
         "show","all","average","maximum","minimum","highest","lowest",
         "top","bottom","describe","statistics","stats","summary","unique",
         "distinct","sheet","column","row","missing","null","percent",
-        "percentage","ratio","share","number","across","compare",
+        "percentage","ratio","share","number","across","compare","get",
+        "give","what","which","where","how","tell","much","many","each",
+        "every","display","view","see","provide",
     }
 
-    _SYN = {
-        "subscription": ["subscription","subscribed","subscript"],
-        "capacity": ["capacity","capac"],
-        "power": ["power","kw","kva"],
-        "usage": ["usage","utilization","consumption","consumed"],
-        "rack": ["rack","racks"],
-        "space": ["space","sqft","sq ft","area"],
-        "customer": ["customer","name","customers","client","clients"],
-        "billing": ["billing","bill","invoice"],
-        "ownership": ["ownership","owned","owner"],
-        "revenue": ["revenue","income","earning"],
-    }
-
-    def _mcol(kw, hdr):
-        hl = hdr.lower()
-        kwl = kw.lower()
-        if kwl in hl:
-            return True
-        for key, syns in _SYN.items():
-            if kwl in syns or kwl == key:
-                for s in syns:
-                    if s in hl:
-                        return True
-        return False
-
-    def sheet_query(question):
-        q = question.strip()
+    def smart_corpus_query(question, use_all=True):
+        """
+        Natural-language query engine.
+        use_all=True  → corpus (all files/sheets)
+        use_all=False → sq_cells/sq_rows (current sheet only)
+        """
+        q  = question.strip()
         ql = q.lower()
-        sig = [w for w in re.findall(r"[a-z0-9]{3,}", ql) if w not in _SW]
 
-        f_sum  = any(x in ql for x in ["total","sum","aggregate"])
-        f_avg  = any(x in ql for x in ["average","mean","avg"])
-        f_max  = any(x in ql for x in ["maximum","highest","largest","max","top value"])
-        f_min  = any(x in ql for x in ["minimum","lowest","smallest","min"])
-        f_cnt  = any(x in ql for x in ["count","how many","number of"])
-        f_stat = any(x in ql for x in ["statistics","stats","describe","summary","all stats"])
-        f_uniq = any(x in ql for x in ["unique","distinct","different"])
-        f_miss = any(x in ql for x in ["missing","null","blank","empty"])
-        f_cols = any(x in ql for x in ["column","columns","field","header","headers"])
-        f_topn = re.search(r"\btop\s*(\d+)\b", ql)
-        f_botn = re.search(r"\bbottom\s*(\d+)\b", ql)
-        f_num  = (f_sum or f_avg or f_max or f_min or f_cnt or f_stat
-                  or bool(f_topn) or bool(f_botn))
-        f_cust = any(x in ql for x in ["customer","customers","client","clients","name","names"])
-        f_list = any(x in ql for x in ["list","show","display","all"])
-        f_pct  = any(x in ql for x in ["percent","percentage","%","share"])
+        # Choose data source
+        if use_all:
+            wc = corpus       # cells: {file, location, sheet, row, col, col_header, value, is_header}
+            rr = row_records  # keyed by (fname, loc, sh, row_idx)
+        else:
+            wc = sq_cells     # cells (no file/location/sheet)
+            rr = sq_rows      # keyed by row_idx
 
         out = {
             "answer": "", "table": None, "chart_df": None,
             "chart_cfg": None, "cell_hits": [], "sub_tables": [],
         }
-        wc = sq_cells
-        rr = sq_rows
-
         if not wc:
-            out["answer"] = "❓ No data indexed in this sheet."
+            out["answer"] = "❓ No data indexed."
             return out
 
-        col_kws = [w for w in sig if w not in _OP_VERBS]
+        # ── Token extraction ────────────────────────────────────────
+        sig = [w for w in re.findall(r"[a-z0-9]{2,}", ql) if w not in _SW]
 
-        # ── helpers ──────────────────────────────────────────────────
-        def npkw(kw):
+        f_sum  = any(x in ql for x in ["total","sum","aggregate","grand total","add up"])
+        f_avg  = any(x in ql for x in ["average","mean","avg"])
+        f_max  = any(x in ql for x in ["maximum","highest","largest","max","biggest","top value"])
+        f_min  = any(x in ql for x in ["minimum","lowest","smallest","min","least"])
+        f_cnt  = any(x in ql for x in ["count","how many","number of","how much"])
+        f_stat = any(x in ql for x in ["statistics","stats","describe","summary","all stats","overview"])
+        f_uniq = any(x in ql for x in ["unique","distinct","different","variety"])
+        f_miss = any(x in ql for x in ["missing","null","blank","empty","nan"])
+        f_cols = any(x in ql for x in ["column","columns","field","header","headers","fields"])
+        f_topn = re.search(r"\btop\s*(\d+)\b", ql)
+        f_botn = re.search(r"\bbottom\s*(\d+)\b", ql)
+        f_pct  = any(x in ql for x in ["percent","percentage","%","share","proportion"])
+        f_num  = (f_sum or f_avg or f_max or f_min or f_cnt or f_stat
+                  or bool(f_topn) or bool(f_botn))
+        f_cust = any(x in ql for x in [
+            "customer","customers","client","clients","name","names",
+            "company","companies","account","accounts",
+        ])
+        f_list = any(x in ql for x in ["list","show","display","all","get all"])
+
+        # Location filter from query text
+        location_filter = None
+        if use_all:
+            for loc_name in meta.get("locations", []):
+                if loc_name.lower() in ql:
+                    location_filter = loc_name
+                    break
+
+        col_kws = [w for w in sig if w not in _SQ_OP_VERBS]
+
+        # ── Helpers ─────────────────────────────────────────────────
+        def _loc_filter(cells):
+            if location_filter and use_all:
+                return [c for c in cells
+                        if c.get("location","").lower() == location_filter.lower()]
+            return cells
+
+        def _rr_key(cell):
+            if use_all:
+                return (cell["file"], cell["location"], cell["sheet"], cell["row"])
+            return cell["row"]
+
+        def _get_row_data(cell):
+            return rr.get(_rr_key(cell), {})
+
+        def _npkw(kw, cells):
+            """Collect (float_val, cell) pairs where cell's col_header matches kw."""
             res = []
-            for cell in wc:
+            for cell in cells:
                 if cell["is_header"]:
                     continue
-                if _mcol(kw, cell["col_header"]):
-                    try:
-                        res.append((float(cell["value"]), cell))
-                    except Exception:
-                        pass
+                if _sq_mcol(kw, cell["col_header"]):
+                    ok, fv = _sq_is_num(cell["value"])
+                    if ok:
+                        res.append((fv, cell))
             return res
 
-        def npbest(kws):
+        def _npbest(kws, cells):
             bk, bp = None, []
             for w in kws:
-                p = npkw(w)
+                p = _npkw(w, cells)
                 if len(p) > len(bp):
-                    bp = p; bk = w
+                    bp, bk = p, w
             return bk, bp
 
-        def build_rows_df(row_nums):
+        def _build_rows_df(cells_list):
+            """Full-row DataFrame from a list of cells."""
+            seen_keys = set()
             recs = []
-            for rn in sorted(row_nums):
-                rec = rr.get(rn, {})
-                if rec:
-                    rd = {"Row #": rn + 1}
-                    rd.update(rec)
-                    recs.append(rd)
+            for cell in cells_list:
+                key = _rr_key(cell)
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                row_data = _get_row_data(cell)
+                if not row_data:
+                    continue
+                rd = {}
+                if use_all:
+                    rd["Location"] = cell.get("location", "")
+                    rd["Sheet"]    = cell.get("sheet", "")
+                rd["Row #"] = cell["row"] + 1
+                rd.update(row_data)
+                recs.append(rd)
             return pd.DataFrame(recs) if recs else pd.DataFrame()
 
-        # words that are column-like (match a header) vs value-like (found in data)
-        def _col_match_score(w):
-            cnt = sum(1 for c in wc if c["is_header"] and _mcol(w, c["value"]))
-            return cnt
-
-        def _val_match_rows(terms):
-            rows = set()
-            cells = []
-            for cell in wc:
+        def _val_match(terms, cells):
+            """Return cells (non-header) where value contains any term."""
+            matched = []
+            for cell in cells:
                 if cell["is_header"]:
                     continue
-                if any(t in cell["value"].lower() for t in terms):
-                    rows.add(cell["row"])
-                    cells.append(cell)
-            return sorted(rows), cells
+                val_l = cell["value"].lower()
+                if any(t in val_l for t in terms):
+                    matched.append(cell)
+            return matched
 
-        def _attr_rows(attr_kw, row_nums):
-            res = []
-            for cell in wc:
-                if cell["is_header"] or cell["row"] not in set(row_nums):
-                    continue
-                if _mcol(attr_kw, cell["col_header"]):
-                    res.append(cell)
-            return res
-
-        def _known_col_headers():
-            seen, out2 = set(), []
-            for c in wc:
-                if c["is_header"]:
-                    v = c["value"].strip()
-                    if v and v not in seen:
-                        seen.add(v); out2.append(v)
-            return out2
+        def _col_match_score(w, cells):
+            return sum(1 for c in cells if c["is_header"] and _sq_mcol(w, c["value"]))
 
         # ── INTENT: Missing values ──────────────────────────────────
         if f_miss:
             dfc = to_numeric(smart_header(raw_df))
-            mr = []
+            mr  = []
             for col in dfc.columns:
                 mc = int(dfc[col].isna().sum())
                 if mc > 0:
-                    mr.append({"Column": col, "Missing Count": mc,
-                               "Missing %": f"{mc/max(len(dfc),1)*100:.1f}%",
-                               "Non-Null": len(dfc) - mc})
+                    mr.append({
+                        "Column": col,
+                        "Missing Count": mc,
+                        "Missing %": f"{mc / max(len(dfc), 1) * 100:.1f}%",
+                        "Non-Null": len(dfc) - mc,
+                    })
             if mr:
                 tbl = pd.DataFrame(mr).sort_values("Missing Count", ascending=False)
-                out["answer"] = f"Found **{len(tbl)}** column(s) with missing values."
+                out["answer"] = (
+                    f"Found **{len(tbl)}** column(s) with missing values in the current sheet."
+                )
                 out["table"] = tbl
             else:
-                out["answer"] = "✅ No missing values found in this sheet."
+                out["answer"] = "✅ No missing values found in the current sheet."
             return out
 
         # ── INTENT: Column listing ──────────────────────────────────
         if f_cols and not f_num:
-            seen, cr = set(), []
-            for cell in wc:
+            src = _loc_filter(wc)
+            seen_h, cr = set(), []
+            for cell in src:
                 if not cell["is_header"]:
                     continue
                 ch = cell["value"].strip()
-                if ch in ("", "nan") or ch in seen:
+                if ch in ("", "nan", "None") or ch in seen_h:
                     continue
-                seen.add(ch)
-                cr.append({"Column Header": ch, "At Row": cell["row"]+1, "At Col": cell["col"]+1})
+                seen_h.add(ch)
+                entry = {"Column Header": ch}
+                if use_all:
+                    entry["Location"] = cell.get("location", "")
+                    entry["Sheet"]    = cell.get("sheet", "")
+                entry["At Row"] = cell["row"] + 1
+                entry["At Col"] = cell["col"] + 1
+                cr.append(entry)
             tbl = pd.DataFrame(cr) if cr else pd.DataFrame()
-            out["answer"] = f"Found **{len(tbl)}** unique column header(s) in this sheet."
-            out["table"] = tbl
+            scope_txt = "across all files" if use_all else "in this sheet"
+            out["answer"] = f"Found **{len(tbl)}** unique column header(s) {scope_txt}."
+            out["table"]  = tbl
+            return out
+
+        # ── INTENT: List customers ──────────────────────────────────
+        if (f_cust or f_list) and not f_num and not col_kws:
+            src = _loc_filter(wc)
+            cust_kws = [
+                "customer", "name", "client", "company",
+                "account", "organisation", "organization",
+            ]
+            found_cells = [
+                c for c in src
+                if not c["is_header"]
+                and any(x in c["col_header"].lower() for x in cust_kws)
+            ]
+            if found_cells:
+                rows_data = []
+                for cell in found_cells:
+                    entry = {}
+                    if use_all:
+                        entry["Location"] = cell.get("location", "")
+                        entry["Sheet"]    = cell.get("sheet", "")
+                    entry["Row #"]  = cell["row"] + 1
+                    entry["Column"] = cell["col_header"]
+                    entry["Value"]  = cell["value"]
+                    rows_data.append(entry)
+                tbl = pd.DataFrame(rows_data).drop_duplicates(subset=["Value"])
+                scope_txt = "across all files" if use_all else "in this sheet"
+                out["answer"] = (
+                    f"Found **{len(tbl)}** unique customer/name entries {scope_txt}."
+                )
+                out["table"] = tbl
+                full_rows_df = _build_rows_df(found_cells)
+                if not full_rows_df.empty:
+                    out["sub_tables"].append({
+                        "label": f"📋 Full Row Data for All Customers ({len(found_cells)} rows)",
+                        "df": full_rows_df,
+                    })
+            else:
+                out["answer"] = (
+                    "No 'Customer/Name/Client' columns found. "
+                    "Try: _Find CISCO_ or _Show all rows_"
+                )
             return out
 
         # ── INTENT: Numeric aggregation ─────────────────────────────
         if f_num:
-            kw, pairs = npbest(col_kws)
+            src   = _loc_filter(wc)
+            kw, pairs = _npbest(col_kws, src)
             if not pairs:
-                for dkw in ["subscription","capacity","power","usage","rack",
-                            "space","consumption","kw","kva","sqft","revenue"]:
+                for dkw in [
+                    "subscription","capacity","power","usage","rack",
+                    "space","revenue","billing","kw","kva","sqft",
+                ]:
                     if dkw in ql:
-                        pairs = npkw(dkw)
-                        if pairs: kw = dkw; break
+                        pairs = _npkw(dkw, src)
+                        if pairs:
+                            kw = dkw
+                            break
             if pairs:
                 vals = [v for v, _ in pairs]
                 sa   = pd.Series(vals)
                 parts = []
-                if f_sum  or f_stat: parts.append(f"**Total (Sum):** {sa.sum():,.4f}")
-                if f_avg  or f_stat: parts.append(f"**Average (Mean):** {sa.mean():,.4f}")
-                if f_max  or f_stat: parts.append(f"**Maximum:** {sa.max():,.4f}")
-                if f_min  or f_stat: parts.append(f"**Minimum:** {sa.min():,.4f}")
-                if f_cnt  or f_stat: parts.append(f"**Count:** {sa.count():,}")
+                if f_sum  or f_stat: parts.append(f"**Total (Sum):** {sa.sum():,.2f}")
+                if f_avg  or f_stat: parts.append(f"**Average (Mean):** {sa.mean():,.2f}")
+                if f_max  or f_stat: parts.append(f"**Maximum:** {sa.max():,.2f}")
+                if f_min  or f_stat: parts.append(f"**Minimum:** {sa.min():,.2f}")
+                if f_cnt  or f_stat: parts.append(f"**Count:** {int(sa.count()):,}")
                 if f_stat:
-                    parts.append(f"**Median:** {sa.median():,.4f} | "
-                                 f"**Std Dev:** {sa.std():,.4f} | "
-                                 f"**Range:** {sa.max()-sa.min():,.4f}")
+                    parts.append(
+                        f"**Median:** {sa.median():,.2f}  |  "
+                        f"**Std Dev:** {sa.std():,.2f}  |  "
+                        f"**Range:** {sa.max() - sa.min():,.2f}"
+                    )
                 if f_pct:
-                    grand = sum(float(c["value"]) for c in wc
-                                if not c["is_header"] and _is_num(c["value"])) or 1
-                    parts.append(f"**% of Sheet Total:** {sa.sum()/grand*100:.2f}%")
+                    grand = sum(
+                        fv for c in src if not c["is_header"]
+                        for ok, fv in [_sq_is_num(c["value"])] if ok
+                    ) or 1
+                    parts.append(f"**% of All Numeric:** {sa.sum() / grand * 100:.2f}%")
                 if (f_topn or f_botn) and not (f_sum or f_avg or f_max or f_min or f_cnt or f_stat):
-                    parts.append(f"**Count:** {sa.count():,}")
-                    parts.append(f"**Total (Sum):** {sa.sum():,.4f}")
+                    parts.append(f"**Count:** {int(sa.count()):,}")
+                    parts.append(f"**Total:** {sa.sum():,.2f}")
 
-                detail = [{"Row #": c["row"]+1, "Col #": c["col"]+1,
-                           "Column Header": c["col_header"], "Value": v}
-                          for v, c in pairs]
+                # Detail table
+                detail = []
+                for v, cell in pairs:
+                    entry = {}
+                    if use_all:
+                        entry["Location"]      = cell.get("location", "")
+                        entry["Sheet"]         = cell.get("sheet", "")
+                    entry["Row #"]         = cell["row"] + 1
+                    entry["Column Header"] = cell["col_header"]
+                    entry["Value"]         = v
+                    detail.append(entry)
                 tbl = pd.DataFrame(detail).sort_values("Value", ascending=False)
-                out["answer"] = (f"Results for **'{kw}'** — **{len(vals):,} values** found:\n\n"
-                                 + "\n".join(parts))
+
+                scope_txt = "across all files" if use_all else "in this sheet"
+                loc_note  = f" (Location: **{location_filter}**)" if location_filter else ""
+                out["answer"] = (
+                    f"Results for **'{kw}'** — **{len(vals):,} values** found {scope_txt}{loc_note}:\n\n"
+                    + "\n".join(parts)
+                )
                 out["table"] = tbl
 
-                # also show full rows that contain these values
-                paired_rows = sorted({c["row"] for _, c in pairs})
-                full_rows_df = build_rows_df(paired_rows)
+                # Full rows
+                full_rows_df = _build_rows_df([cell for _, cell in pairs])
                 if not full_rows_df.empty:
                     out["sub_tables"].append({
-                        "label": f"📋 Full Row Data for '{kw}' ({len(paired_rows)} rows)",
+                        "label": f"📋 Full Row Data for '{kw}' ({len(pairs)} rows)",
                         "df": full_rows_df,
                     })
+
+                # Bar chart by location (multi-file mode)
+                if use_all and "Location" in tbl.columns and tbl["Location"].nunique() > 1:
+                    loc_agg = (
+                        tbl.groupby("Location")["Value"].sum()
+                        .reset_index()
+                        .rename(columns={"Value": "Total"})
+                    )
+                    out["chart_df"]  = loc_agg
+                    out["chart_cfg"] = {
+                        "x": "Location", "y": "Total",
+                        "title": f"Sum of '{kw}' by Location",
+                    }
 
                 if f_topn:
                     n   = int(f_topn.group(1))
                     top = sorted(pairs, key=lambda x: x[0], reverse=True)[:n]
-                    top_rows = sorted({c["row"] for _, c in top})
-                    top_full = build_rows_df(top_rows)
+                    top_df = _build_rows_df([c for _, c in top])
+                    if top_df.empty:
+                        top_df = pd.DataFrame([
+                            dict(
+                                **({} if not use_all else {
+                                    "Location": c.get("location",""),
+                                    "Sheet": c.get("sheet",""),
+                                }),
+                                **{"Row #": c["row"]+1, "Column": c["col_header"], "Value": v}
+                            )
+                            for v, c in top
+                        ])
                     out["sub_tables"].append({
-                        "label": f"🏆 Top {n} — '{kw}' (full rows)",
-                        "df": top_full if not top_full.empty else pd.DataFrame(
-                            [{"Row": c["row"]+1, "Column": c["col_header"], "Value": v}
-                             for v, c in top]),
+                        "label": f"🏆 Top {n} — '{kw}'",
+                        "df": top_df,
                     })
                 if f_botn:
                     n   = int(f_botn.group(1))
                     bot = sorted(pairs, key=lambda x: x[0])[:n]
-                    bot_rows = sorted({c["row"] for _, c in bot})
-                    bot_full = build_rows_df(bot_rows)
+                    bot_df = _build_rows_df([c for _, c in bot])
+                    if bot_df.empty:
+                        bot_df = pd.DataFrame([
+                            dict(
+                                **({} if not use_all else {
+                                    "Location": c.get("location",""),
+                                    "Sheet": c.get("sheet",""),
+                                }),
+                                **{"Row #": c["row"]+1, "Column": c["col_header"], "Value": v}
+                            )
+                            for v, c in bot
+                        ])
                     out["sub_tables"].append({
-                        "label": f"🔻 Bottom {n} — '{kw}' (full rows)",
-                        "df": bot_full if not bot_full.empty else pd.DataFrame(
-                            [{"Row": c["row"]+1, "Column": c["col_header"], "Value": v}
-                             for v, c in bot]),
+                        "label": f"🔻 Bottom {n} — '{kw}'",
+                        "df": bot_df,
                     })
                 return out
 
-            # fallback – all numeric cells
-            anums = [(float(c["value"]), c) for c in wc
-                     if not c["is_header"] and _is_num(c["value"])]
+            # No column matched → all numeric cells
+            src  = _loc_filter(wc)
+            anums = []
+            for c in src:
+                if c["is_header"]:
+                    continue
+                ok, fv = _sq_is_num(c["value"])
+                if ok:
+                    anums.append((fv, c))
             if anums:
                 vals = [v for v, _ in anums]
                 sa   = pd.Series(vals)
                 parts = []
-                if f_sum:  parts.append(f"**Sum ALL numeric cells:** {sa.sum():,.4f}")
-                if f_avg:  parts.append(f"**Avg ALL numeric cells:** {sa.mean():,.4f}")
-                if f_max:  parts.append(f"**Max ALL numeric cells:** {sa.max():,.4f}")
-                if f_min:  parts.append(f"**Min ALL numeric cells:** {sa.min():,.4f}")
-                if f_cnt:  parts.append(f"**Count ALL numeric cells:** {sa.count():,}")
+                if f_sum:  parts.append(f"**Sum of all numeric cells:** {sa.sum():,.2f}")
+                if f_avg:  parts.append(f"**Avg of all numeric cells:** {sa.mean():,.2f}")
+                if f_max:  parts.append(f"**Max of all numeric cells:** {sa.max():,.2f}")
+                if f_min:  parts.append(f"**Min of all numeric cells:** {sa.min():,.2f}")
+                if f_cnt:  parts.append(f"**Count of all numeric cells:** {int(sa.count()):,}")
                 if f_stat:
-                    parts.append(f"**Sum:** {sa.sum():,.4f} | **Avg:** {sa.mean():,.4f} | "
-                                 f"**Max:** {sa.max():,.4f} | **Min:** {sa.min():,.4f} | "
-                                 f"**Median:** {sa.median():,.4f} | **Std Dev:** {sa.std():,.4f}")
-                out["answer"] = ("No column matched your keywords. "
-                                 "Results from **ALL numeric cells** in sheet:\n\n"
-                                 + "\n".join(parts))
+                    parts.append(
+                        f"**Sum:** {sa.sum():,.2f}  |  **Avg:** {sa.mean():,.2f}  |  "
+                        f"**Max:** {sa.max():,.2f}  |  **Min:** {sa.min():,.2f}  |  "
+                        f"**Median:** {sa.median():,.2f}  |  **Std Dev:** {sa.std():,.2f}"
+                    )
+                out["answer"] = (
+                    "No specific column matched. Results from **ALL numeric cells**:\n\n"
+                    + "\n".join(parts)
+                )
                 return out
 
         # ── INTENT: Unique values ────────────────────────────────────
         if f_uniq:
-            for w in col_kws or sig:
+            src = _loc_filter(wc)
+            for w in (col_kws or sig):
                 uv, sr = set(), []
-                for cell in wc:
-                    if cell["is_header"]: continue
-                    if _mcol(w, cell["col_header"]):
+                for cell in src:
+                    if cell["is_header"]:
+                        continue
+                    if _sq_mcol(w, cell["col_header"]):
                         uv.add(cell["value"])
-                        sr.append({"Column": cell["col_header"],
-                                   "Value": cell["value"], "Row #": cell["row"]+1})
+                        entry = {"Column": cell["col_header"], "Value": cell["value"]}
+                        if use_all:
+                            entry["Location"] = cell.get("location", "")
+                            entry["Sheet"]    = cell.get("sheet", "")
+                        entry["Row #"] = cell["row"] + 1
+                        sr.append(entry)
                 if uv:
                     tbl = pd.DataFrame(sr).drop_duplicates(subset=["Value"])
-                    out["answer"] = f"**{len(uv)}** unique value(s) found for **'{w}'**."
+                    out["answer"] = (
+                        f"**{len(uv)}** unique value(s) found for **'{w}'**."
+                    )
                     out["table"] = tbl
                     return out
 
-        # ── INTENT: Cross-column relational lookup ───────────────────
-        # Handles queries like:
-        #   "power of CISCO"  /  "subscription for HDFC"
-        #   "CISCO power"  /  "HDFC capacity and rack"
-        #   "what is billing for TCS"  /  "show rack where customer is WIPRO"
-        if not f_num:
-            # strip op verbs to get candidate tokens
-            tokens = [w for w in sig if w not in _OP_VERBS]
+        # ── INTENT: Cross-column / entity-lookup ─────────────────────
+        src     = _loc_filter(wc)
+        tokens  = [w for w in sig if w not in _SQ_OP_VERBS]
+        col_scores  = {w: _col_match_score(w, src) for w in tokens}
+        val_scores  = {
+            w: sum(1 for c in src if not c["is_header"] and w in c["value"].lower())
+            for w in tokens
+        }
+        attr_toks   = [w for w in tokens if col_scores.get(w, 0) > 0]
+        entity_toks = [w for w in tokens if val_scores.get(w, 0) > 0]
 
-            # score each token: col_score = how well it matches a column header
-            #                   val_score = how many data cells contain it
-            col_scores = {w: _col_match_score(w) for w in tokens}
-            val_scores = {w: sum(1 for c in wc
-                                 if not c["is_header"] and w in c["value"].lower())
-                          for w in tokens}
+        quoted = re.findall(r'"([^"]+)"', q)
+        if quoted:
+            entity_cells = _val_match([quoted[0].lower()], src)
+        else:
+            entity_cells = _val_match(entity_toks, src)
 
-            attr_toks  = [w for w in tokens if col_scores.get(w, 0) > 0]
-            entity_toks = [w for w in tokens if val_scores.get(w, 0) > 0]
-
-            # also try multi-word entity from the raw query (quoted or unquoted)
-            quoted = re.findall(r'"([^"]+)"', q)
-            if quoted:
-                entity_phrase = [quoted[0].lower()]
-                entity_rows_q, entity_cells_q = _val_match_rows(entity_phrase)
-                if entity_rows_q:
-                    entity_toks = entity_phrase
-                    entity_rows, entity_cells = entity_rows_q, entity_cells_q
+        # Case 1: attribute AND entity
+        if attr_toks and entity_cells:
+            entity_keys = {_rr_key(c) for c in entity_cells}
+            recs = []
+            for key in sorted(entity_keys, key=lambda k: (k if isinstance(k, int) else k[-1])):
+                row_data = rr.get(key, {})
+                if not row_data:
+                    continue
+                rd = {}
+                if use_all and isinstance(key, tuple):
+                    rd["Location"] = key[1]
+                    rd["Sheet"]    = key[2]
+                    rd["Row #"]    = key[3] + 1
                 else:
-                    entity_rows, entity_cells = [], []
-            else:
-                entity_rows, entity_cells = _val_match_rows(entity_toks)
-
-            # ── Case 1: We have BOTH attribute (column) AND entity (value) tokens ──
-            if attr_toks and entity_rows:
-                recs = []
-                for rn in sorted(entity_rows):
-                    row_data = rr.get(rn, {})
-                    if not row_data:
-                        continue
-                    rd = {"Row #": rn + 1}
-                    # ① matched entity cells → show what was found
-                    for c in entity_cells:
-                        if c["row"] == rn:
-                            rd[f"[Matched] {c['col_header']}"] = c["value"]
-                    # ② requested attribute columns from same row
-                    for at in attr_toks:
-                        for col_h, val in row_data.items():
-                            if _mcol(at, col_h):
-                                rd[col_h] = val
-                    recs.append(rd)
-
-                if recs:
-                    tbl = pd.DataFrame(recs)
-                    entity_disp = ", ".join(f"'{t}'" for t in entity_toks[:3])
-                    attr_disp   = ", ".join(f"'{t}'" for t in attr_toks[:3])
-                    out["answer"] = (
-                        f"Cross-column lookup — entity **{entity_disp}** "
-                        f"found in **{len(entity_rows)}** row(s).\n\n"
-                        f"Showing **{attr_disp}** column value(s) for those rows:"
-                    )
-                    out["table"] = tbl
-
-                    # also offer the full rows as a sub-table
-                    full_rows_df = build_rows_df(entity_rows)
-                    if not full_rows_df.empty:
-                        out["sub_tables"].append({
-                            "label": f"📋 All Column Values for Matching Rows ({len(entity_rows)})",
-                            "df": full_rows_df,
-                        })
-                    return out
-
-            # ── Case 2: Only entity found → show ALL columns of matching rows ──
-            if entity_rows:
-                full_df = build_rows_df(entity_rows)
-                match_disp = ", ".join(f"'{t}'" for t in entity_toks[:4])
-                out["answer"] = (
-                    f"Found **{len(entity_cells):,}** cell(s) matching **{match_disp}** "
-                    f"across **{len(entity_rows):,}** row(s).\n\n"
-                    f"Showing **all column values** for every matching row:"
+                    rd["Row #"]    = (key + 1) if isinstance(key, int) else key[-1] + 1
+                for cell in entity_cells:
+                    if _rr_key(cell) == key:
+                        rd[f"[Matched] {cell['col_header']}"] = cell["value"]
+                for at in attr_toks:
+                    for col_h, val in row_data.items():
+                        if _sq_mcol(at, col_h):
+                            rd[col_h] = val
+                recs.append(rd)
+            if recs:
+                tbl = pd.DataFrame(recs)
+                entity_disp = ", ".join(
+                    f"'{t}'" for t in (entity_toks if not quoted else [quoted[0]])[:3]
                 )
-                out["table"] = full_df if not full_df.empty else None
-                # highlight which cells matched
-                out["cell_hits"] = [
-                    {"Row #": c["row"]+1, "Col #": c["col"]+1,
-                     "Column Header": c["col_header"], "Value": c["value"]}
-                    for c in entity_cells[:100]
-                ]
-                return out
-
-            # ── Case 3: Only attribute/column tokens → list all values in that column ──
-            if attr_toks:
-                best_attr = max(attr_toks, key=lambda w: col_scores[w])
-                sr = []
-                seen_rows = set()
-                for cell in wc:
-                    if cell["is_header"]: continue
-                    if _mcol(best_attr, cell["col_header"]):
-                        row_data = rr.get(cell["row"], {})
-                        if cell["row"] not in seen_rows:
-                            seen_rows.add(cell["row"])
-                            rd = {"Row #": cell["row"]+1, "Column": cell["col_header"],
-                                  "Value": cell["value"]}
-                            sr.append(rd)
-                if sr:
-                    tbl = pd.DataFrame(sr)
-                    out["answer"] = (
-                        f"Found **{len(sr)}** value(s) in column(s) matching **'{best_attr}'**.\n\n"
-                        f"Showing the value for every row in that column:"
-                    )
-                    out["table"] = tbl
-                    # full rows
-                    full_rows_df = build_rows_df(list(seen_rows))
-                    if not full_rows_df.empty:
-                        out["sub_tables"].append({
-                            "label": f"📋 Full Row Data for '{best_attr}' ({len(seen_rows)} rows)",
-                            "df": full_rows_df,
-                        })
-                    return out
-
-        # ── INTENT: List customers / names (fallback) ────────────────
-        if (f_cust or f_list) and not f_num:
-            found = []
-            for cell in wc:
-                if cell["is_header"]: continue
-                ch = cell["col_header"].lower()
-                if any(x in ch for x in ["customer","name","client","company"]):
-                    found.append({"Row #": cell["row"]+1,
-                                  "Column": cell["col_header"], "Value": cell["value"]})
-            if found:
-                tbl = pd.DataFrame(found).drop_duplicates(subset=["Value"])
-                out["answer"] = f"Found **{len(tbl)}** customer/name entries."
+                attr_disp  = ", ".join(f"'{t}'" for t in attr_toks[:3])
+                scope_txt  = "across all files" if use_all else "in this sheet"
+                loc_note   = f" (Location: **{location_filter}**)" if location_filter else ""
+                out["answer"] = (
+                    f"Cross-column lookup — entity **{entity_disp}** "
+                    f"found in **{len(entity_keys)}** row(s) {scope_txt}{loc_note}.\n\n"
+                    f"Showing **{attr_disp}** column value(s) for those rows:"
+                )
                 out["table"] = tbl
-                # full rows
-                name_rows = sorted({r["Row #"]-1 for r in found})
-                full_rows_df = build_rows_df(name_rows)
+                full_rows_df = _build_rows_df(entity_cells)
                 if not full_rows_df.empty:
                     out["sub_tables"].append({
-                        "label": f"📋 Full Row Data for All Customers ({len(name_rows)} rows)",
+                        "label": f"📋 All Columns for Matching Rows ({len(entity_keys)})",
                         "df": full_rows_df,
                     })
-            else:
-                out["answer"] = ("No 'Customer/Name/Client' columns found. "
-                                 "Try: *Find CISCO* or *Show all rows*")
+                return out
+
+        # Case 2: entity only
+        if entity_cells:
+            full_df     = _build_rows_df(entity_cells)
+            entity_keys = {_rr_key(c) for c in entity_cells}
+            match_disp  = (
+                f'"{quoted[0]}"' if quoted
+                else ", ".join(f"'{t}'" for t in entity_toks[:4])
+            )
+            scope_txt  = "across all files" if use_all else "in this sheet"
+            loc_note   = f" (Location: **{location_filter}**)" if location_filter else ""
+            out["answer"] = (
+                f"Found **{len(entity_cells):,}** cell(s) matching **{match_disp}** "
+                f"across **{len(entity_keys):,}** row(s) {scope_txt}{loc_note}.\n\n"
+                f"Showing **all column values** for every matching row:"
+            )
+            out["table"]     = full_df if not full_df.empty else None
+            out["cell_hits"] = [
+                dict(
+                    **({} if not use_all else {
+                        "Location": c.get("location",""),
+                        "Sheet":    c.get("sheet",""),
+                    }),
+                    **{
+                        "Row #":         c["row"] + 1,
+                        "Col #":         c["col"] + 1,
+                        "Column Header": c["col_header"],
+                        "Value":         c["value"],
+                    }
+                )
+                for c in entity_cells[:200]
+            ]
             return out
 
+        # Case 3: attribute/column only
+        if attr_toks:
+            best_attr = max(attr_toks, key=lambda w: col_scores[w])
+            sr, seen_keys = [], set()
+            for cell in src:
+                if cell["is_header"]:
+                    continue
+                if not _sq_mcol(best_attr, cell["col_header"]):
+                    continue
+                key = _rr_key(cell)
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                entry = {}
+                if use_all:
+                    entry["Location"] = cell.get("location", "")
+                    entry["Sheet"]    = cell.get("sheet", "")
+                entry["Row #"]  = cell["row"] + 1
+                entry["Column"] = cell["col_header"]
+                entry["Value"]  = cell["value"]
+                sr.append(entry)
+            if sr:
+                tbl = pd.DataFrame(sr)
+                scope_txt = "across all files" if use_all else "in this sheet"
+                out["answer"] = (
+                    f"Found **{len(sr)}** value(s) in column(s) matching "
+                    f"**'{best_attr}'** {scope_txt}.\n\n"
+                    f"Showing the value for every row in that column:"
+                )
+                out["table"] = tbl
+                matching_cells = [
+                    c for c in src
+                    if not c["is_header"] and _sq_mcol(best_attr, c["col_header"])
+                ]
+                full_rows_df = _build_rows_df(matching_cells)
+                if not full_rows_df.empty:
+                    out["sub_tables"].append({
+                        "label": f"📋 Full Row Data for '{best_attr}' ({len(sr)} rows)",
+                        "df": full_rows_df,
+                    })
+                return out
+
+        # Show-all-rows fallback
+        if f_list or "all rows" in ql or "show all" in ql or "every row" in ql:
+            seen_keys, recs = set(), []
+            for cell in src:
+                if cell["is_header"]:
+                    continue
+                key = _rr_key(cell)
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                row_data = rr.get(key, {})
+                if not row_data:
+                    continue
+                rd = {}
+                if use_all and isinstance(key, tuple):
+                    rd["Location"] = key[1]
+                    rd["Sheet"]    = key[2]
+                    rd["Row #"]    = key[3] + 1
+                else:
+                    rd["Row #"] = (key + 1) if isinstance(key, int) else key[-1] + 1
+                rd.update(row_data)
+                recs.append(rd)
+            if recs:
+                tbl = pd.DataFrame(recs)
+                scope_txt = "across all files" if use_all else "in this sheet"
+                out["answer"] = f"Showing **all {len(recs):,}** data rows {scope_txt}."
+                out["table"] = tbl
+                return out
+
         out["answer"] = (
-            "❓ Could not match your query.\n\n"
+            "❓ Could not match your query to any data.\n\n"
             "**Try relational queries like:**\n"
-            "- *Power of CISCO* · *Subscription for HDFC* · *WIPRO capacity*\n"
-            "- *Show rack where customer is TCS*\n\n"
-            "**Or standard queries:**\n"
-            "- *List all customers* · *Find CISCO* · *Total subscription*\n"
-            "- *Top 10 power* · *Average capacity* · *Statistics of usage*\n"
-            "- *Show all columns* · *How many missing values*"
+            "- _Power of CISCO_ · _Subscription for HDFC_ · _WIPRO capacity_\n"
+            "- _Find Infosys_ · _HDFC power subscription rack_\n\n"
+            "**Numeric queries:**\n"
+            "- _Total subscription_ · _Average capacity_ · _Max power_\n"
+            "- _Top 10 power_ · _Bottom 5 usage_ · _Count customers_\n"
+            "- _Statistics of capacity_ · _Percentage of subscription_\n\n"
+            "**Info queries:**\n"
+            "- _List all customers_ · _Show all columns_ · _Unique values of rack_\n"
+            "- _How many missing values_ · _Show all rows_\n\n"
+            "**Location-specific (All Files scope):**\n"
+            "- _Total power in Airoli_ · _Customers in Noida_\n"
+            "- _Average subscription at Bangalore_\n"
         )
         return out
 
-    def render_answer(res, tidx=0):
+    # ── Render ────────────────────────────────────────────────────
+    def sq_render_answer(res, tidx=0):
         st.markdown(
-            f'<div class="ans-box">{res["answer"]}</div>', unsafe_allow_html=True
+            f'<div class="ans-box">{res["answer"]}</div>',
+            unsafe_allow_html=True,
         )
         if res.get("table") is not None and not res["table"].empty:
             tbl = res["table"].reset_index(drop=True)
             st.dataframe(
                 tbl, use_container_width=True,
-                height=min(540, 50 + len(tbl) * 36),
-                key=f"tbl_{tidx}",
+                height=min(560, 50 + len(tbl) * 36),
+                key=f"sq_tbl_{tidx}",
             )
             st.download_button(
                 "⬇️ Download CSV",
                 tbl.to_csv(index=False).encode(),
-                "query_result.csv",
+                "smart_query_result.csv",
                 "text/csv",
-                key=f"dl_{tidx}",
+                key=f"sq_dl_{tidx}",
             )
         if res.get("chart_cfg") and res.get("chart_df") is not None:
             cfg = res["chart_cfg"]
             cdf = res["chart_df"]
             if cfg["x"] in cdf.columns and cfg["y"] in cdf.columns:
-                fig = px.bar(
-                    cdf.sort_values(cfg["y"], ascending=False).head(30),
-                    x=cfg["x"], y=cfg["y"], color=cfg["y"],
-                    color_continuous_scale="Viridis", title=cfg["title"], height=400,
-                )
-                fig.update_layout(xaxis_tickangle=-30, **DARK)
-                st.plotly_chart(fig, use_container_width=True, key=f"ch_{tidx}")
+                try:
+                    fig = px.bar(
+                        cdf.sort_values(cfg["y"], ascending=False).head(30),
+                        x=cfg["x"], y=cfg["y"], color=cfg["y"],
+                        color_continuous_scale="Viridis",
+                        title=cfg["title"], height=400,
+                    )
+                    fig.update_layout(xaxis_tickangle=-30, **DARK)
+                    st.plotly_chart(fig, use_container_width=True, key=f"sq_ch_{tidx}")
+                except Exception:
+                    pass
         for si, s in enumerate(res.get("sub_tables", [])):
             with st.expander(s["label"], expanded=True):
-                st.dataframe(s["df"], use_container_width=True, key=f"sub_{tidx}_{si}")
+                st.dataframe(
+                    s["df"], use_container_width=True,
+                    key=f"sq_sub_{tidx}_{si}",
+                )
         if res.get("cell_hits"):
-            with st.expander(f"🔬 Matching Cells ({len(res['cell_hits'])})", expanded=False):
-                for ch in res["cell_hits"]:
+            with st.expander(
+                f"🔬 Matching Cells ({len(res['cell_hits'])})", expanded=False
+            ):
+                for ch in res["cell_hits"][:100]:
+                    loc_info = ""
+                    if ch.get("Location"):
+                        loc_info = f'{ch["Location"]} › {ch.get("Sheet","")} | '
                     st.markdown(
                         f'<div class="cell-chip">'
+                        f'{loc_info}'
                         f'Row {ch["Row #"]} · Col {ch["Col #"]} | '
                         f'<i>{ch["Column Header"]}</i> | '
                         f'<b>{ch["Value"]}</b></div>',
@@ -1794,17 +2089,21 @@ with tabs[8]:
                     )
         st.markdown('<div class="clearfix"></div>', unsafe_allow_html=True)
 
-    # ── Suggested queries ──
+    # ── Suggested queries ─────────────────────────────────────────
     with st.expander("💡 Suggested Queries (click to expand)", expanded=False):
         st.markdown("""
-**🔗 Cross-Column Relational Lookups (NEW):**
+**🔗 Cross-Column Relational Lookups:**
 - `Power of CISCO` — find CISCO in any column, show its power value
 - `Subscription for HDFC` — find HDFC rows, show subscription column
 - `WIPRO capacity` — find WIPRO, show capacity from same rows
 - `Rack of TCS` — find TCS, show rack details
 - `Billing for Infosys` — find Infosys rows, show billing column
-- `Show power where customer is CISCO` — filter then retrieve
 - `HDFC power subscription rack` — find HDFC, show multiple columns
+
+**🌍 Location-Specific (select "All Files" scope):**
+- `Total subscription in Airoli`
+- `Customers in Noida` · `Power at Bangalore`
+- `Average capacity in Rabale` · `Max rack in Vashi`
 
 **📊 Numeric Operations:**
 - `Total subscription` · `Average capacity` · `Max power` · `Min rack`
@@ -1816,10 +2115,12 @@ with tabs[8]:
 
 **ℹ️ Info:**
 - `Show all columns` · `How many missing values` · `Unique values of rack`
+- `Show all rows`
 """)
 
-    # ── Chat history ──
-    hist_key = f"sq_hist_{selected_file}_{selected_sheet}"
+    # ── Chat history ─────────────────────────────────────────────
+    scope_key = "all" if use_corpus else f"{selected_file}_{selected_sheet}"
+    hist_key  = f"sq_hist_{scope_key}"
     if hist_key not in st.session_state:
         st.session_state[hist_key] = []
 
@@ -1828,28 +2129,34 @@ with tabs[8]:
             f'<div class="q-user">🧑 {turn["q"]}</div>', unsafe_allow_html=True
         )
         st.markdown('<div class="clearfix"></div>', unsafe_allow_html=True)
-        render_answer(turn["res"], tidx)
+        sq_render_answer(turn["res"], tidx)
         st.markdown("---")
 
-    # ── Input bar ──
+    # ── Input bar ─────────────────────────────────────────────────
     st.markdown("---")
     ic, bc, cc = st.columns([8, 1, 1])
     with ic:
         user_q = st.text_input(
-            "Ask anything about this sheet:",
-            placeholder="e.g. Total subscription · Find CISCO · Top 10 power · Average capacity",
-            key=f"user_q_{hist_key}",
+            "Ask anything about the data:",
+            placeholder=(
+                "e.g. Total subscription · Find CISCO · Top 10 power · "
+                "Average capacity · Customers in Noida"
+            ),
+            key=f"sq_input_{scope_key}",
             label_visibility="collapsed",
         )
     with bc:
-        ask = st.button("Ask ▶", type="primary", use_container_width=True)
+        ask_btn = st.button(
+            "Ask ▶", type="primary", use_container_width=True,
+            key=f"sq_ask_{scope_key}",
+        )
     with cc:
-        if st.button("Clear 🗑", use_container_width=True):
+        if st.button("Clear 🗑", use_container_width=True, key=f"sq_clear_{scope_key}"):
             st.session_state[hist_key] = []
             st.rerun()
 
-    if ask and user_q.strip():
-        with st.spinner("🔍 Searching every row and column…"):
-            res = sheet_query(user_q)
+    if ask_btn and user_q.strip():
+        with st.spinner("🔍 Searching every file, sheet, row and column…"):
+            res = smart_corpus_query(user_q, use_all=use_corpus)
         st.session_state[hist_key].append({"q": user_q, "res": res})
         st.rerun()
