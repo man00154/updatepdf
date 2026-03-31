@@ -1454,6 +1454,51 @@ with tabs[8]:
         "every","display","view","see","provide",
     }
 
+    # Known type/category values that appear as cell data values in the Excel files
+    _TYPE_FILTER_WORDS = [
+        "caged", "uncaged", "metered", "unmetered", "bundled",
+        "un-caged", "shared", "dedicated", "colocation", "colo",
+        "managed", "unmanaged", "hosted", "virtual",
+    ]
+
+    def _exact_type_match(cell_val, type_val):
+        """
+        Strict exact-value match for type filters.
+        'caged' must NOT match 'uncaged' and vice versa.
+        Uses whole-string equality (case-insensitive) as primary check,
+        then word-boundary only when the term is a standalone word.
+        """
+        v = cell_val.lower().strip()
+        t = type_val.lower().strip()
+        # Exact whole-cell value match
+        if v == t:
+            return True
+        # Only do word-boundary match if the cell value is multi-word
+        # and the term is NOT a prefix/suffix of another word in the value
+        if " " in v or "/" in v or "," in v:
+            # Split on common delimiters and check each token
+            tokens = re.split(r"[\s,/;|]+", v)
+            if t in tokens:
+                return True
+        return False
+
+    def _detect_type_vals(ql):
+        """
+        Detect type-filter values from the query.
+        Handles comma/and-separated lists: 'caged, metered, bundled'.
+        Returns a list of matched type strings (exact, in order found in query).
+        """
+        found = []
+        # Check quoted values first
+        quoted = re.findall(r'"([^"]+)"', ql)
+        if quoted:
+            return [t.strip().lower() for t in quoted]
+        # Check each known type word with whole-word boundary
+        for tw in _TYPE_FILTER_WORDS:
+            if re.search(r'(?<![a-z])' + re.escape(tw) + r'(?![a-z])', ql):
+                found.append(tw)
+        return found
+
     def smart_corpus_query(question, use_all=True):
         """
         Natural-language query engine.
@@ -1502,20 +1547,8 @@ with tabs[8]:
         ])
         f_list = any(x in ql for x in ["list","show","display","all","get all"])
 
-        # Detect type-filter values early (caged, metered, bundled, uncaged, etc.)
-        _TYPE_FILTER_WORDS = [
-            "caged", "uncaged", "metered", "bundled", "un-caged",
-            "unmetered", "shared", "dedicated", "colocation", "colo",
-            "managed", "unmanaged", "hosted", "virtual",
-        ]
-        _early_quoted_types = re.findall(r'"([^"]+)"', ql)
-        _early_type_vals = []
-        if _early_quoted_types:
-            _early_type_vals = [t.strip().lower() for t in _early_quoted_types]
-        else:
-            for _tw in _TYPE_FILTER_WORDS:
-                if re.search(r'\b' + re.escape(_tw) + r'\b', ql):
-                    _early_type_vals.append(_tw)
+        # Detect type-filter values using strict matching
+        _early_type_vals = _detect_type_vals(ql)
 
         # Location filter from query text
         location_filter = None
@@ -1527,13 +1560,12 @@ with tabs[8]:
 
         col_kws = [w for w in sig if w not in _SQ_OP_VERBS]
 
-        # If type filter words are found with customer intent, remove them from col_kws
-        # so the customer intent path handles filtering (not the cross-column path)
-        if _early_type_vals and (f_cust or f_list):
-            col_kws = [w for w in col_kws if w not in _early_type_vals
-                       and w not in {"caged","uncaged","metered","bundled","unmetered",
-                                     "shared","dedicated","colocation","colo",
-                                     "managed","unmanaged","hosted","virtual"}]
+        # Remove type-filter words from col_kws so they don't pollute column matching
+        _type_word_set = set(_TYPE_FILTER_WORDS) | {
+            re.sub(r"[^a-z0-9]", "", t) for t in _TYPE_FILTER_WORDS
+        }
+        if _early_type_vals:
+            col_kws = [w for w in col_kws if w not in _type_word_set]
 
         # ── Helpers ─────────────────────────────────────────────────
         def _loc_filter(cells):
@@ -1605,6 +1637,38 @@ with tabs[8]:
         def _col_match_score(w, cells):
             return sum(1 for c in cells if c["is_header"] and _sq_mcol(w, c["value"]))
 
+        def _find_type_matching_row_keys(src, type_vals):
+            """
+            Find row keys where any non-header cell value exactly matches
+            one of the type_vals. Uses strict matching to avoid false positives
+            (e.g. 'caged' must not match 'uncaged').
+            """
+            matched_keys = set()
+            for cell in src:
+                if cell["is_header"]:
+                    continue
+                for tv in type_vals:
+                    if _exact_type_match(cell["value"], tv):
+                        matched_keys.add(_rr_key(cell))
+                        break
+            return matched_keys
+
+        def _get_customer_name_col(row_data):
+            """
+            From a row's data dict, find the customer/name column value.
+            Returns (col_name, value) or (None, None).
+            """
+            cust_kws = [
+                "customer", "name", "client", "company",
+                "account", "organisation", "organization",
+            ]
+            for col_h, val in row_data.items():
+                col_l = col_h.lower()
+                if any(kw in col_l for kw in cust_kws):
+                    if val and str(val).strip() not in ("nan", "None", ""):
+                        return col_h, val
+            return None, None
+
         # ── INTENT: Missing values ──────────────────────────────────
         if f_miss:
             dfc = to_numeric(smart_header(raw_df))
@@ -1652,33 +1716,69 @@ with tabs[8]:
             out["table"]  = tbl
             return out
 
-        # ── INTENT: Value-type filter (caged/metered/bundled/uncaged etc.) ──────
-        # Triggered when user asks for a specific type/category without customer context
-        if _early_type_vals and not f_num and not f_cust and not f_cols and not f_miss and not f_uniq:
+        # ── INTENT: Type-filter (caged/metered/bundled/uncaged etc.) ──────────
+        # Handles both "list caged customers" and "list caged" (without customer word)
+        if _early_type_vals and not f_num and not f_cols and not f_miss and not f_uniq:
             src = _loc_filter(wc)
-            type_disp = ", ".join(f"'{v}'" for v in _early_type_vals)
             scope_txt = "across all files" if use_all else "in this sheet"
-            # Find all rows where any cell value matches the type filter
-            type_row_keys = set()
-            for cell in src:
-                if cell["is_header"]:
-                    continue
-                val_l = cell["value"].lower().strip()
-                for tv in _early_type_vals:
-                    if val_l == tv or re.search(r'\b' + re.escape(tv) + r'\b', val_l):
-                        type_row_keys.add(_rr_key(cell))
-                        break
-            if type_row_keys:
-                # Build full rows for matching keys
-                all_matching_cells = [c for c in src if not c["is_header"] and _rr_key(c) in type_row_keys]
-                full_rows_df = _build_rows_df(all_matching_cells)
-                out["answer"] = (
-                    f"Found **{len(type_row_keys):,}** row(s) with type {type_disp} {scope_txt}."
-                )
-                out["table"] = full_rows_df if not full_rows_df.empty else None
-                return out
 
-        # ── INTENT: List customers ──────────────────────────────────
+            # Each type value is handled separately so results are pure per-type
+            # When multiple types are requested (e.g. caged, metered, bundled),
+            # we return one consolidated table with a "Type" column showing the matched value
+            all_result_rows = []
+
+            for tv in _early_type_vals:
+                # Find rows where any cell exactly equals this type value
+                tv_row_keys = set()
+                for cell in src:
+                    if cell["is_header"]:
+                        continue
+                    if _exact_type_match(cell["value"], tv):
+                        tv_row_keys.add(_rr_key(cell))
+
+                if not tv_row_keys:
+                    continue
+
+                for key in tv_row_keys:
+                    row_data = rr.get(key, {})
+                    if not row_data:
+                        continue
+                    rd = {"Type": tv}
+                    if use_all and isinstance(key, tuple):
+                        rd["Location"] = key[1]
+                        rd["Sheet"]    = key[2]
+                        rd["Row #"]    = key[3] + 1
+                    else:
+                        rd["Row #"] = (key + 1) if isinstance(key, int) else (key[-1] + 1)
+                    # Always show customer/name column first if present
+                    cust_col, cust_val = _get_customer_name_col(row_data)
+                    if cust_col and cust_val:
+                        rd["Customer / Name"] = cust_val
+                    rd.update(row_data)
+                    all_result_rows.append(rd)
+
+            if all_result_rows:
+                result_df = pd.DataFrame(all_result_rows)
+                # Reorder: Type, Customer/Name first
+                priority_cols = [c for c in ["Type", "Customer / Name", "Location", "Sheet", "Row #"]
+                                 if c in result_df.columns]
+                other_cols = [c for c in result_df.columns if c not in priority_cols]
+                result_df = result_df[priority_cols + other_cols]
+                type_disp = ", ".join(f"**{v}**" for v in _early_type_vals)
+                out["answer"] = (
+                    f"Found **{len(all_result_rows):,}** row(s) matching type(s) {type_disp} {scope_txt}."
+                )
+                out["table"] = result_df
+            else:
+                type_disp = ", ".join(f"'{v}'" for v in _early_type_vals)
+                out["answer"] = (
+                    f"No rows found with type value(s) {type_disp} {scope_txt}. "
+                    f"The type values are matched exactly against cell values — "
+                    f"please verify the exact spelling in the data."
+                )
+            return out
+
+        # ── INTENT: List customers (no type filter, no numeric op) ──────────────
         if (f_cust or f_list) and not f_num and not col_kws:
             src = _loc_filter(wc)
             cust_kws = [
@@ -1686,70 +1786,11 @@ with tabs[8]:
                 "account", "organisation", "organization",
             ]
 
-            # Use the type filter values already detected above
-            type_filter_vals = _early_type_vals
-
             found_cells = [
                 c for c in src
                 if not c["is_header"]
                 and any(x in c["col_header"].lower() for x in cust_kws)
             ]
-
-            # If type filter words detected, find rows where ANY cell in that row
-            # matches the type value, then return only customer cells from those rows
-            if type_filter_vals and found_cells:
-                # Collect all row keys that contain a cell matching the type value
-                # Use word-boundary matching to avoid "caged" matching inside "uncaged"
-                def _type_val_match(cell_val, type_vals):
-                    val_l = cell_val.lower().strip()
-                    for tv in type_vals:
-                        # Exact match
-                        if val_l == tv:
-                            return True
-                        # Word-boundary match (tv as whole word inside val_l)
-                        if re.search(r'\b' + re.escape(tv) + r'\b', val_l):
-                            return True
-                    return False
-
-                type_row_keys = set()
-                for cell in src:
-                    if cell["is_header"]:
-                        continue
-                    if _type_val_match(cell["value"], type_filter_vals):
-                        type_row_keys.add(_rr_key(cell))
-                # Filter customer cells to only those rows
-                if type_row_keys:
-                    found_cells = [
-                        c for c in found_cells
-                        if _rr_key(c) in type_row_keys
-                    ]
-                    type_disp = ", ".join(f"'{v}'" for v in type_filter_vals)
-                    scope_txt = "across all files" if use_all else "in this sheet"
-                    rows_data = []
-                    for cell in found_cells:
-                        entry = {}
-                        if use_all:
-                            entry["Location"] = cell.get("location", "")
-                            entry["Sheet"]    = cell.get("sheet", "")
-                        entry["Row #"]  = cell["row"] + 1
-                        entry["Column"] = cell["col_header"]
-                        entry["Value"]  = cell["value"]
-                        rows_data.append(entry)
-                    tbl = pd.DataFrame(rows_data).drop_duplicates(subset=["Value"]) if rows_data else pd.DataFrame()
-                    out["answer"] = (
-                        f"Found **{len(tbl)}** customer(s) of type {type_disp} {scope_txt}."
-                    )
-                    out["table"] = tbl if not tbl.empty else None
-                    full_rows_df = _build_rows_df(found_cells)
-                    if not full_rows_df.empty:
-                        out["sub_tables"].append({
-                            "label": f"📋 Full Row Data ({len(found_cells)} rows)",
-                            "df": full_rows_df,
-                        })
-                else:
-                    type_disp = ", ".join(f"'{v}'" for v in type_filter_vals)
-                    out["answer"] = f"No customers of type {type_disp} found."
-                return out
 
             if found_cells:
                 rows_data = []
@@ -2184,23 +2225,22 @@ with tabs[8]:
     # ── Query help ────────────────────────────────────────────────
     with st.expander("💡 Query Help (click to expand)", expanded=False):
         st.markdown("""
-**🔗 Relational Lookups** — find a name/entity and show related column values:
-- `Power of [Customer Name]`  ·  `Subscription for [Company]`  ·  `[Company] capacity`
+**🔖 Type/Category Filtering** — filter by exact cell value (e.g. caged, metered, bundled, uncaged):
+- Ask for a single type or multiple types in one query (comma/and separated)
+- Each type returns only rows where that exact value appears in any cell
 
-**🔖 Type/Category Filtering** — filter customers by their type or category:
-- `List caged customers`  ·  `Show metered customers`  ·  `List bundled customers`
-- `List uncaged customers`  ·  `Customers that are shared`  ·  `Dedicated customers`
+**🔗 Relational Lookups** — find a name/entity and show related column values:
+- Customer name + subscription, capacity, power, rack details
 
 **🌍 Location-Specific** (select "All Files" scope):
-- `Total subscription in [Location]`  ·  `Customers in [Location]`  ·  `Power at [Location]`
+- Filter by location name to narrow results to one DC
 
 **📊 Numeric Operations:**
-- `Total [column]`  ·  `Average [column]`  ·  `Max [column]`  ·  `Min [column]`
-- `Count customers`  ·  `Top 10 [column]`  ·  `Bottom 5 [column]`  ·  `Statistics of [column]`
+- Total, average, max, min, count, top N, bottom N, statistics for any column
 
 **🔍 Search & Browse:**
-- `Find [Name]`  ·  `List all customers`  ·  `Show [Company]`
-- `Unique values of [column]`  ·  `Show all rows`  ·  `Show all columns`
+- Search any value across all files, sheets, rows and columns
+- List all customers, show all rows, show all columns
 """)
 
     # ── Chat history ─────────────────────────────────────────────
@@ -2223,7 +2263,7 @@ with tabs[8]:
     with ic:
         user_q = st.text_input(
             "Ask anything about the data:",
-            placeholder="Type your query here and press Ask...",
+            placeholder="",
             key=f"sq_input_{scope_key}",
             label_visibility="collapsed",
         )
