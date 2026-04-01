@@ -10,7 +10,6 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
-from scipy import stats as scipy_stats
 
 warnings.filterwarnings("ignore")
 
@@ -57,9 +56,6 @@ st.markdown(
          border-left:4px solid #2a5298;}
 .cell-chip{background:#0f2010;border-left:4px solid #27ae60;border-radius:6px;
            padding:7px 14px;margin:3px 0;font-family:monospace;font-size:.82rem;color:#9fffac;}
-.col-chip{background:#0d1f3c;border-left:4px solid #2a5298;border-radius:6px;
-          padding:5px 12px;margin:2px 0;font-family:monospace;font-size:.80rem;color:#a8c8f0;
-          display:inline-block;margin-right:4px;margin-bottom:4px;}
 .clearfix{clear:both;}
 .stat-box{background:#1a2035;border-radius:10px;padding:14px 18px;border:1px solid #2a3a5a;margin:6px 0;}
 h1,h2,h3{color:#c9d8f0!important;}
@@ -67,14 +63,6 @@ p,li{color:#c9d8f0!important;}
 .stTabs [data-baseweb="tab-list"]{background:#1a2035;border-radius:10px;padding:4px;}
 .stTabs [data-baseweb="tab"]{color:#7da8d0!important;border-radius:8px;}
 .stTabs [aria-selected="true"]{background:#2a5298!important;color:#fff!important;}
-.excel-header{background:linear-gradient(135deg,#162a4a,#1e3c72);border:1px solid #2a4a7a;
-              border-radius:8px;padding:10px 14px;margin:4px 2px;text-align:center;
-              font-weight:700;font-size:.78rem;color:#90c8f0;letter-spacing:.3px;}
-.excel-val{background:#0a1020;border:1px solid #1a2a3a;border-radius:4px;padding:4px 8px;
-           font-size:.76rem;color:#c9d8f0;text-align:center;}
-.loc-badge{background:linear-gradient(135deg,#2a5298,#1e3c72);border-radius:20px;
-           padding:4px 12px;font-size:.80rem;font-weight:700;color:#fff;
-           display:inline-block;margin:2px;}
 </style>
 """,
     unsafe_allow_html=True,
@@ -126,7 +114,9 @@ def location_from_name(fname):
     n = re.sub(r"[Cc]ustomer.?[Aa]nd.?[Cc]apacity.?[Tt]racker.?", "", n)
     n = re.sub(
         r"[_\s]?\d{2}(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\d{2,4}.*$",
-        "", n, flags=re.I,
+        "",
+        n,
+        flags=re.I,
     )
     n = re.sub(r"__\d+_*$", "", n)
     n = re.sub(r"[_]+", " ", n).strip()
@@ -151,6 +141,7 @@ def save_uploads(file_bytes_tuple):
 @st.cache_data(show_spinner=False)
 def _read_sheet_openpyxl(path, sheet_name):
     from openpyxl import load_workbook
+
     wb = load_workbook(path, data_only=True)
     ws = wb[sheet_name]
     mr = ws.max_row or 0
@@ -159,9 +150,12 @@ def _read_sheet_openpyxl(path, sheet_name):
         wb.close()
         return pd.DataFrame()
     real_mc = 0
-    samples = sorted(set(
-        list(range(1, min(31, mr + 1))) + list(range(max(1, mr - 9), mr + 1))
-    ))
+    samples = sorted(
+        set(
+            list(range(1, min(31, mr + 1)))
+            + list(range(max(1, mr - 9), mr + 1))
+        )
+    )
     for r in samples:
         for cell in ws[r]:
             if cell.value is not None:
@@ -218,6 +212,7 @@ def load_file(original_path):
     path = str(original_path)
     sheets = {}
     ext = os.path.splitext(path)[1].lower()
+
     if ext == ".xlsx":
         try:
             from openpyxl import load_workbook
@@ -260,6 +255,7 @@ def load_file(original_path):
                         pass
             except Exception as e2:
                 st.sidebar.warning(f"⚠️ {os.path.basename(path)}: {e2}")
+
     return sheets
 
 
@@ -299,14 +295,7 @@ def smart_header(df):
 def to_numeric(df):
     out = df.copy()
     for col in out.columns:
-        try:
-            converted = pd.to_numeric(out[col], errors="coerce")
-            if converted.notna().sum() > out[col].notna().sum() * 0.5:
-                out[col] = converted
-            else:
-                pass
-        except Exception:
-            pass
+        out[col] = pd.to_numeric(out[col], errors="ignore")
     return out
 
 
@@ -524,9 +513,11 @@ tabs = st.tabs([
 ])
 loc_label = loc_map[selected_file]
 
+DARK = dict(paper_bgcolor="#1a2035", plot_bgcolor="#0f1829", font_color="#c9d8f0")
+
 
 # ═══════════════════════════════════════════════════════
-# TAB 0 – OVERVIEW  (shows data format exactly like Excel screenshot)
+# TAB 0 – OVERVIEW
 # ═══════════════════════════════════════════════════════
 with tabs[0]:
     st.title(f"🏢 {loc_label}  ›  {selected_sheet}")
@@ -538,94 +529,30 @@ with tabs[0]:
     )
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.markdown(f'<div class="kcard kcard-blue"><h2>{len(df_clean)}</h2><p>Data Rows</p></div>', unsafe_allow_html=True)
-    c2.markdown(f'<div class="kcard kcard-green"><h2>{len(df_clean.columns)}</h2><p>Columns</p></div>', unsafe_allow_html=True)
-    c3.markdown(f'<div class="kcard kcard-purple"><h2>{len(num_cols)}</h2><p>Numeric Cols</p></div>', unsafe_allow_html=True)
-    c4.markdown(f'<div class="kcard kcard-orange"><h2>{len(excel_files)}</h2><p>Excel Files</p></div>', unsafe_allow_html=True)
-    c5.markdown(f'<div class="kcard kcard-teal"><h2>{sq_meta["total_cells"]:,}</h2><p>Sheet Cells</p></div>', unsafe_allow_html=True)
-    c6.markdown(f'<div class="kcard kcard-red"><h2>{int(df_clean.isna().sum().sum())}</h2><p>Missing</p></div>', unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # ─── COLUMN FORMAT DISPLAY (exact Excel header structure) ───
-    st.markdown('<div class="sec-title">📋 Column Format – All Files</div>', unsafe_allow_html=True)
-    st.caption("Shows the exact column header structure from each Excel file as seen in the attached format")
-
-    @st.cache_data(show_spinner=False)
-    def get_all_column_headers(files, folder):
-        result = {}
-        for f in files:
-            full = os.path.join(folder, f)
-            loc = location_from_name(f)
-            shts = load_file(full)
-            for sh, raw in shts.items():
-                dfc = smart_header(raw)
-                cols = [c for c in dfc.columns if c and c not in ("nan","None") and not c.startswith("Col_")]
-                num_c = dfc.select_dtypes(include="number").columns.tolist()
-                cat_c = [x for x in cols if x not in num_c]
-                key = f"{loc} | {sh}"
-                result[key] = {
-                    "all_cols": cols,
-                    "num_cols": num_c,
-                    "cat_cols": cat_c,
-                    "df": dfc,
-                    "file": f,
-                    "loc": loc,
-                    "sheet": sh,
-                }
-        return result
-
-    all_col_info = get_all_column_headers(tuple(excel_files), data_dir)
-
-    # Gather all unique column headers across all files
-    all_headers_set = []
-    seen_h = set()
-    for info in all_col_info.values():
-        for col in info["all_cols"]:
-            if col not in seen_h:
-                all_headers_set.append(col)
-                seen_h.add(col)
-
-    # Display column format for current file first
-    cur_key = f"{loc_label} | {selected_sheet}"
-    cur_info = all_col_info.get(cur_key, {})
-    if cur_info:
-        st.markdown(f'<span class="loc-badge">📍 {loc_label}</span>', unsafe_allow_html=True)
-        cols_to_show = cur_info["all_cols"][:40]
-        # Show as chips like Excel column headers
-        chips_html = ""
-        for col in cols_to_show:
-            tag = "🔢" if col in cur_info["num_cols"] else "📝"
-            chips_html += f'<span class="col-chip">{tag} {col}</span>'
-        st.markdown(chips_html, unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # Show all locations in expandable format
-    st.markdown('<div class="sec-title">📊 All Locations – Column Structure</div>', unsafe_allow_html=True)
-
-    for key, info in all_col_info.items():
-        with st.expander(f"📍 {key}  ({len(info['all_cols'])} columns · {len(info['df'])} rows)", expanded=False):
-            colA, colB = st.columns(2)
-            with colA:
-                st.markdown("**🔢 Numeric Columns**")
-                for c in info["num_cols"]:
-                    s = info["df"][c].dropna()
-                    if len(s):
-                        st.markdown(f'<div class="excel-header">{c}</div>', unsafe_allow_html=True)
-            with colB:
-                st.markdown("**📝 Text / Category Columns**")
-                for c in info["cat_cols"][:20]:
-                    st.markdown(f'<div class="excel-header">{c}</div>', unsafe_allow_html=True)
-
-            # Show sample rows in Excel-like format
-            st.markdown("**📄 Sample Data (first 5 rows)**")
-            disp_cols = info["all_cols"][:20]
-            if disp_cols:
-                st.dataframe(
-                    info["df"][disp_cols].head(5),
-                    use_container_width=True,
-                )
+    c1.markdown(
+        f'<div class="kcard kcard-blue"><h2>{len(df_clean)}</h2><p>Data Rows</p></div>',
+        unsafe_allow_html=True,
+    )
+    c2.markdown(
+        f'<div class="kcard kcard-green"><h2>{len(df_clean.columns)}</h2><p>Columns</p></div>',
+        unsafe_allow_html=True,
+    )
+    c3.markdown(
+        f'<div class="kcard kcard-purple"><h2>{len(num_cols)}</h2><p>Numeric Cols</p></div>',
+        unsafe_allow_html=True,
+    )
+    c4.markdown(
+        f'<div class="kcard kcard-orange"><h2>{len(excel_files)}</h2><p>Excel Files</p></div>',
+        unsafe_allow_html=True,
+    )
+    c5.markdown(
+        f'<div class="kcard kcard-teal"><h2>{sq_meta["total_cells"]:,}</h2><p>Sheet Cells</p></div>',
+        unsafe_allow_html=True,
+    )
+    c6.markdown(
+        f'<div class="kcard kcard-red"><h2>{int(df_clean.isna().sum().sum())}</h2><p>Missing</p></div>',
+        unsafe_allow_html=True,
+    )
 
     st.markdown("---")
 
@@ -634,7 +561,9 @@ with tabs[0]:
         stats = df_clean[num_cols].describe().T
         stats["range"] = stats["max"] - stats["min"]
         st.dataframe(
-            stats.style.format("{:.3f}", na_rep="—").background_gradient(cmap="Blues", subset=["mean", "max"]),
+            stats.style.format("{:.3f}", na_rep="—").background_gradient(
+                cmap="Blues", subset=["mean", "max"]
+            ),
             use_container_width=True,
         )
 
@@ -647,14 +576,22 @@ with tabs[0]:
         "Unique": [df_clean[c].nunique() for c in df_clean.columns],
         "Sample": [
             str(df_clean[c].dropna().iloc[0])[:55]
-            if df_clean[c].dropna().shape[0] > 0 else "—"
+            if df_clean[c].dropna().shape[0] > 0
+            else "—"
             for c in df_clean.columns
         ],
     })
     st.dataframe(ci, use_container_width=True)
 
     st.markdown("---")
-    st.markdown('<div class="sec-title">📄 Complete Raw Sheet (ALL Rows · ALL Columns)</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="sec-title">📄 Complete Raw Sheet (ALL Rows · ALL Columns · ALL Positions)</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        f"Showing ALL {raw_df.shape[0]} rows × {raw_df.shape[1]} columns as read from Excel. "
+        f"No data is dropped."
+    )
     st.dataframe(raw_df, use_container_width=True, height=500)
     st.download_button(
         "⬇️ Download Complete Sheet CSV",
@@ -676,12 +613,22 @@ with tabs[1]:
 
     disp_df = raw_df if show_raw else df_clean
     disp = (
-        disp_df[disp_df.apply(lambda col: col.astype(str).str.contains(srch, case=False, na=False)).any(axis=1)]
-        if srch else disp_df
+        disp_df[
+            disp_df.apply(
+                lambda col: col.astype(str).str.contains(srch, case=False, na=False)
+            ).any(axis=1)
+        ]
+        if srch
+        else disp_df
     )
     st.caption(f"Showing {len(disp):,} / {len(disp_df):,} rows · {len(disp.columns)} columns")
     st.dataframe(disp, use_container_width=True, height=520)
-    st.download_button("⬇️ Export as CSV", disp.to_csv(index=False).encode(), "export.csv", "text/csv")
+    st.download_button(
+        "⬇️ Export as CSV",
+        disp.to_csv(index=False).encode(),
+        "export.csv",
+        "text/csv",
+    )
 
 
 # ═══════════════════════════════════════════════════════
@@ -721,16 +668,15 @@ with tabs[2]:
                         "Max": round(s.max(), 4),
                         "Std Dev": round(s.std(), 4),
                         "Variance": round(s.var(), 4),
-                        "Skewness": round(s.skew(), 4) if len(s) >= 3 else "—",
-                        "Kurtosis": round(s.kurtosis(), 4) if len(s) >= 4 else "—",
                         "% of Total": f"{s.sum()/grand*100:.1f}%" if grand else "—",
                     })
             if agg_rows:
                 adf = pd.DataFrame(agg_rows).set_index("Column")
-                fmt_cols = [c for c in adf.columns if c not in ("% of Total", "Skewness", "Kurtosis")]
                 st.dataframe(
-                    adf.style.format("{:,.3f}", na_rep="—", subset=fmt_cols)
-                    .background_gradient(cmap="YlOrRd", subset=["Sum", "Max"]),
+                    adf.style.format(
+                        "{:,.3f}", na_rep="—",
+                        subset=[c for c in adf.columns if c != "% of Total"],
+                    ).background_gradient(cmap="YlOrRd", subset=["Sum", "Max"]),
                     use_container_width=True,
                 )
 
@@ -753,45 +699,27 @@ with tabs[2]:
                 color_continuous_scale="Viridis",
                 title=f"{af.title()} of {ac} by {gc}",
             )
-            fig.update_layout(xaxis_tickangle=-35, height=420,
-                              paper_bgcolor="#1a2035", plot_bgcolor="#0f1829", font_color="#c9d8f0")
+            fig.update_layout(xaxis_tickangle=-35, height=420, **DARK)
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("Add categorical columns or more data to use group-by.")
 
 
 # ═══════════════════════════════════════════════════════
-# TAB 3 – CHARTS (all 15 types)
+# TAB 3 – CHARTS
 # ═══════════════════════════════════════════════════════
-DARK = dict(paper_bgcolor="#1a2035", plot_bgcolor="#0f1829", font_color="#c9d8f0")
-
 with tabs[3]:
     st.subheader("📈 Interactive Charts")
-
-    # Chart type descriptions
-    CHART_DESC = {
-        "Bar Chart": "Compare a numeric metric across categorical groups (e.g., power per customer)",
-        "Grouped Bar": "Side-by-side comparison of multiple numeric columns across groups",
-        "Stacked Bar": "Show composition and total simultaneously across groups",
-        "Line Chart": "Trend analysis across ordered rows or time-series data",
-        "Scatter Plot": "Correlation between two numeric variables; colour-coded by a third",
-        "Area Chart": "Cumulative volume trends with filled area for visual emphasis",
-        "Bubble Chart": "Three-dimensional numeric relationships (X, Y, size)",
-        "Heatmap (Correlation)": "Instantly spot which numeric columns are correlated",
-        "Box Plot": "Distribution, spread, median, and outliers for numeric columns",
-        "Violin Plot": "Full probability distribution shape for numeric columns",
-        "Funnel Chart": "Staged capacity utilisation or sales-pipeline visualisation",
-        "Waterfall / Cumulative": "Running total analysis, e.g., cumulative power consumed",
-        "3-D Scatter": "Three-axis numeric exploration for high-dimensional data",
-        "Radar Chart": "Multi-axis comparison of a single entity across metrics",
-        "Histogram": "Frequency distribution of a numeric variable",
-    }
-
     ctype = st.selectbox(
         "Chart Type",
-        list(CHART_DESC.keys()),
+        [
+            "Bar Chart", "Grouped Bar", "Stacked Bar", "Line Chart",
+            "Scatter Plot", "Area Chart", "Bubble Chart",
+            "Heatmap (Correlation)", "Box Plot",
+            "Violin Plot", "Funnel Chart", "Waterfall / Cumulative",
+            "3-D Scatter", "Radar Chart", "Histogram",
+        ],
     )
-    st.info(f"ℹ️ **{ctype}:** {CHART_DESC[ctype]}")
 
     if not num_cols:
         st.info("No numeric columns in this sheet.")
@@ -807,10 +735,8 @@ with tabs[3]:
             ori = st.radio("Orientation", ["Vertical", "Horizontal"], horizontal=True)
             d = df_clean[[xc, yc]].dropna()
             fig = px.bar(
-                d,
-                x=xc if ori == "Vertical" else yc,
-                y=yc if ori == "Vertical" else xc,
-                color=yc,
+                d, x=xc if ori == "Vertical" else yc,
+                y=yc if ori == "Vertical" else xc, color=yc,
                 color_continuous_scale="Turbo",
                 orientation="v" if ori == "Vertical" else "h",
                 title=f"{yc} by {xc}",
@@ -867,7 +793,6 @@ with tabs[3]:
                     color=cc if cc != "None" else None,
                     color_continuous_scale="Rainbow",
                     title=f"Scatter: {yc} vs {xc}",
-                    trendline="ols" if st.checkbox("Add trendline", key="sc_tl") else None,
                 )
                 fig.update_layout(height=480, **DARK)
                 st.plotly_chart(fig, use_container_width=True)
@@ -891,6 +816,7 @@ with tabs[3]:
                 lc = _s("Color", ["None"] + cat_cols, key="bu_c")
                 d = df_clean[[xc, yc, sz]].dropna()
                 if lc != "None":
+                    d = d.copy()
                     d[lc] = df_clean[lc]
                 fig = px.scatter(
                     d, x=xc, y=yc, size=sz,
@@ -960,7 +886,9 @@ with tabs[3]:
                 name="Cumulative", x=cum.index, y=cum,
                 line=dict(color="#f7971e", width=2.5), mode="lines+markers",
             ))
-            fig.update_layout(title=f"Waterfall/Cumulative: {yc}", height=450, barmode="group", **DARK)
+            fig.update_layout(
+                title=f"Waterfall/Cumulative: {yc}", height=450, barmode="group", **DARK
+            )
             st.plotly_chart(fig, use_container_width=True)
 
         elif ctype == "3-D Scatter":
@@ -971,6 +899,7 @@ with tabs[3]:
                 cc = _s("Color", ["None"] + cat_cols, key="3c")
                 d = df_clean[[xc, yc, zc]].dropna()
                 if cc != "None":
+                    d = d.copy()
                     d[cc] = df_clean[cc]
                 fig = px.scatter_3d(
                     d, x=xc, y=yc, z=zc,
@@ -994,14 +923,21 @@ with tabs[3]:
                         r=vals, theta=sel_r+[sel_r[0]],
                         fill="toself", name=str(row[gc])[:30],
                     ))
-                fig.update_layout(polar=dict(bgcolor="#0f1829"), height=500, title="Radar Chart", **DARK)
+                fig.update_layout(
+                    polar=dict(bgcolor="#0f1829"), height=500,
+                    title="Radar Chart", **DARK,
+                )
                 st.plotly_chart(fig, use_container_width=True)
             elif len(sel_r) >= 3:
                 vals = df_clean[sel_r].mean().tolist()
                 fig = go.Figure(go.Scatterpolar(
-                    r=vals+[vals[0]], theta=sel_r+[sel_r[0]], fill="toself",
+                    r=vals+[vals[0]], theta=sel_r+[sel_r[0]],
+                    fill="toself",
                 ))
-                fig.update_layout(polar=dict(bgcolor="#0f1829"), height=500, title="Radar Chart (Averages)", **DARK)
+                fig.update_layout(
+                    polar=dict(bgcolor="#0f1829"), height=500,
+                    title="Radar Chart (Averages)", **DARK,
+                )
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("Select ≥ 3 numeric columns.")
@@ -1067,7 +1003,9 @@ with tabs[4]:
 
         st.markdown("---")
         st.markdown('<div class="sec-title">📦 Box Plot – All Numeric Columns</div>', unsafe_allow_html=True)
-        sel_bp = st.multiselect("Columns", num_cols, default=num_cols[:min(8, len(num_cols))], key="bp_all")
+        sel_bp = st.multiselect(
+            "Columns", num_cols, default=num_cols[:min(8, len(num_cols))], key="bp_all"
+        )
         if sel_bp:
             fig3 = go.Figure()
             colors = px.colors.qualitative.Plotly
@@ -1077,7 +1015,10 @@ with tabs[4]:
                     marker_color=colors[i % len(colors)],
                     boxpoints="outliers",
                 ))
-            fig3.update_layout(title="Box Plots Comparison", height=450, showlegend=False, **DARK)
+            fig3.update_layout(
+                title="Box Plots Comparison", height=450,
+                showlegend=False, **DARK,
+            )
             st.plotly_chart(fig3, use_container_width=True)
 
         st.markdown("---")
@@ -1098,90 +1039,37 @@ with tabs[4]:
 
 
 # ═══════════════════════════════════════════════════════
-# TAB 5 – QUERY ENGINE (No-code with all operations)
+# TAB 5 – QUERY ENGINE (No-code)
 # ═══════════════════════════════════════════════════════
 with tabs[5]:
     st.subheader("🔍 No-Code Query Engine")
-    st.caption("Pick operation + columns; get instant result with chart. Works across ALL locations.")
+    st.caption("Pick operation + columns; get instant result with chart")
 
-    # Scope selector
-    q_scope = st.radio(
-        "Data scope:",
-        ["🌍 All Files (entire corpus)", f"📄 Current Sheet ({loc_label} › {selected_sheet})"],
-        horizontal=True,
-        key="qe_scope",
-    )
-    use_all_qe = q_scope.startswith("🌍")
-
-    if use_all_qe:
-        # Build a combined dataframe from all files
-        @st.cache_data(show_spinner=False)
-        def build_combined_df(files, folder):
-            dfs = []
-            for f in files:
-                full = os.path.join(folder, f)
-                loc = location_from_name(f)
-                shts = load_file(full)
-                for sh, raw in shts.items():
-                    dfc = to_numeric(smart_header(raw))
-                    dfc["__Location__"] = loc
-                    dfc["__Sheet__"] = sh
-                    dfc["__File__"] = f
-                    dfs.append(dfc)
-            if not dfs:
-                return pd.DataFrame()
-            combined = pd.concat(dfs, ignore_index=True, sort=False)
-            return combined
-
-        combined_df = build_combined_df(tuple(excel_files), data_dir)
-        work_df = combined_df
-        work_num = [c for c in combined_df.select_dtypes(include="number").columns
-                    if not c.startswith("__")]
-        work_cat = [c for c in combined_df.columns
-                    if c not in combined_df.select_dtypes(include="number").columns
-                    and not c.startswith("__")]
-    else:
-        work_df = df_clean
-        work_num = num_cols
-        work_cat = cat_cols
-
-    if not work_num:
-        st.info("No numeric columns available.")
+    if not num_cols:
+        st.info("No numeric columns in this sheet.")
     else:
         q1, q2, q3, q4 = st.columns(4)
         op = q1.selectbox("Operation", [
             "Sum", "Total", "Average / Mean", "Min", "Max",
             "Count", "Percentage of Total", "Median",
             "Std Deviation", "Variance", "Range (max-min)",
-            "Skewness", "Kurtosis", "IQR",
             "Top N rows", "Bottom N rows",
-            "All Stats (Full Summary)",
         ], key="qe_op")
-        sc_col = q2.selectbox("Column", work_num, key="qe_col")
-
-        # Filter options
-        filter_cols = ["—"] + work_cat + (["__Location__", "__Sheet__"] if use_all_qe else [])
-        fc = q3.selectbox("Filter by", filter_cols, key="qe_fc")
-        fv = q4.text_input("Filter value (partial match)", "", key="qe_fv") if fc != "—" else ""
+        sc_col = q2.selectbox("Column", num_cols, key="qe_col")
+        fc = q3.selectbox("Filter by", ["—"] + cat_cols, key="qe_fc")
+        fv = q4.text_input("Filter value (exact)", "", key="qe_fv") if fc != "—" else ""
 
         n_val = 10
         if op in ("Top N rows", "Bottom N rows"):
             n_val = st.number_input("N", 1, 500, 10)
 
-        # Chart type for result
-        result_chart = st.selectbox("Result chart type", [
-            "Bar Chart", "Pie Chart", "Line Chart", "Box Plot", "Histogram",
-        ], key="qe_chart")
-
         if st.button("▶ Run Query", type="primary"):
-            sub = work_df.copy()
+            sub = df_clean.copy()
             if fc != "—" and fv:
                 sub = sub[sub[fc].astype(str).str.contains(fv, case=False, na=False)]
 
             vals = sub[sc_col].dropna()
             r = None
-            detail_df = None
-
             if op == "Sum":
                 r = vals.sum()
             elif op == "Total":
@@ -1195,7 +1083,7 @@ with tabs[5]:
             elif op == "Count":
                 r = int(vals.count())
             elif op == "Percentage of Total":
-                grand = work_df[sc_col].dropna().sum()
+                grand = df_clean[sc_col].dropna().sum()
                 r = f"{vals.sum()/grand*100:.2f}%" if grand else "N/A"
             elif op == "Median":
                 r = vals.median()
@@ -1205,103 +1093,34 @@ with tabs[5]:
                 r = vals.var()
             elif op == "Range (max-min)":
                 r = vals.max() - vals.min()
-            elif op == "Skewness":
-                r = vals.skew()
-            elif op == "Kurtosis":
-                r = vals.kurtosis()
-            elif op == "IQR":
-                r = vals.quantile(0.75) - vals.quantile(0.25)
-            elif op == "All Stats (Full Summary)":
-                sa = vals
-                stat_rows = {
-                    "Count": int(sa.count()),
-                    "Sum": round(sa.sum(), 4),
-                    "Mean": round(sa.mean(), 4),
-                    "Median": round(sa.median(), 4),
-                    "Min": round(sa.min(), 4),
-                    "Max": round(sa.max(), 4),
-                    "Std Dev": round(sa.std(), 4),
-                    "Variance": round(sa.var(), 4),
-                    "Skewness": round(sa.skew(), 4) if len(sa) >= 3 else "—",
-                    "Kurtosis": round(sa.kurtosis(), 4) if len(sa) >= 4 else "—",
-                    "IQR": round(sa.quantile(0.75) - sa.quantile(0.25), 4),
-                    "Range": round(sa.max() - sa.min(), 4),
-                    "Q1 (25%)": round(sa.quantile(0.25), 4),
-                    "Q3 (75%)": round(sa.quantile(0.75), 4),
-                }
-                filt_note = f" (where {fc} contains '{fv}')" if fv else ""
-                scope_note = "All Files" if use_all_qe else f"{loc_label} › {selected_sheet}"
-                st.success(f"**Full Statistics** of `{sc_col}` — {scope_note}{filt_note}")
-                sdf = pd.DataFrame(list(stat_rows.items()), columns=["Metric", "Value"])
-                st.dataframe(sdf, use_container_width=True, hide_index=True)
-                # Show histogram
-                fig_h = px.histogram(sub, x=sc_col, nbins=30, title=f"Distribution of {sc_col}{filt_note}",
-                                     color_discrete_sequence=["#2a5298"])
-                fig_h.update_layout(**DARK)
-                st.plotly_chart(fig_h, use_container_width=True)
-                r = None
-
             elif op == "Top N rows":
                 tdf = sub.nlargest(int(n_val), sc_col)
                 st.success(f"**Top {n_val}** rows by `{sc_col}`")
                 st.dataframe(tdf, use_container_width=True)
-                detail_df = tdf
+                fig = px.bar(tdf.reset_index(), x=tdf.index.astype(str)[:int(n_val)],
+                             y=sc_col, color=sc_col, color_continuous_scale="Plasma",
+                             title=f"Top {n_val}: {sc_col}")
+                fig.update_layout(**DARK)
+                st.plotly_chart(fig, use_container_width=True)
                 r = None
             elif op == "Bottom N rows":
                 bdf = sub.nsmallest(int(n_val), sc_col)
                 st.success(f"**Bottom {n_val}** rows by `{sc_col}`")
                 st.dataframe(bdf, use_container_width=True)
-                detail_df = bdf
+                fig = px.bar(bdf.reset_index(), x=bdf.index.astype(str)[:int(n_val)],
+                             y=sc_col, color=sc_col, color_continuous_scale="Viridis",
+                             title=f"Bottom {n_val}: {sc_col}")
+                fig.update_layout(**DARK)
+                st.plotly_chart(fig, use_container_width=True)
                 r = None
 
             if r is not None:
                 if isinstance(r, float):
-                    r_str = f"{r:,.4f}"
-                else:
-                    r_str = str(r)
-                filt_note = f" (where {fc} contains '{fv}')" if fv else ""
-                scope_note = "All Files" if use_all_qe else f"{loc_label} › {selected_sheet}"
-                st.success(f"**{op}** of `{sc_col}` — {scope_note}{filt_note} → **{r_str}**")
-
-                # Show result chart
-                if use_all_qe and "__Location__" in work_df.columns:
-                    loc_grp = sub.groupby("__Location__")[sc_col]
-                    if op in ("Sum", "Total"):
-                        chart_data = loc_grp.sum().reset_index()
-                    elif op in ("Average / Mean"):
-                        chart_data = loc_grp.mean().reset_index()
-                    elif op == "Count":
-                        chart_data = loc_grp.count().reset_index()
-                    elif op == "Max":
-                        chart_data = loc_grp.max().reset_index()
-                    elif op == "Min":
-                        chart_data = loc_grp.min().reset_index()
-                    else:
-                        chart_data = loc_grp.sum().reset_index()
-                    chart_data.columns = ["Location", op]
-
-                    if result_chart == "Bar Chart":
-                        fig_r = px.bar(chart_data, x="Location", y=op, color=op,
-                                       color_continuous_scale="Viridis",
-                                       title=f"{op} of {sc_col} by Location{filt_note}")
-                    elif result_chart == "Pie Chart":
-                        fig_r = px.pie(chart_data, names="Location", values=op, hole=0.4,
-                                       title=f"{op} of {sc_col} by Location")
-                    elif result_chart == "Line Chart":
-                        fig_r = px.line(chart_data, x="Location", y=op, markers=True,
-                                        title=f"{op} of {sc_col} by Location")
-                    elif result_chart == "Box Plot":
-                        fig_r = px.box(sub, y=sc_col, x="__Location__",
-                                       title=f"Box Plot of {sc_col} by Location")
-                    else:
-                        fig_r = px.histogram(sub, x=sc_col, nbins=30, title=f"Histogram of {sc_col}")
-
-                    fig_r.update_layout(**DARK, xaxis_tickangle=-30, height=440)
-                    st.plotly_chart(fig_r, use_container_width=True)
-
-            if detail_df is not None:
-                st.download_button("⬇️ Download Result CSV", detail_df.to_csv(index=False).encode(),
-                                   "query_result.csv", "text/csv")
+                    r = f"{r:,.4f}"
+                st.success(
+                    f"**{op}** of `{sc_col}`"
+                    f"{f' (where {fc}={fv})' if fv else ''} → **{r}**"
+                )
 
 
 # ═══════════════════════════════════════════════════════
@@ -1329,10 +1148,7 @@ with tabs[6]:
     if all_summ:
         all_num = sorted({c for v in all_summ.values() for c in v["num_cols"]})
         if all_num:
-            ml1, ml2 = st.columns(2)
-            comp_col = ml1.selectbox("Compare by column", all_num)
-            agg_fn = ml2.selectbox("Aggregation", ["sum", "mean", "max", "min", "count", "median", "std"])
-
+            comp_col = st.selectbox("Compare by column", all_num)
             rows_cmp = []
             for lbl, info in all_summ.items():
                 if comp_col in info["num_cols"]:
@@ -1343,8 +1159,6 @@ with tabs[6]:
                         "Mean": round(s.mean(), 2),
                         "Max": round(s.max(), 2),
                         "Min": round(s.min(), 2),
-                        "Median": round(s.median(), 2),
-                        "Std Dev": round(s.std(), 2),
                         "Count": int(s.count()),
                     })
             if rows_cmp:
@@ -1354,18 +1168,17 @@ with tabs[6]:
                     use_container_width=True,
                 )
                 col_a, col_b = st.columns(2)
-                agg_col = agg_fn.title() if agg_fn.title() in cmp.columns else "Sum"
                 with col_a:
                     fig_bar = px.bar(
-                        cmp.reset_index(), x="Location|Sheet", y=agg_col,
-                        color=agg_col, color_continuous_scale="Viridis",
-                        title=f"{agg_col} of '{comp_col}' by Location",
+                        cmp.reset_index(), x="Location|Sheet", y="Sum",
+                        color="Sum", color_continuous_scale="Viridis",
+                        title=f"Sum of '{comp_col}' by Location",
                     )
                     fig_bar.update_layout(xaxis_tickangle=-30, height=440, **DARK)
                     st.plotly_chart(fig_bar, use_container_width=True)
                 with col_b:
                     fig_pie = px.pie(
-                        cmp.reset_index(), names="Location|Sheet", values=agg_col,
+                        cmp.reset_index(), names="Location|Sheet", values="Sum",
                         title=f"Share of '{comp_col}'",
                         color_discrete_sequence=px.colors.qualitative.Plotly,
                         hole=0.4,
@@ -1373,21 +1186,6 @@ with tabs[6]:
                     fig_pie.update_layout(height=440, **DARK)
                     st.plotly_chart(fig_pie, use_container_width=True)
 
-                # Multi-metric grouped bar
-                st.markdown('<div class="sec-title">📊 Multi-Metric Comparison</div>', unsafe_allow_html=True)
-                metrics_sel = st.multiselect("Metrics", ["Sum","Mean","Max","Min","Count"],
-                                              default=["Sum","Mean","Max"])
-                if metrics_sel:
-                    plot_df = cmp.reset_index()[["Location|Sheet"] + metrics_sel]
-                    fig_gb = px.bar(
-                        plot_df.melt(id_vars="Location|Sheet", var_name="Metric", value_name="Value"),
-                        x="Location|Sheet", y="Value", color="Metric", barmode="group",
-                        title=f"Multi-metric comparison of '{comp_col}'",
-                    )
-                    fig_gb.update_layout(xaxis_tickangle=-30, height=460, **DARK)
-                    st.plotly_chart(fig_gb, use_container_width=True)
-
-                # Radar comparison
                 if len(rows_cmp) >= 3:
                     st.markdown('<div class="sec-title">🕸️ Multi-Location Radar</div>', unsafe_allow_html=True)
                     metrics = ["Sum", "Mean", "Max", "Min"]
@@ -1419,9 +1217,10 @@ with tabs[7]:
     if run_full:
         with st.spinner("🔄 Analysing all data…"):
             progress = st.progress(0)
-            entries = list(all_summ.items())[:max_files * 10]
-            for fi, (lbl, info) in enumerate(entries):
-                progress.progress(min((fi+1) / max(1, len(entries)), 1.0))
+            all_summ_ai = load_all_summ(tuple(excel_files), data_dir)
+            entries = list(all_summ_ai.items())
+            for fi, (lbl, info) in enumerate(entries[:max_files * 10]):
+                progress.progress(min(fi / max(1, len(entries)), 1.0))
                 dfa = info["df"]
                 nc = info["num_cols"]
                 if not nc:
@@ -1483,771 +1282,476 @@ with tabs[7]:
 
 
 # ═══════════════════════════════════════════════════════
-# TAB 8 – SMART QUERY (Natural Language + Cell Value Search)
+# TAB 8 – AI SMART QUERY (Natural Language)
 # ═══════════════════════════════════════════════════════
 with tabs[8]:
     st.markdown("## 💬 AI Smart Query")
-
-    scope_col1, scope_col2 = st.columns([3, 1])
-    with scope_col1:
-        search_scope = st.radio(
-            "Search scope:",
-            ["🌍 All Files (entire corpus)", f"📄 Current Sheet ({loc_label} › {selected_sheet})"],
-            horizontal=True,
-            key="sq_scope",
-        )
-    with scope_col2:
-        st.markdown(
-            f'<div class="kcard kcard-blue" style="padding:10px 14px;">'
-            f'<h2 style="font-size:1.4rem;">{meta["total_cells"]:,}</h2>'
-            f'<p>Total indexed cells</p></div>',
-            unsafe_allow_html=True,
-        )
-
-    use_corpus = search_scope.startswith("🌍")
+    st.markdown(
+        f"Querying: **{loc_label}** › **{selected_sheet}**  "
+        f"_(change file/sheet in sidebar)_"
+    )
 
     qi1, qi2, qi3, qi4 = st.columns(4)
-    if use_corpus:
-        qi1.markdown(f'<div class="kcard kcard-blue"><h2>{meta["total_cells"]:,}</h2><p>Total Cells (All Files)</p></div>', unsafe_allow_html=True)
-        qi2.markdown(f'<div class="kcard kcard-green"><h2>{meta["total_files"]}</h2><p>Files Indexed</p></div>', unsafe_allow_html=True)
-        qi3.markdown(f'<div class="kcard kcard-purple"><h2>{meta["total_sheets"]}</h2><p>Sheets Indexed</p></div>', unsafe_allow_html=True)
-        qi4.markdown(f'<div class="kcard kcard-cyan"><h2>{meta["total_rows"]:,}</h2><p>Data Rows</p></div>', unsafe_allow_html=True)
-    else:
-        qi1.markdown(f'<div class="kcard kcard-blue"><h2>{sq_meta["total_cells"]:,}</h2><p>Sheet Cells</p></div>', unsafe_allow_html=True)
-        qi2.markdown(f'<div class="kcard kcard-green"><h2>{sq_meta["total_data"]:,}</h2><p>Data Cells</p></div>', unsafe_allow_html=True)
-        qi3.markdown(f'<div class="kcard kcard-purple"><h2>{sq_meta["total_rows"]:,}</h2><p>Data Rows</p></div>', unsafe_allow_html=True)
-        qi4.markdown(f'<div class="kcard kcard-cyan"><h2>{sq_meta["total_headers"]:,}</h2><p>Header Cells</p></div>', unsafe_allow_html=True)
+    qi1.markdown(
+        f'<div class="kcard kcard-blue"><h2>{sq_meta["total_cells"]:,}</h2>'
+        f"<p>Total Cells in Sheet</p></div>", unsafe_allow_html=True,
+    )
+    qi2.markdown(
+        f'<div class="kcard kcard-green"><h2>{sq_meta["total_data"]:,}</h2>'
+        f"<p>Data Cells</p></div>", unsafe_allow_html=True,
+    )
+    qi3.markdown(
+        f'<div class="kcard kcard-purple"><h2>{sq_meta["total_rows"]:,}</h2>'
+        f"<p>Data Rows</p></div>", unsafe_allow_html=True,
+    )
+    qi4.markdown(
+        f'<div class="kcard kcard-cyan"><h2>{sq_meta["total_headers"]:,}</h2>'
+        f"<p>Header Cells</p></div>", unsafe_allow_html=True,
+    )
 
-    # ── NATURAL LANGUAGE QUERY ENGINE ──────────────────────────────────────
-    _SW2 = {
-        "the","and","for","are","all","any","how","what","show","give",
-        "tell","from","this","that","with","get","find","list","much",
-        "many","each","every","data","value","values","number","numbers",
-        "in","of","a","an","is","at","by","to","do","me","my","about",
-        "details","info","please","can","you","per","across","which",
-        "where","who","when","does","did","have","has","their","its",
-        "our","your","there","these","those","been","will","would","could",
-        "should","shall","let","some","just","also","even","only","into",
-        "over","under","both","such","than","then","but","not","nor",
-        "yet","so","either","neither","versus","vs",
-    }
+    def _is_num(v):
+        try:
+            float(v)
+            return True
+        except Exception:
+            return False
 
-    _SQ_SYN = {
-        "subscription": ["subscription","subscribed","subscript","subscriptionkw","sub","contracted"],
-        "capacity": ["capacity","capac","totalcapacity","installedcapacity","total capacity","installed capacity"],
-        "power": ["power","kw","kva","watt","watts","powerload","load","powerallocation"],
-        "usage": ["usage","utilization","utilisation","consumption","consumed","actual","actualusage"],
-        "rack": ["rack","racks","rackunits","rackunit","noofracks","numberofracks","no of rack"],
-        "space": ["space","sqft","sq ft","sq.ft","area","floorspace","cabinets","cabinet"],
-        "customer": ["customer","name","customers","client","clients","customername","customer name","company","organization","account"],
-        "billing": ["billing","bill","invoice","billed","amount","monthlybilling"],
-        "ownership": ["ownership","owned","owner","ownertype","owner type"],
-        "revenue": ["revenue","income","earning","earnings","arr"],
-        "location": ["location","site","dc","datacenter","data center","city","region"],
-        "status": ["status","live","active","inactive","commissioned","customer status","operational"],
-        "sno": ["sno","sr no","sr. no","serial","sl no","srno"],
-        "sector": ["sector","industry","vertical","segment"],
-        "hall": ["hall","floor","zone","wing","block"],
-        "ups": ["ups","ups capacity","ups load"],
-        "cooling": ["cooling","crac","precision cooling"],
-    }
-
-    _TYPE_FILTER_WORDS = [
-        "caged","uncaged","metered","unmetered","bundled",
-        "un-caged","shared","dedicated","colocation","colo",
-        "managed","unmanaged","hosted","virtual",
-    ]
-
-    _SQ_OP_VERBS = {
+    _OP_VERBS = {
         "total","sum","avg","mean","max","min","count","list","find",
         "show","all","average","maximum","minimum","highest","lowest",
         "top","bottom","describe","statistics","stats","summary","unique",
         "distinct","sheet","column","row","missing","null","percent",
-        "percentage","ratio","share","number","across","compare","get",
-        "give","what","which","where","how","tell","much","many","each",
-        "every","display","view","see","provide",
+        "percentage","ratio","share","number","across","compare",
     }
 
-    def _sq_is_num(v):
-        try:
-            fv = float(str(v).replace(",", "").replace(" ", "").strip())
-            return True, fv
-        except Exception:
-            return False, None
+    _SYN = {
+        "subscription": ["subscription","subscribed","subscript"],
+        "capacity": ["capacity","capac"],
+        "power": ["power","kw","kva"],
+        "usage": ["usage","utilization","consumption","consumed"],
+        "rack": ["rack","racks"],
+        "space": ["space","sqft","sq ft","area"],
+        "customer": ["customer","name","customers","client","clients"],
+        "billing": ["billing","bill","invoice"],
+        "ownership": ["ownership","owned","owner"],
+        "revenue": ["revenue","income","earning"],
+        "caged": ["caged","cage"],
+    }
 
-    def _sq_mcol(kw, hdr):
-        hl = hdr.lower().strip()
-        kwl = kw.lower().strip()
-        if not kwl:
-            return False
-        if kwl in hl or hl in kwl:
+    def _mcol(kw, hdr):
+        hl = hdr.lower()
+        kwl = kw.lower()
+        if kwl in hl:
             return True
-        _strip = lambda s: re.sub(r"[\s\(\)\[\]\.,:;\-_/]", "", s)
-        hl_c = _strip(hl)
-        kwl_c = _strip(kwl)
-        if kwl_c and (kwl_c in hl_c or hl_c in kwl_c):
-            return True
-        for key, syns in _SQ_SYN.items():
+        for key, syns in _SYN.items():
             if kwl in syns or kwl == key:
                 for s in syns:
-                    sc = _strip(s)
-                    if sc and (sc in hl_c or hl_c in sc):
+                    if s in hl:
                         return True
-        kw_words = {w for w in re.findall(r"[a-z0-9]+", kwl) if len(w) >= 3}
-        hl_words = {w for w in re.findall(r"[a-z0-9]+", hl)}
-        if kw_words and kw_words & hl_words:
-            return True
         return False
 
-    def _exact_type_match(cell_val, type_val):
-        v = cell_val.lower().strip()
-        t = type_val.lower().strip()
-        if v == t:
-            return True
-        if " " in v or "/" in v or "," in v:
-            tokens = re.split(r"[\s,/;|]+", v)
-            if t in tokens:
-                return True
-        return False
-
-    def _detect_type_vals(ql):
-        quoted = re.findall(r'"([^"]+)"', ql)
-        if quoted:
-            return [t.strip().lower() for t in quoted]
-        found = []
-        for tw in _TYPE_FILTER_WORDS:
-            if re.search(r'(?<![a-z])' + re.escape(tw) + r'(?![a-z])', ql):
-                found.append(tw)
-        return found
-
-    def smart_corpus_query(question, use_all=True):
+    def sheet_query(question):
         q = question.strip()
         ql = q.lower()
-        if use_all:
-            wc = corpus
-            rr = row_records
-        else:
-            wc = sq_cells
-            rr = sq_rows
+        sig = [w for w in re.findall(r"[a-z0-9]{3,}", ql) if w not in _SW]
 
-        out = {"answer": "", "table": None, "chart_df": None, "chart_cfg": None, "cell_hits": [], "sub_tables": []}
-        if not wc:
-            out["answer"] = "❓ No data indexed."
-            return out
-
-        sig = [w for w in re.findall(r"[a-z0-9]{2,}", ql) if w not in _SW2]
-
-        f_sum  = any(x in ql for x in ["total","sum","aggregate","grand total","add up"])
+        f_sum  = any(x in ql for x in ["total","sum","aggregate"])
         f_avg  = any(x in ql for x in ["average","mean","avg"])
-        f_max  = any(x in ql for x in ["maximum","highest","largest","max","biggest","top value"])
-        f_min  = any(x in ql for x in ["minimum","lowest","smallest","min","least"])
-        f_cnt  = any(x in ql for x in ["count","how many","number of","how much"])
-        f_stat = any(x in ql for x in ["statistics","stats","describe","summary","all stats","overview"])
-        f_std  = any(x in ql for x in ["std","std dev","stddev","standard deviation"])
-        f_med  = any(x in ql for x in ["median","middle"])
-        f_uniq = any(x in ql for x in ["unique","distinct","different","variety"])
-        f_miss = any(x in ql for x in ["missing","null","blank","empty","nan"])
-        f_cols = any(x in ql for x in ["column","columns","field","header","headers","fields"])
+        f_max  = any(x in ql for x in ["maximum","highest","largest","max","top value"])
+        f_min  = any(x in ql for x in ["minimum","lowest","smallest","min"])
+        f_cnt  = any(x in ql for x in ["count","how many","number of"])
+        f_stat = any(x in ql for x in ["statistics","stats","describe","summary","all stats"])
+        f_uniq = any(x in ql for x in ["unique","distinct","different"])
+        f_miss = any(x in ql for x in ["missing","null","blank","empty"])
+        f_cols = any(x in ql for x in ["column","columns","field","header","headers"])
         f_topn = re.search(r"\btop\s*(\d+)\b", ql)
         f_botn = re.search(r"\bbottom\s*(\d+)\b", ql)
-        f_pct  = any(x in ql for x in ["percent","percentage","%","share","proportion"])
-        f_num  = (f_sum or f_avg or f_max or f_min or f_cnt or f_stat or f_std or f_med
+        f_num  = (f_sum or f_avg or f_max or f_min or f_cnt or f_stat
                   or bool(f_topn) or bool(f_botn))
-        f_cust = any(x in ql for x in ["customer","customers","client","clients","name","company","account"])
-        f_list = any(x in ql for x in ["list","show","display","all","get all"])
+        f_cust = any(x in ql for x in ["customer","customers","client","clients","name","names"])
+        f_list = any(x in ql for x in ["list","show","display","all"])
+        f_pct  = any(x in ql for x in ["percent","percentage","%","share"])
 
-        _early_type_vals = _detect_type_vals(ql)
+        out = {
+            "answer": "", "table": None, "chart_df": None,
+            "chart_cfg": None, "cell_hits": [], "sub_tables": [],
+        }
+        wc = sq_cells
+        rr = sq_rows
 
-        location_filter = None
-        if use_all:
-            for loc_name in meta.get("locations", []):
-                if loc_name.lower() in ql:
-                    location_filter = loc_name
-                    break
-
-        col_kws = [w for w in sig if w not in _SQ_OP_VERBS]
-        _type_word_set = set(_TYPE_FILTER_WORDS) | {re.sub(r"[^a-z0-9]","",t) for t in _TYPE_FILTER_WORDS}
-        if _early_type_vals:
-            col_kws = [w for w in col_kws if w not in _type_word_set]
-
-        def _loc_filter(cells):
-            if location_filter and use_all:
-                return [c for c in cells if c.get("location","").lower() == location_filter.lower()]
-            return cells
-
-        def _rr_key(cell):
-            if use_all:
-                return (cell["file"], cell["location"], cell["sheet"], cell["row"])
-            return cell["row"]
-
-        def _get_row_data(cell):
-            return rr.get(_rr_key(cell), {})
-
-        def _npkw(kw, cells):
-            res = []
-            for cell in cells:
-                if cell["is_header"]:
-                    continue
-                if _sq_mcol(kw, cell["col_header"]):
-                    ok, fv2 = _sq_is_num(cell["value"])
-                    if ok:
-                        res.append((fv2, cell))
-            return res
-
-        def _npbest(kws, cells):
-            bk, bp = None, []
-            for w in kws:
-                p = _npkw(w, cells)
-                if len(p) > len(bp):
-                    bp, bk = p, w
-            return bk, bp
-
-        def _build_rows_df(cells_list):
-            seen_keys = set()
-            recs = []
-            for cell in cells_list:
-                key = _rr_key(cell)
-                if key in seen_keys:
-                    continue
-                seen_keys.add(key)
-                row_data = _get_row_data(cell)
-                if not row_data:
-                    continue
-                rd = {}
-                if use_all:
-                    rd["Location"] = cell.get("location", "")
-                    rd["Sheet"]    = cell.get("sheet", "")
-                rd["Row #"] = cell["row"] + 1
-                rd.update(row_data)
-                recs.append(rd)
-            return pd.DataFrame(recs) if recs else pd.DataFrame()
-
-        def _val_match(terms, cells):
-            matched = []
-            for cell in cells:
-                if cell["is_header"]:
-                    continue
-                val_l = cell["value"].lower()
-                if any(t in val_l for t in terms):
-                    matched.append(cell)
-            return matched
-
-        def _col_match_score(w, cells):
-            return sum(1 for c in cells if c["is_header"] and _sq_mcol(w, c["value"]))
-
-        def _get_customer_name_col(row_data):
-            cust_kws = ["customer","name","client","company","account","organisation","organization"]
-            for col_h, val in row_data.items():
-                col_l = col_h.lower()
-                if any(kw in col_l for kw in cust_kws):
-                    if val and str(val).strip() not in ("nan","None",""):
-                        return col_h, val
-            return None, None
-
-        # ── INTENT: Missing values ──────────────────────────────────
-        if f_miss:
-            dfc2 = to_numeric(smart_header(raw_df))
-            mr_list = []
-            for col in dfc2.columns:
-                mc = int(dfc2[col].isna().sum())
-                if mc > 0:
-                    mr_list.append({"Column": col, "Missing Count": mc,
-                                    "Missing %": f"{mc/max(len(dfc2),1)*100:.1f}%",
-                                    "Non-Null": len(dfc2)-mc})
-            if mr_list:
-                tbl = pd.DataFrame(mr_list).sort_values("Missing Count", ascending=False)
-                out["answer"] = f"Found **{len(tbl)}** column(s) with missing values in the current sheet."
-                out["table"] = tbl
-            else:
-                out["answer"] = "✅ No missing values found in the current sheet."
+        if not wc:
+            out["answer"] = "❓ No data indexed in this sheet."
             return out
 
-        # ── INTENT: Column listing ──────────────────────────────────
+        col_kws = [w for w in sig if w not in _OP_VERBS]
+
+        def npkw(kw):
+            res = []
+            for cell in wc:
+                if cell["is_header"]:
+                    continue
+                if _mcol(kw, cell["col_header"]):
+                    try:
+                        res.append((float(cell["value"]), cell))
+                    except Exception:
+                        pass
+            return res
+
+        def npbest(kws):
+            bk, bp = None, []
+            for w in kws:
+                p = npkw(w)
+                if len(p) > len(bp):
+                    bp = p; bk = w
+            return bk, bp
+
+        def build_rows_df(row_nums):
+            recs = []
+            for rn in sorted(row_nums):
+                rec = rr.get(rn, {})
+                if rec:
+                    rd = {"Row #": rn + 1}
+                    rd.update(rec)
+                    recs.append(rd)
+            return pd.DataFrame(recs) if recs else pd.DataFrame()
+
+        def _col_match_score(w):
+            cnt = sum(1 for c in wc if c["is_header"] and _mcol(w, c["value"]))
+            return cnt
+
+        def _val_match_rows(terms):
+            rows = set()
+            cells = []
+            for cell in wc:
+                if cell["is_header"]:
+                    continue
+                if any(t in cell["value"].lower() for t in terms):
+                    rows.add(cell["row"])
+                    cells.append(cell)
+            return sorted(rows), cells
+
+        def _attr_rows(attr_kw, row_nums):
+            res = []
+            for cell in wc:
+                if cell["is_header"] or cell["row"] not in set(row_nums):
+                    continue
+                if _mcol(attr_kw, cell["col_header"]):
+                    res.append(cell)
+            return res
+
+        # INTENT: Missing values
+        if f_miss:
+            dfc = to_numeric(smart_header(raw_df))
+            mr = []
+            for col in dfc.columns:
+                mc = int(dfc[col].isna().sum())
+                if mc > 0:
+                    mr.append({"Column": col, "Missing Count": mc,
+                               "Missing %": f"{mc/max(len(dfc),1)*100:.1f}%",
+                               "Non-Null": len(dfc) - mc})
+            if mr:
+                tbl = pd.DataFrame(mr).sort_values("Missing Count", ascending=False)
+                out["answer"] = f"Found **{len(tbl)}** column(s) with missing values."
+                out["table"] = tbl
+            else:
+                out["answer"] = "✅ No missing values found in this sheet."
+            return out
+
+        # INTENT: Column listing
         if f_cols and not f_num:
-            src = _loc_filter(wc)
-            seen_h, cr = set(), []
-            for cell in src:
+            seen, cr = set(), []
+            for cell in wc:
                 if not cell["is_header"]:
                     continue
                 ch = cell["value"].strip()
-                if ch in ("","nan","None") or ch in seen_h:
+                if ch in ("", "nan") or ch in seen:
                     continue
-                seen_h.add(ch)
-                entry = {"Column Header": ch}
-                if use_all:
-                    entry["Location"] = cell.get("location","")
-                    entry["Sheet"]    = cell.get("sheet","")
-                entry["At Row"] = cell["row"] + 1
-                cr.append(entry)
+                seen.add(ch)
+                cr.append({"Column Header": ch, "At Row": cell["row"]+1, "At Col": cell["col"]+1})
             tbl = pd.DataFrame(cr) if cr else pd.DataFrame()
-            scope_txt = "across all files" if use_all else "in this sheet"
-            out["answer"] = f"Found **{len(tbl)}** unique column header(s) {scope_txt}."
-            out["table"]  = tbl
+            out["answer"] = f"Found **{len(tbl)}** unique column header(s) in this sheet."
+            out["table"] = tbl
             return out
 
-        # ── INTENT: Type-filter (caged/metered/bundled/uncaged etc.) ──────────
-        if _early_type_vals and not f_num and not f_cols and not f_miss and not f_uniq:
-            src = _loc_filter(wc)
-            scope_txt = "across all files" if use_all else "in this sheet"
-            all_result_rows = []
-
-            for tv in _early_type_vals:
-                tv_row_keys = set()
-                for cell in src:
-                    if cell["is_header"]:
-                        continue
-                    if _exact_type_match(cell["value"], tv):
-                        tv_row_keys.add(_rr_key(cell))
-
-                for key in tv_row_keys:
-                    row_data = rr.get(key, {})
-                    if not row_data:
-                        continue
-                    rd = {"Type": tv}
-                    if use_all and isinstance(key, tuple):
-                        rd["Location"] = key[1]
-                        rd["Sheet"]    = key[2]
-                        rd["Row #"]    = key[3] + 1
-                    else:
-                        rd["Row #"] = (key+1) if isinstance(key, int) else (key[-1]+1)
-                    cust_col, cust_val = _get_customer_name_col(row_data)
-                    if cust_col and cust_val:
-                        rd["Customer / Name"] = cust_val
-                    rd.update(row_data)
-                    all_result_rows.append(rd)
-
-            if all_result_rows:
-                result_df = pd.DataFrame(all_result_rows)
-                priority_cols = [c for c in ["Type","Customer / Name","Location","Sheet","Row #"] if c in result_df.columns]
-                other_cols = [c for c in result_df.columns if c not in priority_cols]
-                result_df = result_df[priority_cols + other_cols]
-                type_disp = ", ".join(f"**{v}**" for v in _early_type_vals)
-                out["answer"] = f"Found **{len(all_result_rows):,}** row(s) matching type(s) {type_disp} {scope_txt}."
-                out["table"] = result_df
-            else:
-                type_disp = ", ".join(f"'{v}'" for v in _early_type_vals)
-                out["answer"] = f"No rows found with type value(s) {type_disp} {scope_txt}."
-            return out
-
-        # ── INTENT: List customers ──────────────────────────────────
-        if (f_cust or f_list) and not f_num and not col_kws:
-            src = _loc_filter(wc)
-            cust_kws = ["customer","name","client","company","account","organisation","organization"]
-            found_cells = [
-                c for c in src
-                if not c["is_header"]
-                and any(x in c["col_header"].lower() for x in cust_kws)
-            ]
-            if found_cells:
-                rows_data = []
-                for cell in found_cells:
-                    entry = {}
-                    if use_all:
-                        entry["Location"] = cell.get("location","")
-                        entry["Sheet"]    = cell.get("sheet","")
-                    entry["Row #"]  = cell["row"] + 1
-                    entry["Column"] = cell["col_header"]
-                    entry["Value"]  = cell["value"]
-                    rows_data.append(entry)
-                tbl = pd.DataFrame(rows_data).drop_duplicates(subset=["Value"])
-                scope_txt = "across all files" if use_all else "in this sheet"
-                out["answer"] = f"Found **{len(tbl)}** unique customer/name entries {scope_txt}."
-                out["table"] = tbl
-                full_rows_df = _build_rows_df(found_cells)
-                if not full_rows_df.empty:
-                    out["sub_tables"].append({"label": f"📋 Full Row Data for All Customers", "df": full_rows_df})
-            else:
-                out["answer"] = "No 'Customer/Name/Client' columns found in the data."
-            return out
-
-        # ── INTENT: Numeric aggregation ─────────────────────────────
+        # INTENT: Numeric aggregation
         if f_num:
-            src = _loc_filter(wc)
-            kw, pairs = _npbest(col_kws, src)
+            kw, pairs = npbest(col_kws)
             if not pairs:
-                for dkw in ["subscription","capacity","power","usage","rack","space","revenue","billing","kw","kva","sqft"]:
+                for dkw in ["subscription","capacity","power","usage","rack",
+                            "space","consumption","kw","kva","sqft","revenue"]:
                     if dkw in ql:
-                        pairs = _npkw(dkw, src)
-                        if pairs:
-                            kw = dkw
-                            break
+                        pairs = npkw(dkw)
+                        if pairs: kw = dkw; break
             if pairs:
                 vals = [v for v, _ in pairs]
-                sa = pd.Series(vals)
+                sa   = pd.Series(vals)
                 parts = []
-                if f_sum  or f_stat: parts.append(f"**Total (Sum):** {sa.sum():,.2f}")
-                if f_avg  or f_stat: parts.append(f"**Average (Mean):** {sa.mean():,.2f}")
-                if f_max  or f_stat: parts.append(f"**Maximum:** {sa.max():,.2f}")
-                if f_min  or f_stat: parts.append(f"**Minimum:** {sa.min():,.2f}")
-                if f_cnt  or f_stat: parts.append(f"**Count:** {int(sa.count()):,}")
-                if f_std  or f_stat: parts.append(f"**Std Dev:** {sa.std():,.2f}")
-                if f_med  or f_stat: parts.append(f"**Median:** {sa.median():,.2f}")
+                if f_sum  or f_stat: parts.append(f"**Total (Sum):** {sa.sum():,.4f}")
+                if f_avg  or f_stat: parts.append(f"**Average (Mean):** {sa.mean():,.4f}")
+                if f_max  or f_stat: parts.append(f"**Maximum:** {sa.max():,.4f}")
+                if f_min  or f_stat: parts.append(f"**Minimum:** {sa.min():,.4f}")
+                if f_cnt  or f_stat: parts.append(f"**Count:** {sa.count():,}")
                 if f_stat:
-                    parts.append(f"**Variance:** {sa.var():,.2f}  |  **Range:** {sa.max()-sa.min():,.2f}  |  **IQR:** {sa.quantile(0.75)-sa.quantile(0.25):,.2f}")
+                    parts.append(f"**Median:** {sa.median():,.4f} | "
+                                 f"**Std Dev:** {sa.std():,.4f} | "
+                                 f"**Range:** {sa.max()-sa.min():,.4f}")
                 if f_pct:
-                    grand = sum(fv2 for c in src if not c["is_header"] for ok,fv2 in [_sq_is_num(c["value"])] if ok) or 1
-                    parts.append(f"**% of All Numeric:** {sa.sum()/grand*100:.2f}%")
+                    grand = sum(float(c["value"]) for c in wc
+                                if not c["is_header"] and _is_num(c["value"])) or 1
+                    parts.append(f"**% of Sheet Total:** {sa.sum()/grand*100:.2f}%")
+                if (f_topn or f_botn) and not (f_sum or f_avg or f_max or f_min or f_cnt or f_stat):
+                    parts.append(f"**Count:** {sa.count():,}")
+                    parts.append(f"**Total (Sum):** {sa.sum():,.4f}")
 
-                detail = []
-                for v, cell in pairs:
-                    entry = {}
-                    if use_all:
-                        entry["Location"]      = cell.get("location","")
-                        entry["Sheet"]         = cell.get("sheet","")
-                    entry["Row #"]         = cell["row"] + 1
-                    entry["Column Header"] = cell["col_header"]
-                    entry["Value"]         = v
-                    detail.append(entry)
+                detail = [{"Row #": c["row"]+1, "Col #": c["col"]+1,
+                           "Column Header": c["col_header"], "Value": v}
+                          for v, c in pairs]
                 tbl = pd.DataFrame(detail).sort_values("Value", ascending=False)
-
-                scope_txt = "across all files" if use_all else "in this sheet"
-                loc_note  = f" (Location: **{location_filter}**)" if location_filter else ""
-                out["answer"] = (
-                    f"Results for **'{kw}'** — **{len(vals):,} values** found {scope_txt}{loc_note}:\n\n"
-                    + "\n".join(parts)
-                )
+                out["answer"] = (f"Results for **'{kw}'** — **{len(vals):,} values** found:\n\n"
+                                 + "\n".join(parts))
                 out["table"] = tbl
 
-                full_rows_df = _build_rows_df([cell for _,cell in pairs])
+                paired_rows = sorted({c["row"] for _, c in pairs})
+                full_rows_df = build_rows_df(paired_rows)
                 if not full_rows_df.empty:
-                    out["sub_tables"].append({"label": f"📋 Full Row Data for '{kw}'", "df": full_rows_df})
-
-                if use_all and "Location" in tbl.columns and tbl["Location"].nunique() > 1:
-                    loc_agg = tbl.groupby("Location")["Value"].sum().reset_index().rename(columns={"Value":"Total"})
-                    out["chart_df"]  = loc_agg
-                    out["chart_cfg"] = {"x":"Location","y":"Total","title":f"Sum of '{kw}' by Location"}
+                    out["sub_tables"].append({
+                        "label": f"📋 Full Row Data for '{kw}' ({len(paired_rows)} rows)",
+                        "df": full_rows_df,
+                    })
 
                 if f_topn:
-                    n = int(f_topn.group(1))
+                    n   = int(f_topn.group(1))
                     top = sorted(pairs, key=lambda x: x[0], reverse=True)[:n]
-                    top_df = _build_rows_df([c for _,c in top])
-                    out["sub_tables"].append({"label": f"🏆 Top {n} — '{kw}'", "df": top_df})
+                    top_rows = sorted({c["row"] for _, c in top})
+                    top_full = build_rows_df(top_rows)
+                    out["sub_tables"].append({
+                        "label": f"🏆 Top {n} — '{kw}' (full rows)",
+                        "df": top_full if not top_full.empty else pd.DataFrame(
+                            [{"Row": c["row"]+1, "Column": c["col_header"], "Value": v}
+                             for v, c in top]),
+                    })
                 if f_botn:
-                    n = int(f_botn.group(1))
+                    n   = int(f_botn.group(1))
                     bot = sorted(pairs, key=lambda x: x[0])[:n]
-                    bot_df = _build_rows_df([c for _,c in bot])
-                    out["sub_tables"].append({"label": f"🔻 Bottom {n} — '{kw}'", "df": bot_df})
+                    bot_rows = sorted({c["row"] for _, c in bot})
+                    bot_full = build_rows_df(bot_rows)
+                    out["sub_tables"].append({
+                        "label": f"🔻 Bottom {n} — '{kw}' (full rows)",
+                        "df": bot_full if not bot_full.empty else pd.DataFrame(
+                            [{"Row": c["row"]+1, "Column": c["col_header"], "Value": v}
+                             for v, c in bot]),
+                    })
                 return out
 
-        # ── INTENT: Unique values ──────────────────────────────────
+            # fallback – all numeric cells
+            anums = [(float(c["value"]), c) for c in wc
+                     if not c["is_header"] and _is_num(c["value"])]
+            if anums:
+                vals = [v for v, _ in anums]
+                sa   = pd.Series(vals)
+                parts = []
+                if f_sum:  parts.append(f"**Sum ALL numeric cells:** {sa.sum():,.4f}")
+                if f_avg:  parts.append(f"**Avg ALL numeric cells:** {sa.mean():,.4f}")
+                if f_max:  parts.append(f"**Max ALL numeric cells:** {sa.max():,.4f}")
+                if f_min:  parts.append(f"**Min ALL numeric cells:** {sa.min():,.4f}")
+                if f_cnt:  parts.append(f"**Count ALL numeric cells:** {sa.count():,}")
+                if f_stat:
+                    parts.append(f"**Sum:** {sa.sum():,.4f} | **Avg:** {sa.mean():,.4f} | "
+                                 f"**Max:** {sa.max():,.4f} | **Min:** {sa.min():,.4f} | "
+                                 f"**Median:** {sa.median():,.4f} | **Std Dev:** {sa.std():,.4f}")
+                out["answer"] = ("No column matched your keywords. "
+                                 "Results from **ALL numeric cells** in sheet:\n\n"
+                                 + "\n".join(parts))
+                return out
+
+        # INTENT: Unique values
         if f_uniq:
-            src = _loc_filter(wc)
-            for w in (col_kws or sig):
+            for w in col_kws or sig:
                 uv, sr = set(), []
-                for cell in src:
-                    if cell["is_header"]:
-                        continue
-                    if _sq_mcol(w, cell["col_header"]):
+                for cell in wc:
+                    if cell["is_header"]: continue
+                    if _mcol(w, cell["col_header"]):
                         uv.add(cell["value"])
-                        entry = {"Column": cell["col_header"], "Value": cell["value"]}
-                        if use_all:
-                            entry["Location"] = cell.get("location","")
-                            entry["Sheet"]    = cell.get("sheet","")
-                        entry["Row #"] = cell["row"] + 1
-                        sr.append(entry)
+                        sr.append({"Column": cell["col_header"],
+                                   "Value": cell["value"], "Row #": cell["row"]+1})
                 if uv:
                     tbl = pd.DataFrame(sr).drop_duplicates(subset=["Value"])
                     out["answer"] = f"**{len(uv)}** unique value(s) found for **'{w}'**."
-                    out["table"]  = tbl
+                    out["table"] = tbl
                     return out
 
-        # ── Cross-column / entity lookup ─────────────────────────────
-        src     = _loc_filter(wc)
-        tokens  = [w for w in sig if w not in _SQ_OP_VERBS]
-        col_scores  = {w: _col_match_score(w, src) for w in tokens}
-        val_scores  = {w: sum(1 for c in src if not c["is_header"] and w in c["value"].lower()) for w in tokens}
-        attr_toks   = [w for w in tokens if col_scores.get(w, 0) > 0]
-        entity_toks = [w for w in tokens if val_scores.get(w, 0) > 0]
+        # INTENT: Cross-column relational lookup
+        if not f_num:
+            tokens = [w for w in sig if w not in _OP_VERBS]
 
-        quoted = re.findall(r'"([^"]+)"', q)
-        entity_cells = _val_match([quoted[0].lower()], src) if quoted else _val_match(entity_toks, src)
+            col_scores = {w: _col_match_score(w) for w in tokens}
+            val_scores = {w: sum(1 for c in wc
+                                 if not c["is_header"] and w in c["value"].lower())
+                          for w in tokens}
 
-        if attr_toks and entity_cells:
-            entity_keys = {_rr_key(c) for c in entity_cells}
-            recs = []
-            for key in sorted(entity_keys, key=lambda k: (k if isinstance(k, int) else k[-1])):
-                row_data = rr.get(key, {})
-                if not row_data:
-                    continue
-                rd = {}
-                if use_all and isinstance(key, tuple):
-                    rd["Location"] = key[1]
-                    rd["Sheet"]    = key[2]
-                    rd["Row #"]    = key[3] + 1
+            attr_toks  = [w for w in tokens if col_scores.get(w, 0) > 0]
+            entity_toks = [w for w in tokens if val_scores.get(w, 0) > 0]
+
+            quoted = re.findall(r'"([^"]+)"', q)
+            if quoted:
+                entity_phrase = [quoted[0].lower()]
+                entity_rows_q, entity_cells_q = _val_match_rows(entity_phrase)
+                if entity_rows_q:
+                    entity_toks = entity_phrase
+                    entity_rows, entity_cells = entity_rows_q, entity_cells_q
                 else:
-                    rd["Row #"] = (key+1) if isinstance(key,int) else key[-1]+1
-                for cell in entity_cells:
-                    if _rr_key(cell) == key:
-                        rd[f"[Matched] {cell['col_header']}"] = cell["value"]
-                for at in attr_toks:
-                    for col_h, val in row_data.items():
-                        if _sq_mcol(at, col_h):
-                            rd[col_h] = val
-                recs.append(rd)
-            if recs:
-                tbl = pd.DataFrame(recs)
-                entity_disp = ", ".join(f"'{t}'" for t in (entity_toks if not quoted else [quoted[0]])[:3])
-                attr_disp = ", ".join(f"'{t}'" for t in attr_toks[:3])
+                    entity_rows, entity_cells = [], []
+            else:
+                entity_rows, entity_cells = _val_match_rows(entity_toks)
+
+            if attr_toks and entity_rows:
+                recs = []
+                for rn in sorted(entity_rows):
+                    row_data = rr.get(rn, {})
+                    if not row_data:
+                        continue
+                    rd = {"Row #": rn + 1}
+                    for c in entity_cells:
+                        if c["row"] == rn:
+                            rd[f"[Matched] {c['col_header']}"] = c["value"]
+                    for at in attr_toks:
+                        for col_h, val in row_data.items():
+                            if _mcol(at, col_h):
+                                rd[col_h] = val
+                    recs.append(rd)
+
+                if recs:
+                    tbl = pd.DataFrame(recs)
+                    entity_disp = ", ".join(f"'{t}'" for t in entity_toks[:3])
+                    attr_disp   = ", ".join(f"'{t}'" for t in attr_toks[:3])
+                    out["answer"] = (
+                        f"Cross-column lookup — entity **{entity_disp}** "
+                        f"found in **{len(entity_rows)}** row(s).\n\n"
+                        f"Showing **{attr_disp}** column value(s) for those rows:"
+                    )
+                    out["table"] = tbl
+
+                    full_rows_df = build_rows_df(entity_rows)
+                    if not full_rows_df.empty:
+                        out["sub_tables"].append({
+                            "label": f"📋 All Column Values for Matching Rows ({len(entity_rows)})",
+                            "df": full_rows_df,
+                        })
+                    return out
+
+            if entity_rows:
+                full_df = build_rows_df(entity_rows)
+                match_disp = ", ".join(f"'{t}'" for t in entity_toks[:4])
                 out["answer"] = (
-                    f"Cross-column lookup — entity **{entity_disp}** found in **{len(entity_keys)}** row(s).\n\n"
-                    f"Showing **{attr_disp}** column value(s):"
+                    f"Found **{len(entity_cells):,}** cell(s) matching **{match_disp}** "
+                    f"across **{len(entity_rows):,}** row(s).\n\n"
+                    f"Showing **all column values** for every matching row:"
                 )
-                out["table"] = tbl
-                full_rows_df = _build_rows_df(entity_cells)
-                if not full_rows_df.empty:
-                    out["sub_tables"].append({"label": f"📋 All Columns for Matching Rows", "df": full_rows_df})
+                out["table"] = full_df if not full_df.empty else None
+                out["cell_hits"] = [
+                    {"Row #": c["row"]+1, "Col #": c["col"]+1,
+                     "Column Header": c["col_header"], "Value": c["value"]}
+                    for c in entity_cells[:100]
+                ]
                 return out
 
-        if entity_cells:
-            full_df = _build_rows_df(entity_cells)
-            entity_keys = {_rr_key(c) for c in entity_cells}
-            match_disp = f'"{quoted[0]}"' if quoted else ", ".join(f"'{t}'" for t in entity_toks[:4])
+            if attr_toks:
+                best_attr = max(attr_toks, key=lambda w: col_scores[w])
+                sr = []
+                seen_rows = set()
+                for cell in wc:
+                    if cell["is_header"]: continue
+                    if _mcol(best_attr, cell["col_header"]):
+                        row_data = rr.get(cell["row"], {})
+                        if cell["row"] not in seen_rows:
+                            seen_rows.add(cell["row"])
+                            rd = {"Row #": cell["row"]+1, "Column": cell["col_header"],
+                                  "Value": cell["value"]}
+                            sr.append(rd)
+                if sr:
+                    out["answer"] = (
+                        f"Showing all values under column matching **'{best_attr}'** "
+                        f"— **{len(sr)}** row(s):"
+                    )
+                    out["table"] = pd.DataFrame(sr)
+                    return out
+
+        # Generic fallback
+        hits = []
+        for cell in wc:
+            cv = cell["value"].lower()
+            ch = cell["col_header"].lower()
+            if any(t in cv or t in ch for t in sig):
+                hits.append({
+                    "Row #": cell["row"]+1, "Col #": cell["col"]+1,
+                    "Column Header": cell["col_header"],
+                    "Value": cell["value"],
+                    "Is Header": cell["is_header"],
+                })
+        if hits:
             out["answer"] = (
-                f"Found **{len(entity_cells):,}** cell(s) matching **{match_disp}** "
-                f"across **{len(entity_keys):,}** row(s).\n\nShowing **all column values** for every matching row:"
+                f"Found **{len(hits):,}** cell(s) matching your query keywords."
             )
-            out["table"] = full_df if not full_df.empty else None
-            out["cell_hits"] = [
-                dict(
-                    **({} if not use_all else {"Location": c.get("location",""), "Sheet": c.get("sheet","")}),
-                    **{"Row #": c["row"]+1, "Col #": c["col"]+1, "Column Header": c["col_header"], "Value": c["value"]},
-                )
-                for c in entity_cells[:200]
-            ]
-            return out
-
-        if attr_toks:
-            best_attr = max(attr_toks, key=lambda w: col_scores[w])
-            sr, seen_keys = [], set()
-            for cell in src:
-                if cell["is_header"] or not _sq_mcol(best_attr, cell["col_header"]):
-                    continue
-                key = _rr_key(cell)
-                if key in seen_keys:
-                    continue
-                seen_keys.add(key)
-                entry = {}
-                if use_all:
-                    entry["Location"] = cell.get("location","")
-                    entry["Sheet"]    = cell.get("sheet","")
-                entry["Row #"]  = cell["row"] + 1
-                entry["Column"] = cell["col_header"]
-                entry["Value"]  = cell["value"]
-                sr.append(entry)
-            if sr:
-                tbl = pd.DataFrame(sr)
-                out["answer"] = f"Found **{len(sr)}** value(s) in column(s) matching **'{best_attr}'**."
-                out["table"]  = tbl
-                matching_cells = [c for c in src if not c["is_header"] and _sq_mcol(best_attr, c["col_header"])]
-                full_rows_df = _build_rows_df(matching_cells)
-                if not full_rows_df.empty:
-                    out["sub_tables"].append({"label": f"📋 Full Row Data for '{best_attr}'", "df": full_rows_df})
-                return out
-
-        if f_list or "all rows" in ql or "show all" in ql:
-            seen_keys, recs = set(), []
-            for cell in src:
-                if cell["is_header"]:
-                    continue
-                key = _rr_key(cell)
-                if key in seen_keys:
-                    continue
-                seen_keys.add(key)
-                row_data = rr.get(key, {})
-                if not row_data:
-                    continue
-                rd = {}
-                if use_all and isinstance(key, tuple):
-                    rd["Location"] = key[1]
-                    rd["Sheet"]    = key[2]
-                    rd["Row #"]    = key[3]+1
-                else:
-                    rd["Row #"] = (key+1) if isinstance(key,int) else key[-1]+1
-                rd.update(row_data)
-                recs.append(rd)
-            if recs:
-                tbl = pd.DataFrame(recs)
-                scope_txt = "across all files" if use_all else "in this sheet"
-                out["answer"] = f"Showing **all {len(recs):,}** data rows {scope_txt}."
-                out["table"]  = tbl
-                return out
-
-        out["answer"] = "❓ No matching data found. Try: 'total power', 'list caged customers', 'count racks', 'sum capacity Airoli'."
+            out["table"] = pd.DataFrame(hits[:200])
+        else:
+            out["answer"] = (
+                "❓ No matching data found. Try different keywords or check the column "
+                "headers in the Overview tab."
+            )
         return out
 
-    # ── Render query results ───────────────────────────────────────
-    def sq_render_answer(res, tidx=0):
-        st.markdown(f'<div class="ans-box">{res["answer"]}</div>', unsafe_allow_html=True)
-        if res.get("table") is not None and not res["table"].empty:
-            tbl = res["table"].reset_index(drop=True)
-            st.dataframe(tbl, use_container_width=True, height=min(560, 50+len(tbl)*36), key=f"sq_tbl_{tidx}")
-            st.download_button("⬇️ Download CSV", tbl.to_csv(index=False).encode(),
-                               "smart_query_result.csv", "text/csv", key=f"sq_dl_{tidx}")
-        if res.get("chart_cfg") and res.get("chart_df") is not None:
-            cfg = res["chart_cfg"]
-            cdf = res["chart_df"]
-            if cfg["x"] in cdf.columns and cfg["y"] in cdf.columns:
-                try:
-                    fig = px.bar(
-                        cdf.sort_values(cfg["y"], ascending=False).head(30),
-                        x=cfg["x"], y=cfg["y"], color=cfg["y"],
-                        color_continuous_scale="Viridis",
-                        title=cfg["title"], height=400,
-                    )
-                    fig.update_layout(xaxis_tickangle=-30, **DARK)
-                    st.plotly_chart(fig, use_container_width=True, key=f"sq_ch_{tidx}")
-                except Exception:
-                    pass
-        for si, s in enumerate(res.get("sub_tables", [])):
-            with st.expander(s["label"], expanded=True):
-                st.dataframe(s["df"], use_container_width=True, key=f"sq_sub_{tidx}_{si}")
-        if res.get("cell_hits"):
-            with st.expander(f"🔬 Matching Cells ({len(res['cell_hits'])})", expanded=False):
-                for ch in res["cell_hits"][:100]:
-                    loc_info = ""
-                    if ch.get("Location"):
-                        loc_info = f'{ch["Location"]} › {ch.get("Sheet","")} | '
+    # ── Chat UI ──────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown('<div class="sec-title">💬 Ask a Question About Your Data</div>', unsafe_allow_html=True)
+    st.caption("Examples: *list caged customer* · *sum of total capacity power* · *count of customers* · *top 10 power* · *what are the columns*")
+
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+
+    qform = st.form("query_form", clear_on_submit=True)
+    with qform:
+        fc1, fc2 = st.columns([5, 1])
+        user_q = fc1.text_input("Your question", placeholder="e.g. list caged customer and show sum of total capacity power", label_visibility="collapsed")
+        submitted = fc2.form_submit_button("🔍 Ask", type="primary")
+
+    if submitted and user_q.strip():
+        with st.spinner("🔍 Processing…"):
+            result = sheet_query(user_q)
+        st.session_state.chat_history.append({"q": user_q, "r": result})
+
+    if st.button("🗑️ Clear History"):
+        st.session_state.chat_history = []
+
+    for item in reversed(st.session_state.chat_history):
+        st.markdown(f'<div class="q-user">{item["q"]}</div><div class="clearfix"></div>', unsafe_allow_html=True)
+        r = item["r"]
+        if r["answer"]:
+            st.markdown(f'<div class="ans-box">{r["answer"]}</div>', unsafe_allow_html=True)
+        if r.get("cell_hits"):
+            with st.expander(f"🔦 Matched Cells ({len(r['cell_hits'])})"):
+                for ch in r["cell_hits"][:50]:
                     st.markdown(
-                        f'<div class="cell-chip">{loc_info}'
-                        f'Row {ch["Row #"]} · Col {ch["Col #"]} | '
-                        f'<i>{ch["Column Header"]}</i> | '
-                        f'<b>{ch["Value"]}</b></div>',
+                        f'<div class="cell-chip">Row {ch["Row #"]} · Col {ch["Col #"]} · '
+                        f'<b>{ch["Column Header"]}</b>: {ch["Value"]}</div>',
                         unsafe_allow_html=True,
                     )
-        st.markdown('<div class="clearfix"></div>', unsafe_allow_html=True)
-
-    # ── Query input ────────────────────────────────────────────────
-    st.markdown("---")
-    st.markdown('<div class="sec-title">🧠 Natural Language Query</div>', unsafe_allow_html=True)
-    st.caption(
-        "Examples: **total power Airoli** · **list caged customers** · "
-        "**count racks Noida** · **avg capacity all locations** · "
-        "**sum subscription metered** · **statistics power** · **top 5 capacity**"
-    )
-
-    q_examples = [
-        "— Choose an example —",
-        "total power across all locations",
-        "list all caged customers",
-        "sum of subscription for metered type",
-        "count racks across all files",
-        "average capacity by location",
-        "statistics of power column",
-        "top 10 capacity rows",
-        "list unique customer names",
-        "missing values",
-        "show all columns",
-    ]
-    ex_sel = st.selectbox("Quick examples:", q_examples, key="sq_ex")
-
-    if "sq_history" not in st.session_state:
-        st.session_state.sq_history = []
-
-    default_q = ex_sel if ex_sel != "— Choose an example —" else ""
-    user_q = st.text_input("💬 Your query:", value=default_q, placeholder="e.g. total power all locations", key="sq_in")
-
-    col_run_q, col_clr = st.columns([1, 1])
-    run_q = col_run_q.button("🔍 Run Query", type="primary", key="sq_run")
-    clr_q = col_clr.button("🗑 Clear History", key="sq_clr")
-
-    if clr_q:
-        st.session_state.sq_history = []
-        st.rerun()
-
-    if run_q and user_q.strip():
-        with st.spinner("🔍 Querying…"):
-            res = smart_corpus_query(user_q.strip(), use_all=use_corpus)
-        st.session_state.sq_history.insert(0, (user_q.strip(), res))
-
-    for i, (qtext, res) in enumerate(st.session_state.sq_history[:10]):
-        st.markdown(f'<div class="q-user">💬 {qtext}</div>', unsafe_allow_html=True)
-        sq_render_answer(res, tidx=i)
-
-    # ── SMART CELL VALUE SEARCH ────────────────────────────────────
-    st.markdown("---")
-    st.markdown('<div class="sec-title">🔎 Smart Cell-Value Search</div>', unsafe_allow_html=True)
-    st.caption(
-        "Search every file, sheet, row and column by any cell value. "
-        "Returns all matching rows with their full column context."
-    )
-
-    scs1, scs2, scs3 = st.columns([3, 2, 1])
-    cell_search_val   = scs1.text_input("Search value:", placeholder="e.g. Airtel, caged, 1000", key="csv_val")
-    cell_match_mode   = scs2.selectbox("Match mode:", [
-        "Contains (partial match)", "Exact (case-insensitive)", "Starts with", "Regex"
-    ], key="csv_mode")
-    cell_search_scope = scs3.checkbox("All files", True, key="csv_scope")
-
-    if st.button("🔎 Search Cell Values", type="primary", key="csv_run"):
-        if cell_search_val.strip():
-            sv = cell_search_val.strip()
-            svl = sv.lower()
-            src2 = corpus if cell_search_scope else sq_cells
-            hits, row_keys, seen_k = [], [], set()
-
-            for cell in src2:
-                if cell["is_header"]:
-                    continue
-                val = cell["value"]
-                vl  = val.lower()
-                matched = False
-                if cell_match_mode == "Exact (case-insensitive)":
-                    matched = (vl == svl)
-                elif cell_match_mode == "Contains (partial match)":
-                    matched = (svl in vl)
-                elif cell_match_mode == "Starts with":
-                    matched = vl.startswith(svl)
-                elif cell_match_mode == "Regex":
-                    try:
-                        matched = bool(re.search(sv, val, re.IGNORECASE))
-                    except Exception:
-                        matched = False
-                if matched:
-                    h = {}
-                    if cell_search_scope and "location" in cell:
-                        h["Location"] = cell.get("location","")
-                        h["Sheet"]    = cell.get("sheet","")
-                    h["Row #"]         = cell["row"] + 1
-                    h["Col #"]         = cell["col"] + 1
-                    h["Column Header"] = cell["col_header"]
-                    h["Matched Value"] = val
-                    hits.append(h)
-                    if cell_search_scope:
-                        key2 = (cell["file"], cell.get("location",""), cell.get("sheet",""), cell["row"])
-                    else:
-                        key2 = cell["row"]
-                    if key2 not in seen_k:
-                        seen_k.add(key2)
-                        row_keys.append(key2)
-
-            if hits:
-                hits_df = pd.DataFrame(hits)
-                st.success(f"Found **{len(hits):,}** matching cell(s) across **{len(row_keys):,}** row(s).")
-                st.dataframe(hits_df, use_container_width=True, height=400)
-                st.download_button("⬇️ Download Matching Cells CSV", hits_df.to_csv(index=False).encode(),
-                                   "cell_search_results.csv", "text/csv")
-
-                # Full rows for matching keys
-                full_recs = []
-                for key2 in row_keys[:500]:
-                    rd = row_records.get(key2, {}) if cell_search_scope else sq_rows.get(key2, {})
-                    if rd:
-                        rec = {}
-                        if cell_search_scope and isinstance(key2, tuple):
-                            rec["Location"] = key2[1]
-                            rec["Sheet"]    = key2[2]
-                            rec["Row #"]    = key2[3] + 1
-                        elif isinstance(key2, int):
-                            rec["Row #"] = key2 + 1
-                        rec.update(rd)
-                        full_recs.append(rec)
-                if full_recs:
-                    with st.expander(f"📋 Full Row Data for All Matching Rows ({len(full_recs)})", expanded=True):
-                        full_df2 = pd.DataFrame(full_recs)
-                        st.dataframe(full_df2, use_container_width=True)
-                        st.download_button("⬇️ Download Full Rows CSV", full_df2.to_csv(index=False).encode(),
-                                           "cell_search_full_rows.csv", "text/csv")
-            else:
-                st.warning(f"No cells found matching **'{sv}'** with mode **{cell_match_mode}**.")
-        else:
-            st.warning("Please enter a search value.")
+        if r.get("table") is not None and not r["table"].empty:
+            st.dataframe(r["table"], use_container_width=True)
+            st.download_button(
+                "⬇️ Download result CSV",
+                r["table"].to_csv(index=False).encode(),
+                "query_result.csv",
+                "text/csv",
+                key=f"dl_{id(item)}",
+            )
+        for sub in r.get("sub_tables", []):
+            with st.expander(sub["label"]):
+                st.dataframe(sub["df"], use_container_width=True)
+                st.download_button(
+                    "⬇️ Download",
+                    sub["df"].to_csv(index=False).encode(),
+                    "sub_result.csv",
+                    "text/csv",
+                    key=f"sdl_{id(sub)}",
+                )
+        st.markdown("<hr style='border-color:#2a3a5a;margin:12px 0'>", unsafe_allow_html=True)
