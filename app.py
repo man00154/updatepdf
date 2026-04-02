@@ -71,7 +71,7 @@ section[data-testid="stSidebar"] *{{color:{TEXT}!important}}
 .result-big{{font-size:2.6rem;font-weight:900;background:linear-gradient(90deg,{CYAN},{LBLUE});-webkit-background-clip:text;-webkit-text-fill-color:transparent}}
 .hero{{background:linear-gradient(135deg,{DARK2} 0%,{DARK1} 50%,{NAVY} 100%);border:1px solid {BORD};border-radius:16px;padding:28px 36px;margin-bottom:24px;box-shadow:0 8px 32px rgba(0,0,0,.4)}}
 .hero h1{{font-size:2rem;font-weight:900;color:{WHITE};margin:0;letter-spacing:.02em}}
-.hero p{{color:{MUTED};margin:6px 0 0;font-size:.95rem}}
+.hero p{{color:{WHITE};margin:6px 0 0;font-size:.95rem}}
 ::-webkit-scrollbar{{width:6px;height:6px}}
 ::-webkit-scrollbar-track{{background:{DARK1}}}
 ::-webkit-scrollbar-thumb{{background:{BORD};border-radius:3px}}
