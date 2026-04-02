@@ -11,9 +11,6 @@ import openpyxl
 
 warnings.filterwarnings("ignore")
 
-# ─────────────────────────────────────────────────────────
-# PAGE CONFIG
-# ─────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Sify DC – Capacity Intelligence",
     page_icon="🏢",
@@ -21,9 +18,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ─────────────────────────────────────────────────────────
-# THEME CONSTANTS
-# ─────────────────────────────────────────────────────────
 NAVY  = "#0a0e1a"
 DARK1 = "#0f1628"
 DARK2 = "#141c35"
@@ -79,9 +73,6 @@ section[data-testid="stSidebar"] *{{color:{TEXT}!important}}
 </style>
 """, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────────────────
-# EXCEL LOADING HELPERS
-# ─────────────────────────────────────────────────────────
 EXCEL_DIR = Path(__file__).parent / "excel_files"
 
 SECTION_MARKERS = {
@@ -119,7 +110,6 @@ def _load_ws(ws) -> "pd.DataFrame | None":
     else:
         return None
 
-    # Build composite column names
     cur_g = ""
     cols = []
     for g, c in zip(g_row, c_row):
@@ -144,11 +134,9 @@ def _load_ws(ws) -> "pd.DataFrame | None":
     df = df.dropna(axis=1, how="all")
     df = df[df.apply(lambda r: any(
         str(v).strip() not in ("", "None", "nan") for v in r), axis=1)]
-    # Remove formula-error rows
     df = df[~df.apply(lambda r: r.astype(str).str.contains(
         r"#DIV|#REF|#N/A|#VALUE", regex=True, na=False).any(), axis=1)]
 
-    # Coerce numeric columns
     for col in df.columns:
         converted = pd.to_numeric(df[col], errors="coerce")
         if converted.notna().sum() / max(len(df), 1) > 0.45:
@@ -157,9 +145,76 @@ def _load_ws(ws) -> "pd.DataFrame | None":
     return df if len(df) >= 1 else None
 
 
+def _load_xls_ws(sheet) -> "pd.DataFrame | None":
+    """Load a sheet from xlrd (old .xls format)."""
+    try:
+        import xlrd
+        nrows = sheet.nrows
+        ncols = sheet.ncols
+        if nrows < 2 or ncols < 2:
+            return None
+
+        def cell_val(r, c):
+            try:
+                v = sheet.cell_value(r, c)
+                return str(v).strip() if v is not None and str(v).strip() else ""
+            except Exception:
+                return ""
+
+        raw = []
+        for ri in range(min(nrows, 6)):
+            raw.append([cell_val(ri, ci) for ci in range(ncols)])
+
+        r1 = raw[0]
+        r2 = raw[1] if len(raw) > 1 else []
+        r3 = raw[2] if len(raw) > 2 else []
+
+        if _is_section_row(r1) and _is_section_row(r2) and r3:
+            hdr_start, g_row, c_row = 4, r2, r3
+        elif _is_section_row(r1) and not _is_section_row(r2):
+            hdr_start, g_row, c_row = 3, r1, r2
+        elif r1:
+            hdr_start, g_row, c_row = 2, [""] * len(r1), r1
+        else:
+            return None
+
+        cur_g = ""
+        cols = []
+        for g, c in zip(g_row, c_row):
+            if g and g not in ("None", ""):
+                cur_g = g
+            label = c if c and c not in ("None", "") else ""
+            if label:
+                cols.append(f"{cur_g} | {label}" if cur_g else label)
+            else:
+                cols.append(cur_g or "_col")
+
+        data = []
+        for ri in range(hdr_start, nrows):
+            vals = [cell_val(ri, ci) for ci in range(ncols)][:len(cols)]
+            if any(v and v not in ("", "None") for v in vals):
+                data.append(vals)
+
+        if not data:
+            return None
+
+        df = pd.DataFrame(data, columns=cols)
+        df = df.dropna(axis=1, how="all")
+        df = df[df.apply(lambda r: any(
+            str(v).strip() not in ("", "None", "nan") for v in r), axis=1)]
+
+        for col in df.columns:
+            converted = pd.to_numeric(df[col], errors="coerce")
+            if converted.notna().sum() / max(len(df), 1) > 0.45:
+                df[col] = converted
+
+        return df if len(df) >= 1 else None
+    except Exception:
+        return None
+
+
 @st.cache_data(show_spinner=False)
 def load_all() -> dict:
-    """Returns {location_label: {sheet_name: DataFrame}}."""
     result = {}
     for fpath in sorted(EXCEL_DIR.glob("*.xlsx")):
         label = re.sub(r"Customer_and_Capacity_Tracker_", "", fpath.stem, flags=re.I)
@@ -179,6 +234,26 @@ def load_all() -> dict:
         wb.close()
         if sheets:
             result[label] = sheets
+
+    for fpath in sorted(EXCEL_DIR.glob("*.xls")):
+        label = re.sub(r"Customer_and_Capacity_Tracker_", "", fpath.stem, flags=re.I)
+        label = re.sub(r"_\d{10,}$", "", label).replace("_", " ").strip()
+        try:
+            import xlrd
+            wb = xlrd.open_workbook(str(fpath))
+            sheets = {}
+            for sn in wb.sheet_names():
+                try:
+                    df = _load_xls_ws(wb.sheet_by_name(sn))
+                    if df is not None and len(df) >= 2:
+                        sheets[sn] = df
+                except Exception:
+                    pass
+            if sheets:
+                result[label] = sheets
+        except Exception:
+            continue
+
     return result
 
 
@@ -217,9 +292,6 @@ def find_col(df: pd.DataFrame, *pats) -> "str | None":
     return None
 
 
-# ─────────────────────────────────────────────────────────
-# OPERATIONS ENGINE
-# ─────────────────────────────────────────────────────────
 OPERATIONS = [
     "Sum", "Mean (Avg)", "Median", "Min", "Max",
     "Count", "Std Deviation", "Variance", "Range (Max-Min)",
@@ -280,9 +352,6 @@ def run_op(df: pd.DataFrame, col: str, op: str,
     return round(float(v), 4), f"{op} of '{col}'"
 
 
-# ─────────────────────────────────────────────────────────
-# CHART FACTORY  (all 15 types)
-# ─────────────────────────────────────────────────────────
 CHART_TYPES = [
     "Bar Chart", "Grouped Bar", "Stacked Bar",
     "Line Chart", "Scatter Plot", "Area Chart",
@@ -342,7 +411,6 @@ def make_chart(ct: str, df: pd.DataFrame,
     lay = _base_layout()
     nc = num_cols(df)
     tc = txt_cols(df)
-    # auto-fill axes
     if not x and tc: x = tc[0]
     if not y and nc: y = nc[0]
 
@@ -441,7 +509,6 @@ def make_chart(ct: str, df: pd.DataFrame,
                 fig = go.Figure(go.Funnel(
                     y=agg[x].astype(str), x=agg[y],
                     textinfo="value+percent total",
-                    marker=dict(color=px.colors.sequential.Blues_r[:len(agg)]),
                 ))
             else: fig = go.Figure()
 
@@ -472,9 +539,6 @@ def make_chart(ct: str, df: pd.DataFrame,
                 fig.update_layout(scene=dict(
                     xaxis_title=xc, yaxis_title=yc, zaxis_title=zc,
                     bgcolor=DARK2,
-                    xaxis=dict(gridcolor=BORD),
-                    yaxis=dict(gridcolor=BORD),
-                    zaxis=dict(gridcolor=BORD),
                 ))
             else: fig = go.Figure()
 
@@ -518,9 +582,6 @@ def make_chart(ct: str, df: pd.DataFrame,
         return fig
 
 
-# ─────────────────────────────────────────────────────────
-# SMART SEARCH ENGINE
-# ─────────────────────────────────────────────────────────
 STOP = {"and","or","the","a","an","of","in","for","to","is","are","from",
         "all","me","show","give","find","list","get","display","what",
         "where","how","much","many","per","with","across","by"}
@@ -545,7 +606,6 @@ def smart_query(query: str, df: pd.DataFrame) -> dict:
     keywords = [w for w in words
                 if w not in STOP and len(w) > 2 and w not in OP_KW]
 
-    # Text filter
     mask = pd.Series([True] * len(df), index=df.index)
     matched = []
     for kw in keywords:
@@ -558,7 +618,6 @@ def smart_query(query: str, df: pd.DataFrame) -> dict:
 
     filtered = df[mask].copy()
 
-    # Detect numeric column to aggregate
     nc = num_cols(df)
     agg_col = None
     for kw in keywords:
@@ -585,9 +644,6 @@ def smart_query(query: str, df: pd.DataFrame) -> dict:
             "agg_col": agg_col, "message": message, "keywords": matched}
 
 
-# ─────────────────────────────────────────────────────────
-# UTILITY
-# ─────────────────────────────────────────────────────────
 def fmt(n):
     if n is None: return "–"
     try:
@@ -605,15 +661,9 @@ def kpi_html(value, label, sub="", color=CYAN):
             f'<div class="kpi-label">{label}</div>{sub_html}</div>')
 
 
-# ─────────────────────────────────────────────────────────
-# LOAD DATA
-# ─────────────────────────────────────────────────────────
 with st.spinner("Loading Excel files…"):
     ALL = load_all()
 
-# ─────────────────────────────────────────────────────────
-# SIDEBAR FILTERS
-# ─────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown(f"""
     <div style="text-align:center;padding:16px 0 20px">
@@ -623,6 +673,10 @@ with st.sidebar:
     </div>""", unsafe_allow_html=True)
 
     all_locs = sorted(ALL.keys())
+    if not all_locs:
+        st.error("No Excel files loaded. Check the excel_files directory.")
+        st.stop()
+
     sel_locs = st.multiselect("📍 Locations", all_locs, default=all_locs)
 
     all_sheet_opts = sorted({sn for loc in sel_locs for sn in ALL.get(loc, {})})
@@ -637,7 +691,6 @@ with st.sidebar:
         f'<b style="color:{CYAN}">{n_sh}</b> sheets</div>',
         unsafe_allow_html=True)
 
-# Apply filters
 fdata = {loc: {sn: df for sn, df in ALL[loc].items() if sn in sel_sheets}
          for loc in sel_locs if loc in ALL}
 fdata = {k: v for k, v in fdata.items() if v}
@@ -645,9 +698,9 @@ fdata = {k: v for k, v in fdata.items() if v}
 COMB = combined_df(fdata, customer_only=False)
 CUST = combined_df(fdata, customer_only=True)
 
-# ─────────────────────────────────────────────────────────
-# HEADER
-# ─────────────────────────────────────────────────────────
+if CUST.empty:
+    CUST = COMB.copy()
+
 n_sheets_loaded = sum(len(v) for v in fdata.values())
 st.markdown(f"""
 <div class="hero">
@@ -655,9 +708,6 @@ st.markdown(f"""
   <p>{n_loc} locations · {n_sheets_loaded} sheets · Real-time analytics & smart query</p>
 </div>""", unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────────────────
-# TABS
-# ─────────────────────────────────────────────────────────
 T = st.tabs([
     "📊 Dashboard",
     "🔍 Data Explorer",
@@ -667,11 +717,8 @@ T = st.tabs([
     "🌐 Cross-Location",
 ])
 
-# ══════════════════════════════════════════════════════════
-# TAB 0 – DASHBOARD (KPI CARDS)
-# ══════════════════════════════════════════════════════════
+# ══ TAB 0 – DASHBOARD ══
 with T[0]:
-    # Column detection
     cust_c  = find_col(CUST, r"customer.?name")
     caged_c = find_col(CUST, r"caged")
     cap_c   = find_col(CUST, r"total capacity purchased|total capacity")
@@ -680,18 +727,20 @@ with T[0]:
     rack_s  = find_col(CUST, r"space.*subscription|^subscription$")
     rack_u  = find_col(CUST, r"space.*in use|^in use$")
     own_c   = find_col(CUST, r"ownership")
+    rev_c   = find_col(CUST, r"total revenue|revenue")
 
     def _sum(col):
         if col and col in CUST.columns:
             return pd.to_numeric(CUST[col], errors="coerce").sum()
         return 0
 
-    total_cust = CUST[cust_c].dropna().nunique() if cust_c else 0
+    total_cust = CUST[cust_c].dropna().nunique() if cust_c else len(CUST)
     total_cap  = _sum(cap_c)
     total_use  = _sum(use_c)
     total_kw   = _sum(kw_c)
     racks_s    = _sum(rack_s)
     racks_u    = _sum(rack_u)
+    total_rev  = _sum(rev_c)
 
     caged_n = uncaged_n = 0
     if caged_c:
@@ -702,7 +751,6 @@ with T[0]:
     util_pct  = (total_use / total_cap * 100) if total_cap > 0 else 0
     rack_pct  = (racks_u  / racks_s   * 100) if racks_s   > 0 else 0
 
-    # ── KPI Row 1 ──
     st.markdown('<div class="section-title">Key Performance Indicators</div>', unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
     c1.markdown(kpi_html(fmt(total_cust), "Total Customers",
@@ -716,16 +764,14 @@ with T[0]:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── KPI Row 2 ──
     c5, c6, c7, c8 = st.columns(4)
     c5.markdown(kpi_html(fmt(caged_n),   "Caged Customers",   "Dedicated caged space",  CYAN),  unsafe_allow_html=True)
     c6.markdown(kpi_html(fmt(uncaged_n), "Uncaged Customers", "Shared / open hall",     LBLUE), unsafe_allow_html=True)
     c7.markdown(kpi_html(fmt(racks_s),   "Racks Subscribed",  "Total racks contracted", GREEN), unsafe_allow_html=True)
-    c8.markdown(kpi_html(fmt(racks_u),   "Racks in Use",      "Currently occupied",     AMBER), unsafe_allow_html=True)
+    c8.markdown(kpi_html(fmt(total_rev), "Total Revenue",     "Monthly revenue (MRC)",  RED),   unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Utilisation Gauges ──
     st.markdown('<div class="section-title">Utilisation Gauges</div>', unsafe_allow_html=True)
     g1, g2 = st.columns(2)
 
@@ -753,9 +799,8 @@ with T[0]:
     g1.plotly_chart(_gauge(util_pct, "Power Utilisation (%)", LBLUE), use_container_width=True)
     g2.plotly_chart(_gauge(rack_pct, "Rack Occupancy (%)", GREEN),     use_container_width=True)
 
-    # ── Capacity vs Usage by Location ──
     st.markdown('<div class="section-title">Capacity vs Usage by Location</div>', unsafe_allow_html=True)
-    if cap_c and use_c:
+    if cap_c and use_c and "_Location" in CUST.columns:
         la = CUST.groupby("_Location").agg(
             Capacity_Purchased=(cap_c, lambda x: pd.to_numeric(x, errors="coerce").sum()),
             Capacity_in_Use   =(use_c, lambda x: pd.to_numeric(x, errors="coerce").sum()),
@@ -768,7 +813,7 @@ with T[0]:
                                             "Capacity_in_Use": GREEN})
         fig_la.update_layout(**_base_layout(), height=360)
         st.plotly_chart(fig_la, use_container_width=True)
-    else:
+    elif "_Location" in CUST.columns:
         lc = CUST["_Location"].value_counts().reset_index()
         lc.columns = ["Location", "Records"]
         fig_la = px.bar(lc, x="Location", y="Records",
@@ -776,7 +821,6 @@ with T[0]:
         fig_la.update_layout(**_base_layout(), height=320)
         st.plotly_chart(fig_la, use_container_width=True)
 
-    # ── Pie charts ──
     if caged_c or own_c:
         st.markdown('<div class="section-title">Space & Ownership Split</div>', unsafe_allow_html=True)
         p1, p2 = st.columns(2)
@@ -803,9 +847,7 @@ with T[0]:
                 fo.update_layout(**_base_layout(), height=300)
                 p2.plotly_chart(fo, use_container_width=True)
 
-# ══════════════════════════════════════════════════════════
-# TAB 1 – DATA EXPLORER
-# ══════════════════════════════════════════════════════════
+# ══ TAB 1 – DATA EXPLORER ══
 with T[1]:
     st.markdown('<div class="section-title">Data Explorer – Column-Level Search</div>', unsafe_allow_html=True)
 
@@ -858,9 +900,7 @@ with T[1]:
     else:
         st.info("No data for selected filters.")
 
-# ══════════════════════════════════════════════════════════
-# TAB 2 – OPERATIONS
-# ══════════════════════════════════════════════════════════
+# ══ TAB 2 – OPERATIONS ══
 with T[2]:
     st.markdown('<div class="section-title">Aggregate Operations Engine</div>', unsafe_allow_html=True)
 
@@ -879,7 +919,7 @@ with T[2]:
 
         oc1, oc2, oc3 = st.columns(3)
         with oc1:
-            op_col = st.selectbox("📐 Numeric Column", nc_op, key="op_col")
+            op_col = st.selectbox("📐 Numeric Column", nc_op if nc_op else ["(none)"], key="op_col")
         with oc2:
             op_op  = st.selectbox("🔧 Operation", OPERATIONS, key="op_op")
         with oc3:
@@ -899,7 +939,7 @@ with T[2]:
             if op_fc != "(none)":
                 op_fv = st.text_input("Filter value", key="op_fv")
 
-        if st.button("▶ Run Operation", key="op_run"):
+        if st.button("▶ Run Operation", key="op_run") and nc_op:
             wdf = op_df.copy()
             if op_fc != "(none)" and op_fv.strip():
                 wdf = wdf[wdf[op_fc].astype(str).str.lower()
@@ -919,7 +959,6 @@ with T[2]:
                             unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-            # Auto chart
             if isinstance(res, pd.DataFrame) and grp and len(res) > 1:
                 fig_op = px.bar(res.head(30), x=grp, y=op_col,
                                 color=op_col, color_continuous_scale="Blues",
@@ -929,9 +968,7 @@ with T[2]:
     else:
         st.info("No data for selected source.")
 
-# ══════════════════════════════════════════════════════════
-# TAB 3 – CHARTS  (all 15 types)
-# ══════════════════════════════════════════════════════════
+# ══ TAB 3 – CHARTS ══
 with T[3]:
     st.markdown('<div class="section-title">Chart Studio – All 15 Chart Types</div>', unsafe_allow_html=True)
 
@@ -943,7 +980,8 @@ with T[3]:
         ch_sh_map = fdata.get(ch_src, {})
         ch_sh = st.selectbox("Sheet", list(ch_sh_map.keys()), key="ch_sh")
         ch_df = ch_sh_map.get(ch_sh, pd.DataFrame()).copy()
-        ch_df.insert(0, "_Location", ch_src)
+        if "_Location" not in ch_df.columns:
+            ch_df.insert(0, "_Location", ch_src)
 
     if not ch_df.empty:
         nc_ch = num_cols(ch_df)
@@ -997,11 +1035,9 @@ with T[3]:
                              title=f"{sel_ct} – {ch_src}")
             st.plotly_chart(fig, use_container_width=True)
         else:
-            # Auto preview
             fig = make_chart(sel_ct, ch_df.head(200), title=f"{sel_ct} – Preview")
             st.plotly_chart(fig, use_container_width=True)
 
-        # Gallery
         with st.expander("📚 Quick Gallery – All 15 Chart Types"):
             g_cols = st.columns(3)
             for i, ct in enumerate(CHART_TYPES):
@@ -1014,9 +1050,7 @@ with T[3]:
     else:
         st.info("No data for selected source.")
 
-# ══════════════════════════════════════════════════════════
-# TAB 4 – SMART SEARCH
-# ══════════════════════════════════════════════════════════
+# ══ TAB 4 – SMART SEARCH ══
 with T[4]:
     st.markdown('<div class="section-title">🧠 Smart Search & Query Engine</div>', unsafe_allow_html=True)
 
@@ -1040,7 +1074,7 @@ with T[4]:
 
     if st.button("🚀 Run Query", key="sq_run") and query.strip():
         pool = CUST.copy()
-        if "All" not in sq_locs and sq_locs:
+        if "All" not in sq_locs and sq_locs and "_Location" in pool.columns:
             pool = pool[pool["_Location"].isin(sq_locs)]
 
         qr = smart_query(query, pool)
@@ -1054,7 +1088,6 @@ with T[4]:
                     unsafe_allow_html=True)
 
         if not fdf.empty:
-            # Aggregate result
             if op and ac and ac in fdf.columns:
                 scalar, sdesc = run_op(fdf, ac, op)
                 if isinstance(scalar, pd.DataFrame):
@@ -1067,15 +1100,14 @@ with T[4]:
                       <div class="result-big">{fmt(scalar)}</div>
                     </div>""", unsafe_allow_html=True)
 
-            # Column-wise result table
-            st.markdown('<div class="section-title">Matching Records (column-wise)</div>',
+            st.markdown('<div class="section-title">Matching Records</div>',
                         unsafe_allow_html=True)
+            meta_cols = [c for c in ["_Location", "_Sheet"] if c in fdf.columns]
             show_c = [c for c in fdf.columns if not c.startswith("_")][:20]
-            st.dataframe(fdf[["_Location", "_Sheet"] + show_c].head(300),
+            st.dataframe(fdf[meta_cols + show_c].head(300),
                          use_container_width=True, height=380)
 
-            # Location breakdown chart
-            if len(fdf) > 3:
+            if len(fdf) > 3 and "_Location" in fdf.columns:
                 lb = fdf["_Location"].value_counts().reset_index()
                 lb.columns = ["Location", "Matches"]
                 fig_sq = px.bar(lb, x="Location", y="Matches",
@@ -1084,7 +1116,6 @@ with T[4]:
                 fig_sq.update_layout(**_base_layout(), height=320)
                 st.plotly_chart(fig_sq, use_container_width=True)
 
-            # Distribution of agg column
             if ac and ac in fdf.columns:
                 fig_hist = px.histogram(fdf.dropna(subset=[ac]), x=ac, nbins=25,
                                          title=f"Distribution – {ac}",
@@ -1092,15 +1123,14 @@ with T[4]:
                 fig_hist.update_layout(**_base_layout(), height=300)
                 st.plotly_chart(fig_hist, use_container_width=True)
 
+            meta_cols2 = [c for c in ["_Location", "_Sheet"] if c in fdf.columns]
             st.download_button("⬇ Download Results",
-                                fdf[["_Location", "_Sheet"] + show_c].to_csv(index=False).encode(),
+                                fdf[meta_cols2 + show_c].to_csv(index=False).encode(),
                                 "smart_search.csv", "text/csv")
         else:
             st.warning("No matching rows found.")
 
-# ══════════════════════════════════════════════════════════
-# TAB 5 – CROSS-LOCATION
-# ══════════════════════════════════════════════════════════
+# ══ TAB 5 – CROSS-LOCATION ══
 with T[5]:
     st.markdown('<div class="section-title">Cross-Location Comparison</div>', unsafe_allow_html=True)
 
@@ -1115,14 +1145,17 @@ with T[5]:
         with xl3: xl_ct   = st.selectbox("📊 Chart style",
                                           ["Bar Chart","Line Chart","Box Plot","Radar Chart"], key="xl_ct")
 
-        # Aggregate per location
         rows = []
         for loc in sel_locs:
-            loc_df = CUST[CUST["_Location"] == loc]
-            val, _ = run_op(loc_df, xl_col, xl_op)
-            if isinstance(val, (int, float)):
-                rows.append({"Location": loc, xl_col: val})
-        xl_agg = pd.DataFrame(rows).sort_values(xl_col, ascending=False)
+            if "_Location" in CUST.columns:
+                loc_df = CUST[CUST["_Location"] == loc]
+            else:
+                loc_df = CUST
+            if not loc_df.empty and xl_col in loc_df.columns:
+                val, _ = run_op(loc_df, xl_col, xl_op)
+                if isinstance(val, (int, float)):
+                    rows.append({"Location": loc, xl_col: val})
+        xl_agg = pd.DataFrame(rows).sort_values(xl_col, ascending=False) if rows else pd.DataFrame()
 
         if not xl_agg.empty:
             k1, k2, k3 = st.columns(3)
@@ -1155,8 +1188,7 @@ with T[5]:
             st.markdown('<div class="section-title">Summary Table</div>', unsafe_allow_html=True)
             st.dataframe(xl_agg, use_container_width=True)
 
-        # Heatmap
-        if len(nc_all) >= 2 and len(sel_locs) >= 2:
+        if len(nc_all) >= 2 and len(sel_locs) >= 2 and "_Location" in CUST.columns:
             with st.expander("🔥 Full Metrics Heatmap Across Locations"):
                 hcols = nc_all[:12]
                 hrows = []
@@ -1181,13 +1213,9 @@ with T[5]:
                                       height=max(300, len(sel_locs) * 60))
                 st.plotly_chart(fig_hm, use_container_width=True)
 
-# ─────────────────────────────────────────────────────────
-# FOOTER
-# ─────────────────────────────────────────────────────────
 st.markdown(f"""
 <hr style="border-color:{BORD};margin-top:2rem">
 <div style="text-align:center;color:{MUTED};font-size:.75rem;padding:10px 0 20px">
   Sify Data Centre – Capacity Intelligence Platform &nbsp;|&nbsp;
-  {n_loc} locations · {n_sheets_loaded} sheets · 15 chart types · Smart query engine<br>
-  Built with Streamlit &amp; Plotly
+  {n_loc} locations · {n_sheets_loaded} sheets · 15 chart types · Smart query engine
 </div>""", unsafe_allow_html=True)
