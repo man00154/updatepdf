@@ -76,6 +76,12 @@ section[data-testid="stSidebar"] *{{color:{TEXT}!important}}
 ::-webkit-scrollbar-track{{background:{DARK1}}}
 ::-webkit-scrollbar-thumb{{background:{BORD};border-radius:3px}}
 ::-webkit-scrollbar-thumb:hover{{background:{BLUE}}}
+header[data-testid="stHeader"]{{display:none!important;visibility:hidden!important;height:0!important}}
+#MainMenu{{display:none!important}}
+footer{{display:none!important}}
+.stDeployButton{{display:none!important}}
+[data-testid="stToolbar"]{{display:none!important}}
+.viewerBadge_container__1QSob{{display:none!important}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -256,15 +262,11 @@ def load_all() -> dict:
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def combined_df(data: dict, customer_only: bool = False) -> pd.DataFrame:
+def combined_df(data: dict) -> pd.DataFrame:
+    """Concatenate ALL sheets from ALL locations into one DataFrame."""
     frames = []
     for loc, sheets in data.items():
         for sn, df in sheets.items():
-            if customer_only:
-                sn_l = sn.lower()
-                if not any(k in sn_l for k in (
-                        "customer", "details", "noida", "rabale", "sheet", "t5", "t1", "t2")):
-                    continue
             tmp = df.copy()
             tmp.insert(0, "_Sheet", sn)
             tmp.insert(0, "_Location", loc)
@@ -631,72 +633,259 @@ def make_chart(ct: str, df: pd.DataFrame,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SMART SEARCH ENGINE
+# SMART SEARCH ENGINE  –  Compound multi-intent query parser
 # ─────────────────────────────────────────────────────────────────────────────
-STOP = {
-    "and", "or", "the", "a", "an", "of", "in", "for", "to", "is", "are",
-    "from", "all", "me", "show", "give", "find", "list", "get", "display",
-    "what", "where", "how", "much", "many", "per", "with", "across", "by",
-}
 
-OP_KW = {
-    "sum": "Sum", "total": "Sum", "add": "Sum",
+# Known DC location name fragments
+_LOCATIONS = [
+    "airoli", "bangalore", "bengaluru", "chennai", "kolkata", "calcutta",
+    "noida", "rabale", "vashi",
+]
+
+# Aggregation intent keywords → operation label
+_OP_KW: dict[str, str] = {
+    "sum": "Sum", "total": "Sum", "add": "Sum", "aggregate": "Sum",
     "average": "Mean (Avg)", "avg": "Mean (Avg)", "mean": "Mean (Avg)",
     "median": "Median",
-    "min": "Min", "minimum": "Min", "lowest": "Min", "smallest": "Min",
-    "max": "Max", "maximum": "Max", "highest": "Max", "largest": "Max",
-    "count": "Count", "number": "Count",
-    "std": "Std Deviation", "deviation": "Std Deviation", "variance": "Variance",
-    "top": "Top N Values", "bottom": "Bottom N Values",
-    "cumulative": "Cumulative Sum", "rank": "Rank (Desc)",
+    "minimum": "Min", "min": "Min", "lowest": "Min", "smallest": "Min", "least": "Min",
+    "maximum": "Max", "max": "Max", "highest": "Max", "largest": "Max", "biggest": "Max",
+    "count": "Count", "how many": "Count", "number of": "Count",
+    "std": "Std Deviation", "deviation": "Std Deviation",
+    "variance": "Variance",
+    "top": "Top N Values", "best": "Top N Values",
+    "bottom": "Bottom N Values", "worst": "Bottom N Values",
+    "cumulative": "Cumulative Sum", "running": "Cumulative Sum",
+    "rank": "Rank (Desc)", "ranking": "Rank (Desc)",
+}
+
+# Column concept keywords → regex patterns to search in column names
+_COL_CONCEPTS: list[tuple[list[str], str]] = [
+    (["power", "kw", "kilowatt"],           r"power|kw|kilowatt"),
+    (["capacity", "purchased", "subscribed"],r"capacity|purchased|subscribed"),
+    (["usage", "use", "consumption", "used"],r"usage|use|in use|consumption"),
+    (["revenue", "mrc", "billing", "charge"],r"revenue|mrc|billing|charge"),
+    (["rack", "racks"],                      r"rack"),
+    (["customer", "client", "name"],         r"customer|client|name"),
+    (["caged"],                              r"caged"),
+    (["uncaged"],                            r"caged"),
+    (["ownership", "owned"],                 r"ownership"),
+    (["space", "area"],                      r"space|area"),
+]
+
+# List / filter intent keywords (these do NOT trigger aggregation)
+_LIST_KW = {
+    "list", "show", "display", "get", "fetch", "give",
+    "find", "what", "which", "who", "where", "detail", "details",
+}
+
+# Stop-words to drop before keyword matching
+_STOP = {
+    "a", "an", "the", "of", "in", "for", "to", "is", "are", "was", "were",
+    "from", "all", "me", "per", "with", "across", "by", "that", "this",
+    "their", "its", "at", "on", "be", "as", "at", "has", "have",
 }
 
 
-def smart_query(query: str, df: pd.DataFrame) -> dict:
-    q = query.lower().strip()
-    detected_op = next((op for kw, op in OP_KW.items() if kw in q), None)
+def _detect_location_filter(clause: str, df: pd.DataFrame) -> pd.DataFrame:
+    """Return rows matching any location name mentioned in clause."""
+    if "_Location" not in df.columns:
+        return df
+    matched_locs = []
+    q = clause.lower()
+    for loc_kw in _LOCATIONS:
+        if loc_kw in q:
+            for actual_loc in df["_Location"].unique():
+                if loc_kw in actual_loc.lower():
+                    matched_locs.append(actual_loc)
+    if matched_locs:
+        return df[df["_Location"].isin(set(matched_locs))]
+    return df
 
+
+def _best_col_for_concept(concept_words: list, df: pd.DataFrame) -> "str | None":
+    """Return the best numeric column matching concept words."""
+    nc = num_cols(df)
+    for word in concept_words:
+        for c in nc:
+            if word in c.lower():
+                return c
+    return None
+
+
+def _detect_num_col(clause: str, df: pd.DataFrame) -> "str | None":
+    """Find the most relevant numeric column for the clause."""
+    q = clause.lower()
+    for keywords, regex in _COL_CONCEPTS:
+        if any(kw in q for kw in keywords):
+            nc = num_cols(df)
+            for c in nc:
+                if re.search(regex, c, re.I):
+                    return c
+    nc = num_cols(df)
+    for priority in (r"power|kw", r"capacity", r"usage|use", r"revenue", r"rack"):
+        for c in nc:
+            if re.search(priority, c, re.I):
+                return c
+    return nc[0] if nc else None
+
+
+def _detect_text_filter(clause: str, df: pd.DataFrame) -> "tuple[pd.DataFrame, list]":
+    """Apply text/category filters from the clause, return (filtered_df, matched_keywords)."""
+    q = clause.lower()
     words = re.sub(r"[^\w\s]", " ", q).split()
-    keywords = [w for w in words if w not in STOP and len(w) > 2 and w not in OP_KW]
+    keywords = [w for w in words
+                if w not in _STOP and w not in _OP_KW and w not in _LIST_KW and len(w) > 2]
 
+    tc = [c for c in df.columns if not c.startswith("_")]
     mask = pd.Series([True] * len(df), index=df.index)
     matched = []
+
     for kw in keywords:
         kw_mask = pd.Series([False] * len(df), index=df.index)
-        for col in df.columns:
-            kw_mask |= df[col].astype(str).str.lower().str.contains(kw, na=False)
+        for col in tc:
+            try:
+                kw_mask |= df[col].astype(str).str.lower().str.contains(
+                    re.escape(kw), na=False)
+            except Exception:
+                pass
         if kw_mask.any():
             mask &= kw_mask
             matched.append(kw)
 
-    filtered = df[mask].copy()
+    return df[mask].copy(), matched
 
-    nc = num_cols(df)
-    agg_col = None
-    for kw in keywords:
-        for c in nc:
-            if kw in c.lower():
-                agg_col = c
+
+def _detect_top_n(clause: str) -> int:
+    """Extract top-N from clause, e.g. 'top 10 customers' → 10."""
+    m = re.search(r"\b(?:top|bottom|best|worst)\s+(\d+)\b", clause, re.I)
+    return int(m.group(1)) if m else 10
+
+
+def _detect_groupby(clause: str, df: pd.DataFrame) -> "str | None":
+    """Detect group-by column from 'by X' or 'per X' patterns."""
+    m = re.search(r"\b(?:by|per|group by|grouped by)\s+([\w\s]+?)(?:\s+and|\s+in|\s+for|$)",
+                  clause, re.I)
+    if not m:
+        return None
+    target = m.group(1).strip().lower()
+    if "location" in target or "city" in target or "site" in target:
+        return "_Location" if "_Location" in df.columns else None
+    for c in df.columns:
+        if target in c.lower() and not c.startswith("_"):
+            return c
+    return None
+
+
+def _parse_clause_intent(clause: str) -> "str | None":
+    """Return 'list', 'aggregate', or 'compare' for a clause."""
+    q = clause.lower()
+    has_agg = any(kw in q for kw in _OP_KW)
+    has_list = any(kw in q for kw in _LIST_KW)
+    if has_agg:
+        return "aggregate"
+    if has_list:
+        return "list"
+    return "list"  # default
+
+
+def parse_and_execute(query: str, df: pd.DataFrame) -> list:
+    """
+    Parse a complex, compound natural-language query and return a list of result dicts.
+    Each result has: {title, type: 'table'|'scalar'|'grouped', data, description}
+    """
+    if df.empty:
+        return [{"title": "No data", "type": "error", "description": "DataFrame is empty."}]
+
+    results = []
+
+    # ── Split on ' and ' respecting phrases ───────────────────────────────────
+    clauses = re.split(r"\s+and\s+", query.strip(), flags=re.I)
+    if not clauses:
+        clauses = [query]
+
+    for clause in clauses:
+        clause = clause.strip()
+        if not clause:
+            continue
+
+        # 1. Detect operation
+        q = clause.lower()
+        detected_op = None
+        for kw, op in _OP_KW.items():
+            if kw in q:
+                detected_op = op
                 break
-        if agg_col:
-            break
-    if not agg_col:
-        for c in nc:
-            if any(x in c.lower() for x in ("capacity", "power", "kw", "usage", "rack")):
-                agg_col = c
-                break
-    if not agg_col and nc:
-        agg_col = nc[0]
 
-    parts = []
-    if matched:
-        parts.append(f"Filtered by: **{', '.join(matched)}**")
-    if detected_op and agg_col:
-        parts.append(f"Operation: **{detected_op}** on **{agg_col}**")
-    message = " | ".join(parts) if parts else "Showing all records"
+        # 2. Filter by location
+        work = _detect_location_filter(clause, df)
 
-    return {"filtered": filtered, "op": detected_op,
-            "agg_col": agg_col, "message": message, "keywords": matched}
+        # 3. Detect group-by
+        grp = _detect_groupby(clause, work)
+
+        # 4. Detect top-N
+        top_n = _detect_top_n(clause)
+
+        # 5. Detect numeric column
+        num_col = _detect_num_col(clause, work)
+
+        # 6. Apply text filters (entity / category filters)
+        filtered, matched_kws = _detect_text_filter(clause, work)
+
+        # 7. Decide intent
+        intent = _parse_clause_intent(clause)
+
+        # ── AGGREGATE INTENT ──────────────────────────────────────────────
+        if detected_op and num_col and num_col in filtered.columns:
+            if detected_op in ("Top N Values", "Bottom N Values") and grp is None:
+                res, desc = run_op(filtered, num_col, detected_op, None, top_n)
+                results.append({
+                    "title": desc,
+                    "type": "table",
+                    "data": res if isinstance(res, pd.DataFrame) else pd.DataFrame(),
+                    "description": f"Clause: *{clause}*",
+                })
+            elif grp:
+                res, desc = run_op(filtered, num_col, detected_op, grp, top_n)
+                results.append({
+                    "title": desc,
+                    "type": "grouped",
+                    "data": res if isinstance(res, pd.DataFrame) else pd.DataFrame(),
+                    "description": f"Clause: *{clause}*",
+                    "x_col": grp,
+                    "y_col": num_col,
+                })
+            else:
+                res, desc = run_op(filtered, num_col, detected_op, None, top_n)
+                loc_note = ""
+                if "_Location" in filtered.columns:
+                    locs = filtered["_Location"].unique().tolist()
+                    loc_note = f" | Locations: {', '.join(locs)}" if locs else ""
+                results.append({
+                    "title": desc,
+                    "type": "scalar",
+                    "data": res,
+                    "description": f"Clause: *{clause}*{loc_note}",
+                    "rows_used": len(filtered),
+                })
+
+        # ── LIST INTENT ───────────────────────────────────────────────────
+        else:
+            loc_note = ""
+            if "_Location" in filtered.columns:
+                locs = filtered["_Location"].unique().tolist()
+                loc_note = f" ({', '.join(locs)})" if locs else ""
+            kw_note = f"Filtered by: {', '.join(matched_kws)}" if matched_kws else "All records"
+            results.append({
+                "title": f"Records{loc_note} — {kw_note}",
+                "type": "table",
+                "data": filtered,
+                "description": f"Clause: *{clause}*",
+            })
+
+    return results if results else [
+        {"title": "No results", "type": "error",
+         "description": "Could not interpret the query."}
+    ]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -744,10 +933,8 @@ fdata = {
 }
 fdata = {k: v for k, v in fdata.items() if v}
 
-COMB = combined_df(fdata, customer_only=False)
-CUST = combined_df(fdata, customer_only=True)
-if CUST.empty:
-    CUST = COMB.copy()
+COMB = combined_df(fdata)
+CUST = COMB.copy()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HEADER HERO BANNER
@@ -1134,20 +1321,23 @@ with T[4]:
                 unsafe_allow_html=True)
     st.markdown(f"""
     <div style="background:{DARK2};border:1px solid {BORD};border-radius:10px;
-         padding:14px 18px;margin-bottom:16px;font-size:.87rem;color:{MUTED}">
-    <b style="color:{TEXT}">Example queries:</b><br>
-    &nbsp;• <code>list caged customer</code>
-    &nbsp;• <code>sum total capacity power</code>
-    &nbsp;• <code>count uncaged customer noida</code><br>
-    &nbsp;• <code>average usage in kw bangalore</code>
-    &nbsp;• <code>max capacity airoli</code>
-    &nbsp;• <code>show subscribed metered rack</code>
+         padding:16px 20px;margin-bottom:16px;font-size:.86rem;color:{MUTED}">
+    <b style="color:{TEXT}">Compound queries supported — use <code>and</code> to chain multiple intents:</b><br><br>
+    &nbsp;• <code>list all caged customers and total sum of power in kw</code><br>
+    &nbsp;• <code>show uncaged customers in noida and average capacity purchased</code><br>
+    &nbsp;• <code>count caged customers by location and total revenue</code><br>
+    &nbsp;• <code>top 10 customers by revenue in bangalore and average usage in kw</code><br>
+    &nbsp;• <code>list customers in rabale and sum power kw and count uncaged</code><br>
+    &nbsp;• <code>maximum capacity airoli and minimum capacity noida</code><br>
+    &nbsp;• <code>show all customers and total sum revenue and average power kw</code>
     </div>""", unsafe_allow_html=True)
 
-    query   = st.text_input("🔍 Query",
-                            placeholder="e.g. list caged customer  or  sum total capacity power",
-                            key="sq_q")
-    sq_locs = st.multiselect("Limit to locations", ["All"] + sorted(fdata.keys()),
+    query   = st.text_input(
+        "🔍 Enter your query",
+        placeholder="e.g. list all caged customers and total sum of power in kw",
+        key="sq_q")
+    sq_locs = st.multiselect("Limit to locations (optional)",
+                             ["All"] + sorted(fdata.keys()),
                              default=["All"], key="sq_locs")
 
     if st.button("🚀 Run Query", key="sq_run") and query.strip():
@@ -1155,59 +1345,102 @@ with T[4]:
         if "All" not in sq_locs and sq_locs and "_Location" in pool.columns:
             pool = pool[pool["_Location"].isin(sq_locs)]
 
-        qr  = smart_query(query, pool)
-        fdf = qr["filtered"]
-        op  = qr["op"]
-        ac  = qr["agg_col"]
+        results = parse_and_execute(query, pool)
 
-        st.markdown(f'<div class="result-box">{qr["message"]}</div>',
-                    unsafe_allow_html=True)
-        st.markdown(f'<span class="badge">{len(fdf):,} matching rows</span>',
-                    unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="background:{DARK2};border:1px solid {BORD};border-radius:8px;'
+            f'padding:10px 16px;margin-bottom:14px;font-size:.85rem;color:{MUTED}">'
+            f'Query parsed into <b style="color:{CYAN}">{len(results)}</b> result block(s)</div>',
+            unsafe_allow_html=True)
 
-        if not fdf.empty:
-            if op and ac and ac in fdf.columns:
-                scalar, sdesc = run_op(fdf, ac, op)
-                if isinstance(scalar, pd.DataFrame):
-                    st.dataframe(scalar, use_container_width=True)
-                elif scalar is not None:
+        all_tables = []
+
+        for i, res in enumerate(results):
+            st.markdown(
+                f'<div class="section-title">{i+1}. {res["title"]}</div>',
+                unsafe_allow_html=True)
+            st.caption(res.get("description", ""))
+
+            rtype = res.get("type", "error")
+
+            if rtype == "scalar":
+                val = res["data"]
+                rows_used = res.get("rows_used", "?")
+                if isinstance(val, (int, float)):
                     st.markdown(f"""
                     <div style="background:{DARK2};border:1px solid {BORD};
-                         border-radius:12px;padding:20px 28px;text-align:center;margin:12px 0">
+                         border-radius:14px;padding:24px 32px;text-align:center;margin:8px 0 18px">
                       <div style="font-size:.82rem;color:{MUTED};text-transform:uppercase;
-                           font-weight:700">{sdesc}</div>
-                      <div class="result-big">{fmt(scalar)}</div>
+                           font-weight:700;letter-spacing:.06em">{res['title']}</div>
+                      <div class="result-big">{fmt(val)}</div>
+                      <div style="font-size:.76rem;color:{MUTED};margin-top:8px">
+                        Computed from {rows_used:,} rows</div>
                     </div>""", unsafe_allow_html=True)
+                else:
+                    st.info("Could not compute value.")
 
-            st.markdown('<div class="section-title">Matching Records</div>',
+            elif rtype in ("table", "grouped"):
+                data = res.get("data", pd.DataFrame())
+                if isinstance(data, pd.DataFrame) and not data.empty:
+                    meta  = [c for c in ["_Location", "_Sheet"] if c in data.columns]
+                    show_c = [c for c in data.columns if not c.startswith("_")][:22]
+                    display = data[meta + show_c]
+                    st.markdown(
+                        f'<span class="badge">{len(display):,} rows</span>',
                         unsafe_allow_html=True)
-            meta = [c for c in ["_Location", "_Sheet"] if c in fdf.columns]
-            show_c = [c for c in fdf.columns if not c.startswith("_")][:20]
-            st.dataframe(fdf[meta + show_c].head(300),
-                         use_container_width=True, height=380)
+                    st.dataframe(display.head(400), use_container_width=True, height=340)
+                    all_tables.append((res["title"], display))
 
-            if len(fdf) > 3 and "_Location" in fdf.columns:
-                lb = fdf["_Location"].value_counts().reset_index()
-                lb.columns = ["Location", "Matches"]
-                fig_sq = px.bar(lb, x="Location", y="Matches",
-                                color="Matches", color_continuous_scale="Blues",
-                                title="Matching rows by Location")
-                fig_sq.update_layout(**_base_layout(), height=320)
-                st.plotly_chart(fig_sq, use_container_width=True)
+                    # Auto-chart for grouped results
+                    if rtype == "grouped":
+                        xc = res.get("x_col", "")
+                        yc = res.get("y_col", "")
+                        if xc and yc and xc in data.columns and yc in data.columns:
+                            fig_g = px.bar(data.head(30), x=xc, y=yc,
+                                           color=yc, color_continuous_scale="Blues",
+                                           title=res["title"])
+                            fig_g.update_layout(**_base_layout(), height=350)
+                            st.plotly_chart(fig_g, use_container_width=True)
 
-            if ac and ac in fdf.columns:
-                fig_hist = px.histogram(fdf.dropna(subset=[ac]), x=ac, nbins=25,
-                                        title=f"Distribution – {ac}",
-                                        color_discrete_sequence=[LBLUE])
-                fig_hist.update_layout(**_base_layout(), height=300)
-                st.plotly_chart(fig_hist, use_container_width=True)
+                    # Location breakdown
+                    if "_Location" in data.columns and data["_Location"].nunique() > 1:
+                        lb = data["_Location"].value_counts().reset_index()
+                        lb.columns = ["Location", "Rows"]
+                        fig_lb = px.bar(lb, x="Location", y="Rows",
+                                        color="Rows", color_continuous_scale="Blues",
+                                        title="Row count by Location")
+                        fig_lb.update_layout(**_base_layout(), height=300)
+                        st.plotly_chart(fig_lb, use_container_width=True)
 
-            meta2 = [c for c in ["_Location", "_Sheet"] if c in fdf.columns]
-            st.download_button("⬇ Download Results",
-                               fdf[meta2 + show_c].to_csv(index=False).encode(),
-                               "smart_search.csv", "text/csv")
-        else:
-            st.warning("No matching rows found.")
+                    # Numeric distribution
+                    nc_res = num_cols(data)
+                    if nc_res:
+                        fig_h = px.histogram(data.dropna(subset=[nc_res[0]]),
+                                             x=nc_res[0], nbins=25,
+                                             title=f"Distribution – {nc_res[0]}",
+                                             color_discrete_sequence=[LBLUE])
+                        fig_h.update_layout(**_base_layout(), height=280)
+                        st.plotly_chart(fig_h, use_container_width=True)
+                else:
+                    st.warning("No matching rows for this clause.")
+
+            else:
+                st.error(res.get("description", "Query error."))
+
+            st.markdown("<hr style='border-color:{};margin:10px 0 20px'>".format(BORD),
+                        unsafe_allow_html=True)
+
+        # Combined download of all table results
+        if all_tables:
+            combined_out = pd.concat(
+                [df.assign(_ResultBlock=title) for title, df in all_tables],
+                ignore_index=True, sort=False
+            )
+            st.download_button(
+                "⬇ Download All Results (CSV)",
+                combined_out.to_csv(index=False).encode(),
+                "smart_query_results.csv", "text/csv"
+            )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
