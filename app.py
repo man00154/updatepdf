@@ -22,7 +22,7 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# THEME CONSTANTS
+# THEME
 # ─────────────────────────────────────────────────────────────────────────────
 NAVY  = "#0a0e1a"
 DARK1 = "#0f1628"
@@ -86,7 +86,7 @@ footer{{display:none!important}}
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# EXCEL LOADING  –  supports both .xlsx (openpyxl) and .xls (xlrd)
+# EXCEL LOADING
 # ─────────────────────────────────────────────────────────────────────────────
 EXCEL_DIR = Path(__file__).parent / "excel_files"
 
@@ -106,42 +106,21 @@ def _is_section_row(vals) -> bool:
     return hits / len(non) > 0.25
 
 
-def _build_cols(g_row, c_row):
-    cur_g = ""
-    cols = []
-    for g, c in zip(g_row, c_row):
-        if g and g not in ("None", ""):
-            cur_g = g
-        label = c if c and c not in ("None", "") else ""
-        if label:
-            cols.append(f"{cur_g} | {label}" if cur_g else label)
-        else:
-            cols.append(cur_g or "_col")
-    return cols
-
-
-def _clean_df(df: pd.DataFrame) -> "pd.DataFrame | None":
-    df = df.dropna(axis=1, how="all")
-    df = df[df.apply(
-        lambda r: any(str(v).strip() not in ("", "None", "nan") for v in r), axis=1
-    )]
-    df = df[~df.apply(
-        lambda r: r.astype(str).str.contains(
-            r"#DIV|#REF|#N/A|#VALUE", regex=True, na=False
-        ).any(), axis=1
-    )]
-    for col in df.columns:
-        conv = pd.to_numeric(df[col], errors="coerce")
-        if conv.notna().sum() / max(len(df), 1) > 0.45:
-            df[col] = conv
-    return df if len(df) >= 1 else None
+def _actual_col_count(rows: list) -> int:
+    """Find the rightmost non-empty column across sample rows."""
+    last = 0
+    for row in rows:
+        for i in range(len(row) - 1, -1, -1):
+            if row[i] is not None and str(row[i]).strip() not in ("", "None"):
+                last = max(last, i + 1)
+                break
+    return last
 
 
 def _detect_header(raw_rows):
     """Return (hdr_start, g_row, c_row) from first 6 rows."""
     def rs(r):
         return [str(v).strip() if v is not None else "" for v in r]
-
     r1 = rs(raw_rows[0])
     r2 = rs(raw_rows[1]) if len(raw_rows) > 1 else []
     r3 = rs(raw_rows[2]) if len(raw_rows) > 2 else []
@@ -155,29 +134,87 @@ def _detect_header(raw_rows):
     return None, None, None
 
 
+def _build_cols(g_row: list, c_row: list) -> list:
+    cur_g = ""
+    cols = []
+    seen: dict = {}
+    for g, c in zip(g_row, c_row):
+        if g and g not in ("None", ""):
+            cur_g = g
+        label = c if c and c not in ("None", "") else ""
+        raw = f"{cur_g} | {label}" if (cur_g and label) else (label or cur_g or "_col")
+        # deduplicate
+        cnt = seen.get(raw, 0)
+        seen[raw] = cnt + 1
+        cols.append(raw if cnt == 0 else f"{raw}.{cnt}")
+    return cols
+
+
+def _clean_df(df: pd.DataFrame) -> "pd.DataFrame | None":
+    df = df.dropna(axis=1, how="all")
+    # Drop fully-empty rows
+    df = df[df.apply(
+        lambda r: any(str(v).strip() not in ("", "None", "nan") for v in r), axis=1
+    )]
+    # Drop rows containing only Excel error formulas
+    try:
+        err_mask = df.apply(
+            lambda r: r.astype(str).str.contains(
+                r"#DIV|#REF|#N/A|#VALUE", regex=True, na=False
+            ).all(), axis=1
+        )
+        df = df[~err_mask]
+    except Exception:
+        pass
+    # Auto-convert numeric columns
+    for col in df.columns:
+        try:
+            conv = pd.to_numeric(df[col], errors="coerce")
+            if conv.notna().sum() / max(len(df), 1) > 0.40:
+                df[col] = conv
+        except Exception:
+            pass
+    return df.reset_index(drop=True) if len(df) >= 1 else None
+
+
 def _load_ws(ws) -> "pd.DataFrame | None":
-    """Load an openpyxl worksheet."""
-    if ws.max_row < 2 or ws.max_column < 2:
+    """Load openpyxl worksheet, correctly handling sheets with max_column=16384."""
+    if ws.max_row < 2:
         return None
-    raw = list(ws.iter_rows(min_row=1, max_row=min(ws.max_row, 6), values_only=True))
-    hdr_start, g_row, c_row = _detect_header(raw)
+
+    # Read first 6 rows WITHOUT column limit first to find actual width
+    sample = list(ws.iter_rows(min_row=1, max_row=min(ws.max_row, 6), values_only=True))
+    actual_ncols = _actual_col_count(sample)
+    if actual_ncols < 2:
+        return None
+
+    # Trim sample rows to actual width
+    sample = [row[:actual_ncols] for row in sample]
+
+    hdr_start, g_row, c_row = _detect_header(sample)
     if hdr_start is None:
         return None
+
+    # Trim header arrays to actual width
+    g_row = list(g_row)[:actual_ncols]
+    c_row = list(c_row)[:actual_ncols]
     cols = _build_cols(g_row, c_row)
+
     data = []
-    for row in ws.iter_rows(min_row=hdr_start, values_only=True):
-        vals = list(row)[: len(cols)]
+    for row in ws.iter_rows(min_row=hdr_start, max_col=actual_ncols, values_only=True):
+        vals = list(row)[:len(cols)]
         if any(v is not None and str(v).strip() not in ("", "None") for v in vals):
             data.append(vals)
+
     if not data:
         return None
     return _clean_df(pd.DataFrame(data, columns=cols))
 
 
 def _load_xls_ws(sheet) -> "pd.DataFrame | None":
-    """Load a xlrd worksheet (legacy .xls)."""
+    """Load xlrd worksheet (legacy .xls)."""
     try:
-        import xlrd  # noqa: F401
+        import xlrd  # noqa
         nrows, ncols = sheet.nrows, sheet.ncols
         if nrows < 2 or ncols < 2:
             return None
@@ -189,14 +226,23 @@ def _load_xls_ws(sheet) -> "pd.DataFrame | None":
             except Exception:
                 return ""
 
-        raw = [[cv(ri, ci) for ci in range(ncols)] for ri in range(min(nrows, 6))]
-        hdr_start, g_row, c_row = _detect_header(raw)
+        sample = [[cv(ri, ci) for ci in range(ncols)] for ri in range(min(nrows, 6))]
+        actual_ncols = _actual_col_count(sample)
+        if actual_ncols < 2:
+            return None
+
+        sample = [row[:actual_ncols] for row in sample]
+        hdr_start, g_row, c_row = _detect_header(sample)
         if hdr_start is None:
             return None
+
+        g_row = list(g_row)[:actual_ncols]
+        c_row = list(c_row)[:actual_ncols]
         cols = _build_cols(g_row, c_row)
+
         data = []
         for ri in range(hdr_start, nrows):
-            vals = [cv(ri, ci) for ci in range(ncols)][: len(cols)]
+            vals = [cv(ri, ci) for ci in range(actual_ncols)][:len(cols)]
             if any(v and v not in ("", "None") for v in vals):
                 data.append(vals)
         if not data:
@@ -206,25 +252,48 @@ def _load_xls_ws(sheet) -> "pd.DataFrame | None":
         return None
 
 
-def _label(stem: str) -> str:
-    s = re.sub(r"Customer_and_Capacity_Tracker_", "", stem, flags=re.I)
+def _label(fpath: Path) -> str:
+    """Produce a clean, unique human-readable label from the file path."""
+    s = re.sub(r"Customer_and_Capacity_Tracker_", "", fpath.stem, flags=re.I)
+    # Remove trailing numeric timestamp (10+ digits)
     s = re.sub(r"_\d{10,}$", "", s)
-    return s.replace("_", " ").strip()
+    # Remove date fragment like _15Mar26 or _15Feb26
+    s = re.sub(r"_\d{2}[A-Za-z]{3}\d{2}", "", s)
+    # Clean up parens and underscores
+    s = re.sub(r"[_]+", " ", s).strip()
+    s = re.sub(r"\(\s*(\d+)\s*\)", r"(\1)", s).strip()
+    return s if s else fpath.stem
 
 
 @st.cache_data(show_spinner=False)
 def load_all() -> dict:
-    """Return  {location_label: {sheet_name: DataFrame}}  for every Excel file."""
+    """Return {location_label: {sheet_name: DataFrame}} for every Excel file."""
     result: dict = {}
+
+    def _safe_label(fpath: Path, existing: set) -> str:
+        base = _label(fpath)
+        if base not in existing:
+            return base
+        # Make unique using full stem
+        full = re.sub(r"Customer_and_Capacity_Tracker_", "", fpath.stem, flags=re.I)
+        full = re.sub(r"_\d{10,}$", "", full).replace("_", " ").strip()
+        return full
+
+    used_labels: set = set()
 
     # ── .xlsx ──────────────────────────────────────────────────────────────
     for fpath in sorted(EXCEL_DIR.glob("*.xlsx")):
-        label = _label(fpath.stem)
+        label = _safe_label(fpath, used_labels)
+        used_labels.add(label)
         try:
-            wb = openpyxl.load_workbook(str(fpath), data_only=True)
+            wb = openpyxl.load_workbook(str(fpath), data_only=True, read_only=False)
         except Exception:
-            continue
-        sheets = {}
+            try:
+                wb = openpyxl.load_workbook(str(fpath), data_only=False)
+            except Exception:
+                continue
+
+        sheets: dict = {}
         for sn in wb.sheetnames:
             try:
                 df = _load_ws(wb[sn])
@@ -236,13 +305,16 @@ def load_all() -> dict:
         if sheets:
             result[label] = sheets
 
-    # ── .xls ───────────────────────────────────────────────────────────────
+    # ── .xls only (suffix exactly .xls) ────────────────────────────────────
     for fpath in sorted(EXCEL_DIR.glob("*.xls")):
-        label = _label(fpath.stem)
+        if fpath.suffix.lower() != ".xls":
+            continue
+        label = _safe_label(fpath, used_labels)
+        used_labels.add(label)
         try:
             import xlrd
             wb = xlrd.open_workbook(str(fpath))
-            sheets = {}
+            sheets: dict = {}
             for sn in wb.sheet_names():
                 try:
                     df = _load_xls_ws(wb.sheet_by_name(sn))
@@ -263,7 +335,7 @@ def load_all() -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def combined_df(data: dict) -> pd.DataFrame:
-    """Concatenate ALL sheets from ALL locations into one DataFrame."""
+    """Concatenate ALL sheets from ALL locations."""
     frames = []
     for loc, sheets in data.items():
         for sn, df in sheets.items():
@@ -271,9 +343,7 @@ def combined_df(data: dict) -> pd.DataFrame:
             tmp.insert(0, "_Sheet", sn)
             tmp.insert(0, "_Location", loc)
             frames.append(tmp)
-    if not frames:
-        return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True, sort=False)
+    return pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()
 
 
 def num_cols(df: pd.DataFrame) -> list:
@@ -380,7 +450,7 @@ def run_op(df: pd.DataFrame, col: str, op: str,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CHART FACTORY  –  15 chart types
+# CHART FACTORY – 15 types
 # ─────────────────────────────────────────────────────────────────────────────
 CHART_TYPES = [
     "Bar Chart", "Grouped Bar", "Stacked Bar",
@@ -394,7 +464,7 @@ CHART_DESC = {
     "Bar Chart":              "Compare a numeric metric across categorical groups.",
     "Grouped Bar":            "Side-by-side comparison of multiple numeric columns.",
     "Stacked Bar":            "Show composition and total simultaneously.",
-    "Line Chart":             "Trend analysis across ordered rows / time series.",
+    "Line Chart":             "Trend analysis across ordered rows.",
     "Scatter Plot":           "Correlation between two numeric variables.",
     "Area Chart":             "Cumulative volume trends with filled area.",
     "Bubble Chart":           "Three-dimensional numeric relationships (X, Y, size).",
@@ -402,7 +472,7 @@ CHART_DESC = {
     "Box Plot":               "Distribution, spread, median and outliers.",
     "Violin Plot":            "Full probability distribution shape.",
     "Funnel Chart":           "Staged capacity utilisation visualisation.",
-    "Waterfall / Cumulative": "Running-total analysis (e.g. cumulative power).",
+    "Waterfall / Cumulative": "Running-total analysis.",
     "3-D Scatter":            "Three-axis numeric exploration.",
     "Radar Chart":            "Multi-axis comparison across metrics.",
     "Histogram":              "Frequency distribution of a numeric variable.",
@@ -455,7 +525,6 @@ def make_chart(ct: str, df: pd.DataFrame,
                 fig = px.bar(agg, x=x, y=y, color=y, title=title, color_continuous_scale="Blues")
             else:
                 fig = go.Figure()
-
         elif ct == "Grouped Bar":
             ys = [c for c in nc if c != x][:4]
             if x and ys:
@@ -464,7 +533,6 @@ def make_chart(ct: str, df: pd.DataFrame,
                              color_discrete_sequence=px.colors.qualitative.Bold)
             else:
                 fig = go.Figure()
-
         elif ct == "Stacked Bar":
             ys = [c for c in nc if c != x][:4]
             if x and ys:
@@ -473,7 +541,6 @@ def make_chart(ct: str, df: pd.DataFrame,
                              color_discrete_sequence=px.colors.qualitative.Pastel)
             else:
                 fig = go.Figure()
-
         elif ct == "Line Chart":
             if y:
                 sub = df[[c for c in [x, y] if c]].dropna().reset_index(drop=True)
@@ -483,7 +550,6 @@ def make_chart(ct: str, df: pd.DataFrame,
                 fig = px.line(sub, **kw)
             else:
                 fig = go.Figure()
-
         elif ct == "Scatter Plot":
             if x and y:
                 sub = df.dropna(subset=[c for c in [x, y] if c])
@@ -494,7 +560,6 @@ def make_chart(ct: str, df: pd.DataFrame,
                 fig = px.scatter(sub, **kw)
             else:
                 fig = go.Figure()
-
         elif ct == "Area Chart":
             if y:
                 sub = df[[c for c in [x, y] if c]].dropna().reset_index(drop=True)
@@ -504,7 +569,6 @@ def make_chart(ct: str, df: pd.DataFrame,
                 fig = px.area(sub, **kw)
             else:
                 fig = go.Figure()
-
         elif ct == "Bubble Chart":
             if len(nc) >= 3:
                 xc = x if x in nc else nc[0]
@@ -515,7 +579,6 @@ def make_chart(ct: str, df: pd.DataFrame,
                                  color_continuous_scale="Blues", opacity=0.75, title=title)
             else:
                 fig = go.Figure()
-
         elif ct == "Heatmap (Correlation)":
             cols = nc[:14]
             if len(cols) >= 2:
@@ -527,7 +590,6 @@ def make_chart(ct: str, df: pd.DataFrame,
                 ))
             else:
                 fig = go.Figure()
-
         elif ct == "Box Plot":
             if y:
                 kw = dict(y=y, title=title,
@@ -537,7 +599,6 @@ def make_chart(ct: str, df: pd.DataFrame,
                 fig = px.box(df.dropna(subset=[y]), **kw)
             else:
                 fig = go.Figure()
-
         elif ct == "Violin Plot":
             if y:
                 kw = dict(y=y, title=title, box=True, points="outliers",
@@ -547,7 +608,6 @@ def make_chart(ct: str, df: pd.DataFrame,
                 fig = px.violin(df.dropna(subset=[y]), **kw)
             else:
                 fig = go.Figure()
-
         elif ct == "Funnel Chart":
             if x and y:
                 agg = df.groupby(x)[y].sum().reset_index().sort_values(y, ascending=False).head(20)
@@ -557,7 +617,6 @@ def make_chart(ct: str, df: pd.DataFrame,
                 ))
             else:
                 fig = go.Figure()
-
         elif ct == "Waterfall / Cumulative":
             if y:
                 s = df[y].dropna().head(30)
@@ -571,7 +630,6 @@ def make_chart(ct: str, df: pd.DataFrame,
                 ))
             else:
                 fig = go.Figure()
-
         elif ct == "3-D Scatter":
             if len(nc) >= 3:
                 xc = x if x in nc else nc[0]
@@ -588,7 +646,6 @@ def make_chart(ct: str, df: pd.DataFrame,
                 ))
             else:
                 fig = go.Figure()
-
         elif ct == "Radar Chart":
             cols = nc[:8]
             if len(cols) >= 3:
@@ -606,7 +663,6 @@ def make_chart(ct: str, df: pd.DataFrame,
                 ))
             else:
                 fig = go.Figure()
-
         elif ct == "Histogram":
             if y:
                 kw = dict(x=y, nbins=30, title=title, opacity=0.85,
@@ -617,7 +673,6 @@ def make_chart(ct: str, df: pd.DataFrame,
                 fig = px.histogram(df.dropna(subset=[y]), **kw)
             else:
                 fig = go.Figure()
-
         else:
             fig = go.Figure()
 
@@ -633,23 +688,20 @@ def make_chart(ct: str, df: pd.DataFrame,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SMART SEARCH ENGINE  –  Compound multi-intent query parser
+# SMART SEARCH – Compound multi-intent query parser
 # ─────────────────────────────────────────────────────────────────────────────
-
-# Known DC location name fragments
-_LOCATIONS = [
+_LOCATIONS_KW = [
     "airoli", "bangalore", "bengaluru", "chennai", "kolkata", "calcutta",
     "noida", "rabale", "vashi",
 ]
 
-# Aggregation intent keywords → operation label
-_OP_KW: dict[str, str] = {
+_OP_KW: dict = {
     "sum": "Sum", "total": "Sum", "add": "Sum", "aggregate": "Sum",
     "average": "Mean (Avg)", "avg": "Mean (Avg)", "mean": "Mean (Avg)",
     "median": "Median",
     "minimum": "Min", "min": "Min", "lowest": "Min", "smallest": "Min", "least": "Min",
     "maximum": "Max", "max": "Max", "highest": "Max", "largest": "Max", "biggest": "Max",
-    "count": "Count", "how many": "Count", "number of": "Count",
+    "count": "Count", "number of": "Count",
     "std": "Std Deviation", "deviation": "Std Deviation",
     "variance": "Variance",
     "top": "Top N Values", "best": "Top N Values",
@@ -658,88 +710,79 @@ _OP_KW: dict[str, str] = {
     "rank": "Rank (Desc)", "ranking": "Rank (Desc)",
 }
 
-# Column concept keywords → regex patterns to search in column names
-_COL_CONCEPTS: list[tuple[list[str], str]] = [
-    (["power", "kw", "kilowatt"],           r"power|kw|kilowatt"),
-    (["capacity", "purchased", "subscribed"],r"capacity|purchased|subscribed"),
-    (["usage", "use", "consumption", "used"],r"usage|use|in use|consumption"),
-    (["revenue", "mrc", "billing", "charge"],r"revenue|mrc|billing|charge"),
-    (["rack", "racks"],                      r"rack"),
-    (["customer", "client", "name"],         r"customer|client|name"),
-    (["caged"],                              r"caged"),
-    (["uncaged"],                            r"caged"),
-    (["ownership", "owned"],                 r"ownership"),
-    (["space", "area"],                      r"space|area"),
+_COL_CONCEPTS: list = [
+    (["power", "kw", "kilowatt"],            r"power|kw|kilowatt"),
+    (["capacity", "purchased", "subscribed"], r"capacity|purchased|subscribed"),
+    (["usage", "use", "consumption", "used"], r"usage|use|in use|consumption"),
+    (["revenue", "mrc", "billing", "charge"], r"revenue|mrc|billing|charge"),
+    (["rack", "racks"],                       r"rack"),
+    (["customer", "client", "name"],          r"customer|client|name"),
+    (["caged"],                               r"caged"),
+    (["uncaged"],                             r"caged"),
+    (["ownership", "owned"],                  r"ownership"),
+    (["space", "area"],                       r"space|area"),
 ]
 
-# List / filter intent keywords (these do NOT trigger aggregation)
 _LIST_KW = {
     "list", "show", "display", "get", "fetch", "give",
     "find", "what", "which", "who", "where", "detail", "details",
 }
 
-# Stop-words to drop before keyword matching
 _STOP = {
     "a", "an", "the", "of", "in", "for", "to", "is", "are", "was", "were",
     "from", "all", "me", "per", "with", "across", "by", "that", "this",
-    "their", "its", "at", "on", "be", "as", "at", "has", "have",
+    "their", "its", "at", "on", "be", "as", "has", "have",
 }
 
 
-def _detect_location_filter(clause: str, df: pd.DataFrame) -> pd.DataFrame:
-    """Return rows matching any location name mentioned in clause."""
+def _loc_filter(clause: str, df: pd.DataFrame) -> pd.DataFrame:
     if "_Location" not in df.columns:
         return df
-    matched_locs = []
     q = clause.lower()
-    for loc_kw in _LOCATIONS:
-        if loc_kw in q:
-            for actual_loc in df["_Location"].unique():
-                if loc_kw in actual_loc.lower():
-                    matched_locs.append(actual_loc)
-    if matched_locs:
-        return df[df["_Location"].isin(set(matched_locs))]
-    return df
-
-
-def _best_col_for_concept(concept_words: list, df: pd.DataFrame) -> "str | None":
-    """Return the best numeric column matching concept words."""
-    nc = num_cols(df)
-    for word in concept_words:
-        for c in nc:
-            if word in c.lower():
-                return c
-    return None
+    hits = [loc for loc in df["_Location"].unique()
+            if any(kw in loc.lower() for kw in _LOCATIONS_KW if kw in q)]
+    return df[df["_Location"].isin(hits)] if hits else df
 
 
 def _detect_num_col(clause: str, df: pd.DataFrame) -> "str | None":
-    """Find the most relevant numeric column for the clause."""
     q = clause.lower()
     for keywords, regex in _COL_CONCEPTS:
         if any(kw in q for kw in keywords):
-            nc = num_cols(df)
-            for c in nc:
+            for c in num_cols(df):
                 if re.search(regex, c, re.I):
                     return c
-    nc = num_cols(df)
     for priority in (r"power|kw", r"capacity", r"usage|use", r"revenue", r"rack"):
-        for c in nc:
+        for c in num_cols(df):
             if re.search(priority, c, re.I):
                 return c
+    nc = num_cols(df)
     return nc[0] if nc else None
 
 
-def _detect_text_filter(clause: str, df: pd.DataFrame) -> "tuple[pd.DataFrame, list]":
-    """Apply text/category filters from the clause, return (filtered_df, matched_keywords)."""
+def _detect_groupby(clause: str, df: pd.DataFrame) -> "str | None":
+    m = re.search(r"\b(?:by|per|grouped?\s*by)\s+([\w\s]+?)(?:\s+and|\s+in|\s+for|$)",
+                  clause, re.I)
+    if not m:
+        return None
+    target = m.group(1).strip().lower()
+    if any(kw in target for kw in ("location", "city", "site", "dc")):
+        return "_Location" if "_Location" in df.columns else None
+    for c in df.columns:
+        if target.replace(" ", "") in c.lower().replace(" ", "") and not c.startswith("_"):
+            return c
+    return None
+
+
+def _text_filter(clause: str, df: pd.DataFrame) -> "tuple[pd.DataFrame, list]":
     q = clause.lower()
     words = re.sub(r"[^\w\s]", " ", q).split()
     keywords = [w for w in words
-                if w not in _STOP and w not in _OP_KW and w not in _LIST_KW and len(w) > 2]
+                if w not in _STOP and w not in _OP_KW and w not in _LIST_KW
+                and len(w) > 2 and w not in _LOCATIONS_KW]
 
     tc = [c for c in df.columns if not c.startswith("_")]
     mask = pd.Series([True] * len(df), index=df.index)
     matched = []
-
     for kw in keywords:
         kw_mask = pd.Series([False] * len(df), index=df.index)
         for col in tc:
@@ -751,147 +794,75 @@ def _detect_text_filter(clause: str, df: pd.DataFrame) -> "tuple[pd.DataFrame, l
         if kw_mask.any():
             mask &= kw_mask
             matched.append(kw)
-
     return df[mask].copy(), matched
 
 
 def _detect_top_n(clause: str) -> int:
-    """Extract top-N from clause, e.g. 'top 10 customers' → 10."""
     m = re.search(r"\b(?:top|bottom|best|worst)\s+(\d+)\b", clause, re.I)
     return int(m.group(1)) if m else 10
 
 
-def _detect_groupby(clause: str, df: pd.DataFrame) -> "str | None":
-    """Detect group-by column from 'by X' or 'per X' patterns."""
-    m = re.search(r"\b(?:by|per|group by|grouped by)\s+([\w\s]+?)(?:\s+and|\s+in|\s+for|$)",
-                  clause, re.I)
-    if not m:
-        return None
-    target = m.group(1).strip().lower()
-    if "location" in target or "city" in target or "site" in target:
-        return "_Location" if "_Location" in df.columns else None
-    for c in df.columns:
-        if target in c.lower() and not c.startswith("_"):
-            return c
-    return None
-
-
-def _parse_clause_intent(clause: str) -> "str | None":
-    """Return 'list', 'aggregate', or 'compare' for a clause."""
-    q = clause.lower()
-    has_agg = any(kw in q for kw in _OP_KW)
-    has_list = any(kw in q for kw in _LIST_KW)
-    if has_agg:
-        return "aggregate"
-    if has_list:
-        return "list"
-    return "list"  # default
-
-
 def parse_and_execute(query: str, df: pd.DataFrame) -> list:
-    """
-    Parse a complex, compound natural-language query and return a list of result dicts.
-    Each result has: {title, type: 'table'|'scalar'|'grouped', data, description}
-    """
+    """Split compound query on 'and', execute each clause independently."""
     if df.empty:
         return [{"title": "No data", "type": "error", "description": "DataFrame is empty."}]
 
     results = []
-
-    # ── Split on ' and ' respecting phrases ───────────────────────────────────
     clauses = re.split(r"\s+and\s+", query.strip(), flags=re.I)
-    if not clauses:
-        clauses = [query]
 
     for clause in clauses:
         clause = clause.strip()
         if not clause:
             continue
 
-        # 1. Detect operation
         q = clause.lower()
-        detected_op = None
-        for kw, op in _OP_KW.items():
-            if kw in q:
-                detected_op = op
-                break
+        detected_op = next((op for kw, op in _OP_KW.items() if kw in q), None)
 
-        # 2. Filter by location
-        work = _detect_location_filter(clause, df)
-
-        # 3. Detect group-by
+        work = _loc_filter(clause, df)
         grp = _detect_groupby(clause, work)
-
-        # 4. Detect top-N
         top_n = _detect_top_n(clause)
-
-        # 5. Detect numeric column
         num_col = _detect_num_col(clause, work)
+        filtered, matched_kws = _text_filter(clause, work)
 
-        # 6. Apply text filters (entity / category filters)
-        filtered, matched_kws = _detect_text_filter(clause, work)
-
-        # 7. Decide intent
-        intent = _parse_clause_intent(clause)
-
-        # ── AGGREGATE INTENT ──────────────────────────────────────────────
         if detected_op and num_col and num_col in filtered.columns:
             if detected_op in ("Top N Values", "Bottom N Values") and grp is None:
                 res, desc = run_op(filtered, num_col, detected_op, None, top_n)
-                results.append({
-                    "title": desc,
-                    "type": "table",
-                    "data": res if isinstance(res, pd.DataFrame) else pd.DataFrame(),
-                    "description": f"Clause: *{clause}*",
-                })
+                results.append({"title": desc, "type": "table",
+                                "data": res if isinstance(res, pd.DataFrame) else pd.DataFrame(),
+                                "description": f"*{clause}*"})
             elif grp:
                 res, desc = run_op(filtered, num_col, detected_op, grp, top_n)
-                results.append({
-                    "title": desc,
-                    "type": "grouped",
-                    "data": res if isinstance(res, pd.DataFrame) else pd.DataFrame(),
-                    "description": f"Clause: *{clause}*",
-                    "x_col": grp,
-                    "y_col": num_col,
-                })
+                results.append({"title": desc, "type": "grouped",
+                                "data": res if isinstance(res, pd.DataFrame) else pd.DataFrame(),
+                                "description": f"*{clause}*",
+                                "x_col": grp, "y_col": num_col})
             else:
                 res, desc = run_op(filtered, num_col, detected_op, None, top_n)
                 loc_note = ""
                 if "_Location" in filtered.columns:
                     locs = filtered["_Location"].unique().tolist()
-                    loc_note = f" | Locations: {', '.join(locs)}" if locs else ""
-                results.append({
-                    "title": desc,
-                    "type": "scalar",
-                    "data": res,
-                    "description": f"Clause: *{clause}*{loc_note}",
-                    "rows_used": len(filtered),
-                })
-
-        # ── LIST INTENT ───────────────────────────────────────────────────
+                    loc_note = f" | {', '.join(locs)}" if locs else ""
+                results.append({"title": desc, "type": "scalar", "data": res,
+                                "description": f"*{clause}*{loc_note}",
+                                "rows_used": len(filtered)})
         else:
             loc_note = ""
             if "_Location" in filtered.columns:
                 locs = filtered["_Location"].unique().tolist()
                 loc_note = f" ({', '.join(locs)})" if locs else ""
             kw_note = f"Filtered by: {', '.join(matched_kws)}" if matched_kws else "All records"
-            results.append({
-                "title": f"Records{loc_note} — {kw_note}",
-                "type": "table",
-                "data": filtered,
-                "description": f"Clause: *{clause}*",
-            })
+            results.append({"title": f"Records{loc_note} — {kw_note}",
+                            "type": "table", "data": filtered,
+                            "description": f"*{clause}*"})
 
-    return results if results else [
-        {"title": "No results", "type": "error",
-         "description": "Could not interpret the query."}
-    ]
+    return results or [{"title": "No results", "type": "error",
+                        "description": "Could not interpret the query."}]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LOAD DATA
 # ─────────────────────────────────────────────────────────────────────────────
-with st.spinner("Loading Excel files…"):
+with st.spinner("Loading all 10 Excel files…"):
     ALL = load_all()
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -909,7 +880,7 @@ with st.sidebar:
 
     all_locs = sorted(ALL.keys())
     if not all_locs:
-        st.error("No Excel files found in the  excel_files/  folder.")
+        st.error("No Excel files found in the excel_files/ folder.")
         st.stop()
 
     sel_locs = st.multiselect("📍 Locations", all_locs, default=all_locs)
@@ -925,8 +896,16 @@ with st.sidebar:
         f'<b style="color:{CYAN}">{n_sh}</b> sheets</div>',
         unsafe_allow_html=True,
     )
+    st.markdown("<br>", unsafe_allow_html=True)
+    for loc in all_locs:
+        n = len(ALL.get(loc, {}))
+        st.markdown(
+            f'<div style="font-size:.76rem;color:{MUTED};padding:2px 0">'
+            f'<span style="color:{CYAN}">▸</span> {loc} '
+            f'<span style="color:{GREEN};font-weight:700">({n} sheets)</span></div>',
+            unsafe_allow_html=True)
 
-# ─── apply filters ────────────────────────────────────────────────────────────
+# ─── apply filters ─────────────────────────────────────────────────────────
 fdata = {
     loc: {sn: df for sn, df in ALL[loc].items() if sn in sel_sheets}
     for loc in sel_locs if loc in ALL
@@ -937,13 +916,15 @@ COMB = combined_df(fdata)
 CUST = COMB.copy()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# HEADER HERO BANNER
+# HERO BANNER
 # ─────────────────────────────────────────────────────────────────────────────
 n_sheets_loaded = sum(len(v) for v in fdata.values())
+total_rows = len(COMB) if not COMB.empty else 0
+
 st.markdown(f"""
 <div class="hero">
   <h1>🏢 Sify Data Centre – Capacity Intelligence</h1>
-  <p>{n_loc} locations · {n_sheets_loaded} sheets · Real-time analytics &amp; smart query</p>
+  <p>{n_loc} locations · {n_sheets_loaded} sheets · {total_rows:,} rows loaded · Smart compound query engine</p>
 </div>""", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -962,15 +943,15 @@ T = st.tabs([
 # TAB 0 – DASHBOARD
 # ══════════════════════════════════════════════════════════════════════════════
 with T[0]:
-    cust_c = find_col(CUST, r"customer.?name")
+    cust_c  = find_col(CUST, r"customer.?name")
     caged_c = find_col(CUST, r"caged")
-    cap_c  = find_col(CUST, r"total capacity purchased|total capacity")
-    use_c  = find_col(CUST, r"capacity in use")
-    kw_c   = find_col(CUST, r"usage in kw")
-    rack_s = find_col(CUST, r"space.*subscription|^subscription$")
-    rack_u = find_col(CUST, r"space.*in use|^in use$")
-    own_c  = find_col(CUST, r"ownership")
-    rev_c  = find_col(CUST, r"total revenue|revenue")
+    cap_c   = find_col(CUST, r"total capacity purchased|total capacity")
+    use_c   = find_col(CUST, r"capacity in use")
+    kw_c    = find_col(CUST, r"usage in kw")
+    rack_s  = find_col(CUST, r"space.*subscription|^subscription$")
+    rack_u  = find_col(CUST, r"space.*in use|^in use$")
+    own_c   = find_col(CUST, r"ownership")
+    rev_c   = find_col(CUST, r"total revenue|revenue")
 
     def _sum(col):
         if col and col in CUST.columns:
@@ -994,33 +975,25 @@ with T[0]:
     util_pct = (total_use / total_cap * 100) if total_cap > 0 else 0
     rack_pct = (racks_u  / racks_s   * 100) if racks_s   > 0 else 0
 
-    # ── KPI Row 1 ─────────────────────────────────────────────────────────
     st.markdown('<div class="section-title">Key Performance Indicators</div>',
                 unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
-    c1.markdown(kpi_html(fmt(total_cust), "Total Customers",
-                         f"Across {n_loc} locations", CYAN), unsafe_allow_html=True)
-    c2.markdown(kpi_html(fmt(total_cap),  "Total Capacity (KW)",
-                         "Power purchased", LBLUE), unsafe_allow_html=True)
-    c3.markdown(kpi_html(fmt(total_use),  "Capacity in Use (KW)",
-                         f"{util_pct:.1f}% utilisation", GREEN), unsafe_allow_html=True)
-    c4.markdown(kpi_html(fmt(total_kw),   "Actual Usage (KW)",
-                         "Metered consumption", AMBER), unsafe_allow_html=True)
+    c1.markdown(kpi_html(fmt(total_cust), "Total Customers",    f"Across {n_loc} locations", CYAN),  unsafe_allow_html=True)
+    c2.markdown(kpi_html(fmt(total_cap),  "Total Capacity (KW)", "Power purchased",           LBLUE), unsafe_allow_html=True)
+    c3.markdown(kpi_html(fmt(total_use),  "Capacity in Use (KW)", f"{util_pct:.1f}% utilisation", GREEN), unsafe_allow_html=True)
+    c4.markdown(kpi_html(fmt(total_kw),   "Actual Usage (KW)",   "Metered consumption",       AMBER), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
-
-    # ── KPI Row 2 ─────────────────────────────────────────────────────────
     c5, c6, c7, c8 = st.columns(4)
-    c5.markdown(kpi_html(fmt(caged_n),   "Caged Customers",   "Dedicated caged space",  CYAN),  unsafe_allow_html=True)
-    c6.markdown(kpi_html(fmt(uncaged_n), "Uncaged Customers", "Shared / open hall",     LBLUE), unsafe_allow_html=True)
-    c7.markdown(kpi_html(fmt(racks_s),   "Racks Subscribed",  "Total racks contracted", GREEN), unsafe_allow_html=True)
-    c8.markdown(kpi_html(fmt(total_rev), "Total Revenue",     "Monthly MRC",            RED),   unsafe_allow_html=True)
+    c5.markdown(kpi_html(fmt(caged_n),   "Caged Customers",    "Dedicated caged space",  CYAN),  unsafe_allow_html=True)
+    c6.markdown(kpi_html(fmt(uncaged_n), "Uncaged Customers",  "Shared / open hall",     LBLUE), unsafe_allow_html=True)
+    c7.markdown(kpi_html(fmt(racks_s),   "Racks Subscribed",   "Total racks contracted", GREEN), unsafe_allow_html=True)
+    c8.markdown(kpi_html(fmt(total_rev), "Total Revenue (MRC)", "Monthly recurring",      RED),   unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Gauges ────────────────────────────────────────────────────────────
-    st.markdown('<div class="section-title">Utilisation Gauges</div>',
-                unsafe_allow_html=True)
+    # Gauges
+    st.markdown('<div class="section-title">Utilisation Gauges</div>', unsafe_allow_html=True)
     g1, g2 = st.columns(2)
 
     def _gauge(val, label, bar_color):
@@ -1047,7 +1020,7 @@ with T[0]:
     g1.plotly_chart(_gauge(util_pct, "Power Utilisation (%)", LBLUE), use_container_width=True)
     g2.plotly_chart(_gauge(rack_pct, "Rack Occupancy (%)",    GREEN), use_container_width=True)
 
-    # ── Capacity vs Usage by Location ─────────────────────────────────────
+    # Capacity vs Usage by Location
     st.markdown('<div class="section-title">Capacity vs Usage by Location</div>',
                 unsafe_allow_html=True)
     if cap_c and use_c and "_Location" in CUST.columns:
@@ -1071,7 +1044,7 @@ with T[0]:
         fig_la.update_layout(**_base_layout(), height=320)
         st.plotly_chart(fig_la, use_container_width=True)
 
-    # ── Pie Charts ────────────────────────────────────────────────────────
+    # Pie Charts
     if caged_c or own_c:
         st.markdown('<div class="section-title">Space &amp; Ownership Split</div>',
                     unsafe_allow_html=True)
@@ -1104,7 +1077,7 @@ with T[0]:
 # TAB 1 – DATA EXPLORER
 # ══════════════════════════════════════════════════════════════════════════════
 with T[1]:
-    st.markdown('<div class="section-title">Data Explorer – Column-Level Search</div>',
+    st.markdown('<div class="section-title">Data Explorer – All Locations &amp; Sheets</div>',
                 unsafe_allow_html=True)
 
     de_loc = st.selectbox("Location", ["All"] + sorted(fdata.keys()), key="de_loc")
@@ -1114,7 +1087,8 @@ with T[1]:
         sh_map = fdata.get(de_loc, {})
         de_sh  = st.selectbox("Sheet", list(sh_map.keys()), key="de_sh")
         view   = sh_map.get(de_sh, pd.DataFrame()).copy()
-        view.insert(0, "_Location", de_loc)
+        if "_Location" not in view.columns:
+            view.insert(0, "_Location", de_loc)
 
     if not view.empty:
         disp_cols = [c for c in view.columns if not c.startswith("_")]
@@ -1125,7 +1099,6 @@ with T[1]:
         with sc2:
             search_val = st.text_input("Search value",
                                        placeholder="Type to filter…", key="de_sv")
-
         vw = view.copy()
         if search_val.strip():
             sv = search_val.strip().lower()
@@ -1137,18 +1110,15 @@ with T[1]:
                 mask = vw[search_col].astype(str).str.lower().str.contains(sv, na=False)
             vw = vw[mask]
 
-        show_c = st.multiselect("Columns to display",
-                                disp_cols,
+        show_c = st.multiselect("Columns to display", disp_cols,
                                 default=disp_cols[:min(14, len(disp_cols))],
                                 key="de_cols")
         out = vw[[c for c in show_c if c in vw.columns]] if show_c else vw[disp_cols]
 
-        st.markdown(f'<span class="badge">{len(out):,} rows</span>',
-                    unsafe_allow_html=True)
+        st.markdown(f'<span class="badge">{len(out):,} rows</span>', unsafe_allow_html=True)
         st.dataframe(out.head(500), use_container_width=True, height=420)
         st.download_button("⬇ Download CSV",
-                           out.to_csv(index=False).encode(), "sify_data.csv",
-                           "text/csv")
+                           out.to_csv(index=False).encode(), "sify_data.csv", "text/csv")
 
         with st.expander("📊 Column Statistics"):
             nc = num_cols(vw)
@@ -1206,7 +1176,6 @@ with T[2]:
             if op_fc != "(none)" and op_fv.strip():
                 wdf = wdf[wdf[op_fc].astype(str).str.lower()
                           .str.contains(op_fv.strip().lower(), na=False)]
-
             grp = None if op_grp == "(none)" else op_grp
             res, desc = run_op(wdf, op_col, op_op, grp, op_n)
 
@@ -1317,12 +1286,12 @@ with T[3]:
 # TAB 4 – SMART SEARCH
 # ══════════════════════════════════════════════════════════════════════════════
 with T[4]:
-    st.markdown('<div class="section-title">🧠 Smart Search &amp; Query Engine</div>',
+    st.markdown('<div class="section-title">🧠 Smart Search – Compound Query Engine</div>',
                 unsafe_allow_html=True)
     st.markdown(f"""
     <div style="background:{DARK2};border:1px solid {BORD};border-radius:10px;
          padding:16px 20px;margin-bottom:16px;font-size:.86rem;color:{MUTED}">
-    <b style="color:{TEXT}">Compound queries supported — use <code>and</code> to chain multiple intents:</b><br><br>
+    <b style="color:{TEXT}">Use <code>and</code> to chain multiple intents in one query:</b><br><br>
     &nbsp;• <code>list all caged customers and total sum of power in kw</code><br>
     &nbsp;• <code>show uncaged customers in noida and average capacity purchased</code><br>
     &nbsp;• <code>count caged customers by location and total revenue</code><br>
@@ -1356,11 +1325,9 @@ with T[4]:
         all_tables = []
 
         for i, res in enumerate(results):
-            st.markdown(
-                f'<div class="section-title">{i+1}. {res["title"]}</div>',
-                unsafe_allow_html=True)
+            st.markdown(f'<div class="section-title">{i+1}. {res["title"]}</div>',
+                        unsafe_allow_html=True)
             st.caption(res.get("description", ""))
-
             rtype = res.get("type", "error")
 
             if rtype == "scalar":
@@ -1382,16 +1349,14 @@ with T[4]:
             elif rtype in ("table", "grouped"):
                 data = res.get("data", pd.DataFrame())
                 if isinstance(data, pd.DataFrame) and not data.empty:
-                    meta  = [c for c in ["_Location", "_Sheet"] if c in data.columns]
+                    meta   = [c for c in ["_Location", "_Sheet"] if c in data.columns]
                     show_c = [c for c in data.columns if not c.startswith("_")][:22]
                     display = data[meta + show_c]
-                    st.markdown(
-                        f'<span class="badge">{len(display):,} rows</span>',
-                        unsafe_allow_html=True)
+                    st.markdown(f'<span class="badge">{len(display):,} rows</span>',
+                                unsafe_allow_html=True)
                     st.dataframe(display.head(400), use_container_width=True, height=340)
                     all_tables.append((res["title"], display))
 
-                    # Auto-chart for grouped results
                     if rtype == "grouped":
                         xc = res.get("x_col", "")
                         yc = res.get("y_col", "")
@@ -1402,7 +1367,6 @@ with T[4]:
                             fig_g.update_layout(**_base_layout(), height=350)
                             st.plotly_chart(fig_g, use_container_width=True)
 
-                    # Location breakdown
                     if "_Location" in data.columns and data["_Location"].nunique() > 1:
                         lb = data["_Location"].value_counts().reset_index()
                         lb.columns = ["Location", "Rows"]
@@ -1412,7 +1376,6 @@ with T[4]:
                         fig_lb.update_layout(**_base_layout(), height=300)
                         st.plotly_chart(fig_lb, use_container_width=True)
 
-                    # Numeric distribution
                     nc_res = num_cols(data)
                     if nc_res:
                         fig_h = px.histogram(data.dropna(subset=[nc_res[0]]),
@@ -1423,24 +1386,19 @@ with T[4]:
                         st.plotly_chart(fig_h, use_container_width=True)
                 else:
                     st.warning("No matching rows for this clause.")
-
             else:
                 st.error(res.get("description", "Query error."))
 
-            st.markdown("<hr style='border-color:{};margin:10px 0 20px'>".format(BORD),
+            st.markdown(f"<hr style='border-color:{BORD};margin:10px 0 20px'>",
                         unsafe_allow_html=True)
 
-        # Combined download of all table results
         if all_tables:
             combined_out = pd.concat(
                 [df.assign(_ResultBlock=title) for title, df in all_tables],
-                ignore_index=True, sort=False
-            )
-            st.download_button(
-                "⬇ Download All Results (CSV)",
-                combined_out.to_csv(index=False).encode(),
-                "smart_query_results.csv", "text/csv"
-            )
+                ignore_index=True, sort=False)
+            st.download_button("⬇ Download All Results (CSV)",
+                               combined_out.to_csv(index=False).encode(),
+                               "smart_query_results.csv", "text/csv")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1452,7 +1410,7 @@ with T[5]:
 
     nc_all = num_cols(CUST)
     if not nc_all:
-        st.info("No numeric columns found for cross-location comparison.")
+        st.info("No numeric columns found.")
     else:
         xl1, xl2, xl3 = st.columns(3)
         with xl1: xl_col = st.selectbox("📐 Metric", nc_all, key="xl_col")
@@ -1465,8 +1423,7 @@ with T[5]:
 
         rows = []
         for loc in sel_locs:
-            loc_df = (CUST[CUST["_Location"] == loc]
-                      if "_Location" in CUST.columns else CUST)
+            loc_df = CUST[CUST["_Location"] == loc] if "_Location" in CUST.columns else CUST
             if not loc_df.empty and xl_col in loc_df.columns:
                 val, _ = run_op(loc_df, xl_col, xl_op)
                 if isinstance(val, (int, float)):
@@ -1476,11 +1433,9 @@ with T[5]:
 
         if not xl_agg.empty:
             k1, k2, k3 = st.columns(3)
-            k1.metric("🏆 Highest", xl_agg.iloc[0]["Location"],
-                      fmt(xl_agg.iloc[0][xl_col]))
-            k2.metric("📉 Lowest",  xl_agg.iloc[-1]["Location"],
-                      fmt(xl_agg.iloc[-1][xl_col]))
-            k3.metric("Σ Network", "", fmt(xl_agg[xl_col].sum()))
+            k1.metric("🏆 Highest", xl_agg.iloc[0]["Location"],  fmt(xl_agg.iloc[0][xl_col]))
+            k2.metric("📉 Lowest",  xl_agg.iloc[-1]["Location"], fmt(xl_agg.iloc[-1][xl_col]))
+            k3.metric("Σ Network",  "", fmt(xl_agg[xl_col].sum()))
 
             if xl_ct == "Radar Chart" and len(xl_agg) >= 3:
                 vals = xl_agg[xl_col].tolist()
@@ -1506,7 +1461,7 @@ with T[5]:
             st.dataframe(xl_agg, use_container_width=True)
 
         if len(nc_all) >= 2 and len(sel_locs) >= 2 and "_Location" in CUST.columns:
-            with st.expander("🔥 Full Metrics Heatmap Across Locations"):
+            with st.expander("🔥 Full Metrics Heatmap Across All Locations"):
                 hcols = nc_all[:12]
                 hrows = []
                 for loc in sel_locs:
@@ -1538,6 +1493,6 @@ with T[5]:
 st.markdown(f"""
 <hr style="border-color:{BORD};margin-top:2rem">
 <div style="text-align:center;color:{MUTED};font-size:.75rem;padding:10px 0 20px">
-  Sify Data Centre – Capacity Intelligence Platform &nbsp;|&nbsp;
-  {n_loc} locations · {n_sheets_loaded} sheets · 15 chart types · Smart query engine
+  Sify DC – Capacity Intelligence Platform &nbsp;|&nbsp;
+  {n_loc} locations · {n_sheets_loaded} sheets · {total_rows:,} rows · 15 chart types
 </div>""", unsafe_allow_html=True)
