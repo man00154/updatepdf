@@ -15,7 +15,7 @@ warnings.filterwarnings("ignore")
 # PAGE CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Sify DC – Capacity Intelligence",
+    page_title="Sify DC – Capacity Excel Query",
     page_icon="🏢",
     layout="wide",
     initial_sidebar_state="expanded",
