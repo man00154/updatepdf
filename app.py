@@ -317,30 +317,43 @@ def _label(fpath: Path) -> str:
     return s if s else fpath.stem
 
 
+def _file_timestamp(fpath: Path) -> int:
+    """Extract trailing numeric timestamp from filename, or 0 if not found."""
+    m = re.search(r"_(\d{10,})(?:\.[^.]+)?$", fpath.stem)
+    return int(m.group(1)) if m else 0
+
+
 @st.cache_data(show_spinner=False)
 def load_all() -> dict:
-    """Return {location_label: {sheet_name: DataFrame}} for every Excel file found."""
-    result: dict = {}
-    used_labels: set = set()
-
-    def _safe_label(fpath: Path) -> str:
-        base = _label(fpath)
-        if base not in used_labels:
-            return base
-        full = re.sub(r"Customer_and_Capacity_Tracker_", "", fpath.stem, flags=re.I)
-        full = re.sub(r"_\d{10,}$", "", full).replace("_", " ").strip()
-        return full
-
+    """Return {location_label: {sheet_name: DataFrame}} for every Excel file found.
+    When multiple files have the same location label (e.g. duplicate uploads with
+    different timestamps), only the file with the HIGHEST timestamp is loaded."""
     dirs = _excel_dirs()
-    seen_files: set = set()
 
+    # Collect all candidate files: {label: (timestamp, fpath, kind)}
+    label_map: dict = {}
+
+    def _register(fpath: Path, kind: str) -> None:
+        base = _label(fpath)
+        ts = _file_timestamp(fpath)
+        existing = label_map.get(base)
+        if existing is None or ts > existing[0]:
+            label_map[base] = (ts, fpath, kind)
+
+    seen_names: set = set()
     for d in dirs:
         for fpath in sorted(d.glob("*.xlsx")):
-            if fpath.name in seen_files:
-                continue
-            seen_files.add(fpath.name)
-            label = _safe_label(fpath)
-            used_labels.add(label)
+            if fpath.name not in seen_names:
+                seen_names.add(fpath.name)
+                _register(fpath, "xlsx")
+        for fpath in sorted(d.glob("*.xls")):
+            if fpath.suffix.lower() == ".xls" and fpath.name not in seen_names:
+                seen_names.add(fpath.name)
+                _register(fpath, "xls")
+
+    result: dict = {}
+    for label, (_, fpath, kind) in sorted(label_map.items()):
+        if kind == "xlsx":
             try:
                 wb = openpyxl.load_workbook(str(fpath), data_only=True, read_only=False)
             except Exception:
@@ -359,15 +372,7 @@ def load_all() -> dict:
             wb.close()
             if sheets:
                 result[label] = sheets
-
-        for fpath in sorted(d.glob("*.xls")):
-            if fpath.suffix.lower() != ".xls":
-                continue
-            if fpath.name in seen_files:
-                continue
-            seen_files.add(fpath.name)
-            label = _safe_label(fpath)
-            used_labels.add(label)
+        else:
             try:
                 import xlrd
                 wb = xlrd.open_workbook(str(fpath))
@@ -785,19 +790,43 @@ _COL_CONCEPT_WORDS: set = {
 }
 
 _COL_CONCEPTS: list = [
-    (["power", "kw", "kilowatt", "kva"],                 r"total.*capacity.*kw|capacity.*kw|power|kw|kilowatt|kva"),
+    # Power / Capacity
+    (["allocated capacity", "allocated kw"],              r"allocated.*kw|kw.*allocated"),
+    (["subscribed capacity kw", "capacity to be given in kw"], r"subscribed.*capacity.*kw|capacity.*to.*be.*given.*kw"),
+    (["capacity to be given", "capacity remaining"],      r"capacity.*to.*be.*given|remaining.*capacity"),
+    (["reserved capacity"],                               r"reserved.*capacity"),
     (["capacity purchased", "total capacity"],            r"total.*capacity|capacity.*purchased"),
-    (["capacity in use", "used capacity", "in use"],      r"capacity.*in.*use|in use"),
+    (["capacity in use", "used capacity"],                r"capacity.*in.*use"),
+    (["in use"],                                          r"in.*use"),
+    (["yet to be given", "yet to be billed"],             r"yet.*to.*be|yet.*billed"),
+    (["power", "kw", "kilowatt", "kva"],                  r"total.*capacity.*kw|capacity.*kw|power|kilowatt|kva|\bkw\b"),
     (["capacity", "purchased", "subscribed"],             r"capacity|purchased|subscribed"),
-    (["usage", "use", "consumption"],                     r"usage|in use|consumption"),
-    (["revenue", "mrc", "billing", "charge"],             r"revenue|mrc|billing|charge"),
-    (["rack", "racks"],                                   r"rack"),
-    (["customer", "client", "name"],                      r"customer.*name|client.*name"),
+    (["usage", "consumption", "kw hr", "kwhr"],           r"kw.*hr|kwhr|usage|consumption"),
+    # Revenue
+    (["space revenue", "space including capacity"],       r"space.*revenue|space.*including.*capacity"),
+    (["additional capacity revenue", "additional capacity charges"], r"additional.*capacity.*revenue|additional.*capacity.*charge"),
+    (["power usage revenue", "power revenue"],            r"power.*usage.*revenue|power.*revenue"),
+    (["seating space revenue", "seating revenue"],        r"seating.*space.*revenue|seating.*revenue"),
+    (["other items", "any other"],                        r"any.*other|other.*items"),
+    (["total revenue", "total mrc"],                      r"total.*revenue|total.*mrc"),
+    (["revenue", "mrc", "billing", "charge"],             r"revenue|mrc"),
+    (["per unit rate", "per unit", "mrc rate"],           r"per.*unit.*rate|per.*unit"),
+    # Space
+    (["subscription", "sitting space subscription"],      r"subscription"),
+    (["sitting space", "seat", "seating"],                r"sit|seat"),
+    (["rack", "racks"],                                   r"\brack\b"),
     (["space", "area"],                                   r"space|area"),
-    (["sitting", "seat"],                                 r"sit|seat"),
+    # Contract
+    (["contract start", "start date"],                    r"contract.*start|start.*date"),
+    (["expiry", "expiry date", "current expiry"],         r"expir"),
+    (["term", "term of contract", "years"],               r"term.*contract|term.*year"),
+    (["billing frequency", "frequency"],                  r"billing.*freq|frequency"),
+    (["sales order", "so ref"],                           r"sales.*order|so.*ref"),
+    (["contract", "contract info"],                       r"contract"),
+    # Customer
+    (["customer", "client", "name"],                      r"customer.*name|client.*name"),
     (["rate", "per unit"],                                r"per.*unit|rate"),
-    (["contract", "term", "expiry"],                      r"contract|term|expir"),
-    (["frequency", "billing frequency"],                  r"billing.*freq|frequency"),
+    (["remarks", "notes"],                                r"remarks|notes"),
 ]
 
 _LIST_KW = {
@@ -1191,87 +1220,330 @@ with T[0]:
         nc = num_cols(CUST)
         tc = txt_cols(CUST)
 
-        cap_c   = find_col(CUST, r"total.*capacity.*kw|total.*capacity.*kva|total.*capacity|capacity.*purchased")
-        use_c   = find_col(CUST, r"capacity.*in.*use|in.*use")
-        rev_c   = find_col(CUST, r"total.*revenue|total.*mrc|revenue|mrc")
-        power_c = find_col(CUST, r"power.*kw|kw.*power|allocated.*kw")
-        rack_c  = find_col(CUST, r"\brack\b")
-        cust_c  = find_col(CUST, r"customer.*name|client.*name")
-        caged_c = find_col(CUST, r"\bcaged\b")
-        sub_c   = find_col(CUST, r"subscription.*in.*use|in.*use")
-        own_c   = find_col(CUST, r"\brhs\b|\bshs\b|ownership")
+        # ── Column lookups ──────────────────────────────────────────────────
+        cust_c   = find_col(CUST, r"customer.*name|client.*name")
+        caged_c  = find_col(CUST, r"\bcaged\b")
+        own_c    = find_col(CUST, r"\brhs\b|\bshs\b|ownership")
+        sub_mode_c = find_col(CUST, r"subscription.*mode\s*\(rack|space.*subscription.*mode")
+        pw_sub_c = find_col(CUST, r"power.*subscription.*model|billing.*model.*power.*subscription")
+        pw_use_m_c = find_col(CUST, r"power.*usage.*model|billing.*model.*power.*usage")
 
-        # Row 1 – primary KPIs
+        # Space
+        space_sub_c  = find_col(CUST, r"space\s*\|\s*subscription$|^space.*subscription$")
+        space_inuse_c = find_col(CUST, r"space.*in.*use")
+        space_ytbg_c = find_col(CUST, r"yet.*to.*be.*given|yet.*billed")
+        space_res_c  = find_col(CUST, r"reserved.*capacity")
+        space_rate_c = find_col(CUST, r"per.*unit.*rate|per.*unit.*mrc")
+        rack_c       = find_col(CUST, r"\brack\b")
+
+        # Power Capacity
+        cap_c        = find_col(CUST, r"total.*capacity.*purchased|total.*capacity|capacity.*purchased")
+        use_c        = find_col(CUST, r"capacity.*in.*use")
+        cap_ytbg_c   = find_col(CUST, r"capacity.*to.*be.*given")
+        cap_res_c    = find_col(CUST, r"reserved.*capacity")
+        sub_kw_c     = find_col(CUST, r"subscribed.*capacity.*kw|capacity.*to.*be.*given.*kw")
+        alloc_kw_c   = find_col(CUST, r"allocated.*capacity.*kw|\"allocated\".*kw|allocated.*kw")
+
+        # Power Usage
+        pu_sub_c     = find_col(CUST, r"power.*usage.*subscription|kw.*hr.*subscription")
+        pu_inuse_c   = find_col(CUST, r"power.*usage.*in.*use")
+        pu_ytbg_c    = find_col(CUST, r"power.*usage.*yet|yet.*to.*be.*given")
+
+        # Seating Space
+        seat_sub_c   = find_col(CUST, r"seating.*space.*subscription|sitting.*space.*subscription|sitting.*space")
+        seat_inuse_c = find_col(CUST, r"seating.*space.*in.*use|sitting.*space.*in.*use")
+
+        # Revenue
+        rev_space_c  = find_col(CUST, r"space.*revenue.*including|space.*revenue")
+        rev_addcap_c = find_col(CUST, r"additional.*capacity.*revenue|additional.*capacity.*charge")
+        rev_pwuse_c  = find_col(CUST, r"power.*usage.*revenue")
+        rev_seat_c   = find_col(CUST, r"seating.*space.*revenue|seating.*revenue")
+        rev_other_c  = find_col(CUST, r"any.*other.*items|other.*items")
+        rev_total_c  = find_col(CUST, r"total.*revenue")
+        rev_freq_c   = find_col(CUST, r"billing.*frequency|frequency")
+        rev_so_c     = find_col(CUST, r"sales.*order|so.*ref")
+        rev_mrc_c    = find_col(CUST, r"total.*mrc|mrc")
+
+        # Contract
+        con_start_c  = find_col(CUST, r"contract.*start|start.*date")
+        con_term_c   = find_col(CUST, r"term.*contract|term.*year")
+        con_expiry_c = find_col(CUST, r"current.*expiry|expiry.*date|expir")
+        con_remarks_c = find_col(CUST, r"remarks")
+
+        def _n(col):
+            if col and col in CUST.columns:
+                return pd.to_numeric(CUST[col], errors="coerce").sum()
+            return None
+
+        def _avg(col):
+            if col and col in CUST.columns:
+                return pd.to_numeric(CUST[col], errors="coerce").mean()
+            return None
+
+        def _cnt_val(col, val):
+            if col and col in CUST.columns:
+                return int((CUST[col].astype(str).str.upper().str.strip() == val.upper()).sum())
+            return None
+
+        # ── SECTION 1: Summary Overview ─────────────────────────────────────
         k = st.columns(5)
         total_customers = CUST[cust_c].dropna().nunique() if cust_c else len(CUST)
-        k[0].markdown(kpi_html(f"{total_customers:,}", "Unique Customers", "across all locations", CYAN),
-                      unsafe_allow_html=True)
+        k[0].markdown(kpi_html(f"{total_customers:,}", "Unique Customers",
+                               "across all locations", CYAN), unsafe_allow_html=True)
 
         if "_Location" in CUST.columns:
             k[1].markdown(kpi_html(f"{CUST['_Location'].nunique()}", "Active Locations",
                                    f"{sum(len(s) for s in fdata.values())} sheets", LBLUE),
                           unsafe_allow_html=True)
 
+        k[2].markdown(kpi_html(f"{len(CUST):,}", "Total Records",
+                               "All sheets combined", MUTED), unsafe_allow_html=True)
+
         if cap_c:
-            tot_cap = pd.to_numeric(CUST[cap_c], errors="coerce").sum()
-            k[2].markdown(kpi_html(fmt(tot_cap), "Total Capacity Purchased", cap_c[:30], GREEN),
-                          unsafe_allow_html=True)
+            tot_cap = _n(cap_c)
+            k[3].markdown(kpi_html(fmt(tot_cap), "Total Capacity Purchased",
+                                   "Power Capacity section", GREEN), unsafe_allow_html=True)
 
         if use_c:
-            tot_use = pd.to_numeric(CUST[use_c], errors="coerce").sum()
-            k[3].markdown(kpi_html(fmt(tot_use), "Total Capacity In Use", use_c[:30], AMBER),
-                          unsafe_allow_html=True)
-
-        if rev_c:
-            tot_rev = pd.to_numeric(CUST[rev_c], errors="coerce").sum()
-            k[4].markdown(kpi_html(fmt(tot_rev), "Total Revenue (MRC)", "Monthly Recurring", GREEN),
-                          unsafe_allow_html=True)
-        elif nc:
-            v = pd.to_numeric(CUST[nc[-1]], errors="coerce").sum()
-            k[4].markdown(kpi_html(fmt(v), nc[-1][:30], "", MUTED), unsafe_allow_html=True)
+            tot_use = _n(use_c)
+            k[4].markdown(kpi_html(fmt(tot_use), "Capacity In Use",
+                                   "Power Capacity section", AMBER), unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # Row 2 – power & space KPIs
-        k2 = st.columns(5)
-        if power_c:
-            tot_pw = pd.to_numeric(CUST[power_c], errors="coerce").sum()
-            k2[0].markdown(kpi_html(fmt(tot_pw), "Total Allocated Power (KW)", power_c[:30], RED),
-                           unsafe_allow_html=True)
+        # ── SECTION 2: Billing Model ─────────────────────────────────────────
+        st.markdown('<div class="section-title">Billing Model</div>', unsafe_allow_html=True)
+        bm_cols = st.columns(4)
 
         if caged_c:
             cage_vals = CUST[caged_c].astype(str).str.upper().str.strip()
             n_caged   = (cage_vals == "CAGED").sum()
             n_uncaged = (cage_vals == "UNCAGED").sum()
-            k2[1].markdown(kpi_html(f"{n_caged}", "Caged", f"Uncaged: {n_uncaged}", CYAN),
-                           unsafe_allow_html=True)
+            bm_cols[0].markdown(kpi_html(f"{n_caged}", "Caged",
+                                         f"Uncaged: {n_uncaged}", CYAN), unsafe_allow_html=True)
 
-        if cap_c and use_c:
-            t_cap = pd.to_numeric(CUST[cap_c], errors="coerce").sum()
-            t_use = pd.to_numeric(CUST[use_c], errors="coerce").sum()
-            util  = (t_use / t_cap * 100) if t_cap > 0 else 0
-            k2[2].markdown(kpi_html(f"{util:.1f}%", "Utilisation Rate",
-                                    "Capacity Used / Purchased", AMBER), unsafe_allow_html=True)
+        if own_c:
+            rhs_c = _cnt_val(own_c, "RHS")
+            shs_c = _cnt_val(own_c, "SHS")
+            if rhs_c is not None or shs_c is not None:
+                bm_cols[1].markdown(
+                    kpi_html(f"{rhs_c or 0}", "RHS",
+                             f"SHS: {shs_c or 0}", LBLUE), unsafe_allow_html=True)
 
-        if sub_c and sub_c != use_c:
-            tot_sub = pd.to_numeric(CUST[sub_c], errors="coerce").sum()
-            k2[3].markdown(kpi_html(fmt(tot_sub), "Subscription In Use", sub_c[:30], LBLUE),
-                           unsafe_allow_html=True)
+        if pw_sub_c:
+            rated = _cnt_val(pw_sub_c, "RATED")
+            subsc = _cnt_val(pw_sub_c, "SUBSCRIBED")
+            bm_cols[2].markdown(
+                kpi_html(f"{rated or 0}", "Power Sub: Rated",
+                         f"Subscribed: {subsc or 0}", AMBER), unsafe_allow_html=True)
 
-        if rack_c:
-            tot_rack = pd.to_numeric(CUST[rack_c], errors="coerce").sum()
-            k2[4].markdown(kpi_html(fmt(tot_rack), "Total Racks / Space", rack_c[:30], GREEN),
-                           unsafe_allow_html=True)
-        elif len(nc) >= 5:
-            v = pd.to_numeric(CUST[nc[4]], errors="coerce").sum()
-            k2[4].markdown(kpi_html(fmt(v), nc[4][:30], "", MUTED), unsafe_allow_html=True)
+        if pw_use_m_c:
+            bundled  = _cnt_val(pw_use_m_c, "BUNDLED")
+            metered  = _cnt_val(pw_use_m_c, "METERED")
+            bm_cols[3].markdown(
+                kpi_html(f"{bundled or 0}", "Power Usage: Bundled",
+                         f"Metered: {metered or 0}", GREEN), unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # Per-location summary table
+        # ── SECTION 3: Space ─────────────────────────────────────────────────
+        st.markdown('<div class="section-title">Space</div>', unsafe_allow_html=True)
+        sp_cols = st.columns(5)
+
+        if sub_mode_c:
+            rack_m = _cnt_val(sub_mode_c, "RACK")
+            u_m    = _cnt_val(sub_mode_c, "U SPACE")
+            sqft_m = _cnt_val(sub_mode_c, "SQFT SPACE")
+            sp_cols[0].markdown(
+                kpi_html(f"{rack_m or 0}", "Subscription Mode: Rack",
+                         f"U Space: {u_m or 0} | SqFt: {sqft_m or 0}", CYAN),
+                unsafe_allow_html=True)
+
+        if space_sub_c:
+            v = _n(space_sub_c)
+            if v is not None:
+                sp_cols[1].markdown(kpi_html(fmt(v), "Space Subscription",
+                                             space_sub_c[:25], GREEN), unsafe_allow_html=True)
+
+        if space_inuse_c:
+            v = _n(space_inuse_c)
+            if v is not None:
+                sp_cols[2].markdown(kpi_html(fmt(v), "Space In Use",
+                                             space_inuse_c[:25], AMBER), unsafe_allow_html=True)
+
+        if space_ytbg_c:
+            v = _n(space_ytbg_c)
+            if v is not None:
+                sp_cols[3].markdown(kpi_html(fmt(v), "Yet To Be Given / Billed",
+                                             space_ytbg_c[:25], RED), unsafe_allow_html=True)
+
+        if space_rate_c:
+            v = _avg(space_rate_c)
+            if v is not None:
+                sp_cols[4].markdown(kpi_html(fmt(v), "Avg Per Unit Rate (MRC)",
+                                             space_rate_c[:25], LBLUE), unsafe_allow_html=True)
+        elif rack_c:
+            v = _n(rack_c)
+            if v is not None:
+                sp_cols[4].markdown(kpi_html(fmt(v), "Total Racks / Space",
+                                             rack_c[:25], LBLUE), unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── SECTION 4: Power Capacity ─────────────────────────────────────────
+        st.markdown('<div class="section-title">Power Capacity</div>', unsafe_allow_html=True)
+        pc_cols = st.columns(5)
+
+        if cap_c:
+            pc_cols[0].markdown(kpi_html(fmt(_n(cap_c)), "Total Capacity Purchased",
+                                         cap_c[:25], GREEN), unsafe_allow_html=True)
+        if use_c:
+            pc_cols[1].markdown(kpi_html(fmt(_n(use_c)), "Capacity In Use",
+                                         use_c[:25], AMBER), unsafe_allow_html=True)
+        if cap_ytbg_c:
+            v = _n(cap_ytbg_c)
+            if v is not None:
+                pc_cols[2].markdown(kpi_html(fmt(v), "Capacity To Be Given",
+                                             cap_ytbg_c[:25], RED), unsafe_allow_html=True)
+        if sub_kw_c:
+            v = _n(sub_kw_c)
+            if v is not None:
+                pc_cols[3].markdown(kpi_html(fmt(v), "Subscribed Cap. To Give (KW)",
+                                             sub_kw_c[:25], LBLUE), unsafe_allow_html=True)
+        if alloc_kw_c:
+            v = _n(alloc_kw_c)
+            if v is not None:
+                pc_cols[4].markdown(kpi_html(fmt(v), "Allocated Capacity KW",
+                                             alloc_kw_c[:25], CYAN), unsafe_allow_html=True)
+        elif cap_c and use_c:
+            t_cap = _n(cap_c) or 0
+            t_use = _n(use_c) or 0
+            util  = (t_use / t_cap * 100) if t_cap > 0 else 0
+            pc_cols[4].markdown(kpi_html(f"{util:.1f}%", "Utilisation Rate",
+                                         "Capacity In Use / Purchased", AMBER),
+                                unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── SECTION 5: Power Usage ────────────────────────────────────────────
+        show_pu = pu_sub_c or pu_inuse_c or pu_ytbg_c
+        if show_pu:
+            st.markdown('<div class="section-title">Power Usage</div>', unsafe_allow_html=True)
+            pu_cols = st.columns(4)
+            i = 0
+            for col, label, color in [
+                (pu_sub_c,   "KW-HR/Month Subscription", GREEN),
+                (pu_inuse_c, "Power Usage In Use",        AMBER),
+                (pu_ytbg_c,  "Power Usage Yet To Give",   RED),
+            ]:
+                if col:
+                    v = _n(col)
+                    if v is not None:
+                        pu_cols[i].markdown(kpi_html(fmt(v), label, col[:25], color),
+                                            unsafe_allow_html=True)
+                        i += 1
+            st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── SECTION 6: Seating Space ──────────────────────────────────────────
+        show_seat = seat_sub_c or seat_inuse_c
+        if show_seat:
+            st.markdown('<div class="section-title">Seating Space</div>', unsafe_allow_html=True)
+            ss_cols = st.columns(3)
+            if seat_sub_c:
+                v = _n(seat_sub_c)
+                if v is not None:
+                    ss_cols[0].markdown(kpi_html(fmt(v), "Sitting Space Subscription",
+                                                 seat_sub_c[:25], CYAN), unsafe_allow_html=True)
+            if seat_inuse_c:
+                v = _n(seat_inuse_c)
+                if v is not None:
+                    ss_cols[1].markdown(kpi_html(fmt(v), "Sitting Space In Use",
+                                                 seat_inuse_c[:25], AMBER), unsafe_allow_html=True)
+            st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── SECTION 7: Revenue (Monthly) ──────────────────────────────────────
+        rev_c = rev_total_c or rev_mrc_c
+        st.markdown('<div class="section-title">Revenue (Monthly)</div>', unsafe_allow_html=True)
+        rv_cols = st.columns(5)
+        rv_items = [
+            (rev_space_c,  "Space Revenue (incl. Capacity)", CYAN),
+            (rev_addcap_c, "Additional Capacity Revenue",    LBLUE),
+            (rev_pwuse_c,  "Power Usage Revenue",            GREEN),
+            (rev_seat_c,   "Seating Space Revenue",          AMBER),
+            (rev_other_c,  "Any Other Items",                MUTED),
+        ]
+        filled = 0
+        for col, label, color in rv_items:
+            if col and filled < 5:
+                v = _n(col)
+                if v is not None:
+                    rv_cols[filled].markdown(kpi_html(fmt(v), label, col[:25], color),
+                                             unsafe_allow_html=True)
+                    filled += 1
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        rv2_cols = st.columns(4)
+        rv2_items = [
+            (rev_total_c,  "Total Revenue",     GREEN),
+            (rev_mrc_c,    "Total MRC",         LBLUE),
+        ]
+        filled2 = 0
+        for col, label, color in rv2_items:
+            if col and filled2 < 4:
+                v = _n(col)
+                if v is not None:
+                    rv2_cols[filled2].markdown(kpi_html(fmt(v), label, col[:25], color),
+                                               unsafe_allow_html=True)
+                    filled2 += 1
+
+        if rev_freq_c:
+            freq_counts = CUST[rev_freq_c].dropna().value_counts()
+            top_freq = freq_counts.index[0] if not freq_counts.empty else "—"
+            rv2_cols[min(filled2, 3)].markdown(
+                kpi_html(str(top_freq), "Top Billing Frequency",
+                         f"{len(freq_counts)} types", AMBER), unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── SECTION 8: Contract Information ──────────────────────────────────
+        st.markdown('<div class="section-title">Contract Information</div>', unsafe_allow_html=True)
+        ci_cols = st.columns(4)
+        ci_i = 0
+
+        if con_start_c:
+            non_null = CUST[con_start_c].dropna()
+            ci_cols[ci_i].markdown(
+                kpi_html(f"{len(non_null):,}", "Contracts With Start Date",
+                         con_start_c[:25], CYAN), unsafe_allow_html=True)
+            ci_i += 1
+
+        if con_term_c:
+            v = _avg(con_term_c)
+            if v is not None:
+                ci_cols[ci_i].markdown(kpi_html(f"{v:.1f} yr", "Avg Contract Term",
+                                                con_term_c[:25], GREEN), unsafe_allow_html=True)
+                ci_i += 1
+
+        if con_expiry_c:
+            non_null = CUST[con_expiry_c].dropna()
+            ci_cols[ci_i].markdown(
+                kpi_html(f"{len(non_null):,}", "Contracts With Expiry Date",
+                         con_expiry_c[:25], AMBER), unsafe_allow_html=True)
+            ci_i += 1
+
+        if rev_so_c:
+            so_count = CUST[rev_so_c].dropna().nunique()
+            ci_cols[min(ci_i, 3)].markdown(
+                kpi_html(f"{so_count:,}", "Unique Sales Orders",
+                         rev_so_c[:25], LBLUE), unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── Per-location summary table ────────────────────────────────────────
         st.markdown('<div class="section-title">Per-Location Summary</div>', unsafe_allow_html=True)
         if "_Location" in CUST.columns:
-            agg_cols = [c for c in [cap_c, use_c, rev_c, power_c] if c]
+            agg_cols = [c for c in [cap_c, use_c, rev_total_c or rev_mrc_c,
+                                    rev_space_c, rev_pwuse_c] if c]
             if agg_cols:
                 loc_agg = CUST.groupby("_Location")[agg_cols].apply(
                     lambda g: g.apply(pd.to_numeric, errors="coerce").sum()
@@ -1280,32 +1552,28 @@ with T[0]:
                 if cust_c:
                     loc_agg["Customer Count"] = (
                         CUST.groupby("_Location")[cust_c]
-                        .apply(lambda g: g.dropna().nunique())
-                        .values
-                    )
+                        .apply(lambda g: g.dropna().nunique()).values)
                 else:
                     loc_agg["Customer Count"] = (
-                        CUST.groupby("_Location").size().values
-                    )
+                        CUST.groupby("_Location").size().values)
                 st.dataframe(loc_agg.round(2), use_container_width=True)
             else:
                 lc = CUST["_Location"].value_counts().reset_index()
                 lc.columns = ["Location", "Records"]
                 st.dataframe(lc, use_container_width=True)
 
-        # Gauge charts
+        # ── Utilisation Gauges ────────────────────────────────────────────────
         if cap_c and use_c:
-            st.markdown('<div class="section-title">Utilisation Gauges</div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-title">Utilisation Gauges</div>',
+                        unsafe_allow_html=True)
             g1, g2 = st.columns(2)
-            t_cap = pd.to_numeric(CUST[cap_c], errors="coerce").sum()
-            t_use = pd.to_numeric(CUST[use_c], errors="coerce").sum()
+            t_cap = _n(cap_c) or 0
+            t_use = _n(use_c) or 0
             util_pct = min((t_use / t_cap * 100) if t_cap > 0 else 0, 100)
-
+            rack_pct = util_pct
             if rack_c:
-                t_rack = pd.to_numeric(CUST[rack_c], errors="coerce").sum()
+                t_rack = _n(rack_c) or 0
                 rack_pct = min((t_use / t_rack * 100) if t_rack > 0 else util_pct, 100)
-            else:
-                rack_pct = util_pct
 
             def _gauge(val, label, bar_color):
                 fig = go.Figure(go.Indicator(
@@ -1333,7 +1601,7 @@ with T[0]:
             g2.plotly_chart(_gauge(rack_pct, "Space/Rack Utilisation (%)", GREEN),
                             use_container_width=True)
 
-        # Capacity vs Usage bar chart by location
+        # ── Capacity vs Usage bar chart by location ───────────────────────────
         if cap_c and use_c and "_Location" in CUST.columns:
             st.markdown('<div class="section-title">Capacity vs Usage by Location</div>',
                         unsafe_allow_html=True)
@@ -1357,11 +1625,12 @@ with T[0]:
             fig_la.update_layout(**_base_layout(), height=320)
             st.plotly_chart(fig_la, use_container_width=True)
 
-        # Caged / Uncaged pie
+        # ── Caged / Uncaged + Revenue + Subscription Mode pies ────────────────
+        st.markdown('<div class="section-title">Space & Revenue Split</div>',
+                    unsafe_allow_html=True)
+        pie_cols = st.columns(3)
+
         if caged_c:
-            st.markdown('<div class="section-title">Space & Ownership Split</div>',
-                        unsafe_allow_html=True)
-            p1, p2 = st.columns(2)
             cv = CUST[caged_c].astype(str).str.upper().str.strip()
             cv_valid = cv[cv.isin(["CAGED", "UNCAGED"])]
             if not cv_valid.empty:
@@ -1371,19 +1640,31 @@ with T[0]:
                             title="Caged vs Uncaged",
                             color_discrete_sequence=[CYAN, LBLUE], hole=0.45)
                 fp.update_layout(**_base_layout(), height=300)
-                p1.plotly_chart(fp, use_container_width=True)
+                pie_cols[0].plotly_chart(fp, use_container_width=True)
 
-            if own_c:
-                ov = CUST[own_c].astype(str).str.upper().str.strip()
-                ov = ov[ov.str.len().between(1, 20)]
-                if not ov.empty:
-                    own_d = ov.value_counts().reset_index()
-                    own_d.columns = ["Type", "Count"]
-                    fo = px.pie(own_d, names="Type", values="Count",
-                                title="RHS/SHS Split",
-                                color_discrete_sequence=[GREEN, AMBER], hole=0.45)
-                    fo.update_layout(**_base_layout(), height=300)
-                    p2.plotly_chart(fo, use_container_width=True)
+        if sub_mode_c:
+            sm_vals = CUST[sub_mode_c].astype(str).str.strip()
+            sm_vals = sm_vals[sm_vals.str.len().between(1, 30) & (sm_vals != "nan")]
+            if not sm_vals.empty:
+                sm_d = sm_vals.value_counts().reset_index()
+                sm_d.columns = ["Mode", "Count"]
+                fsm = px.pie(sm_d, names="Mode", values="Count",
+                             title="Subscription Mode",
+                             color_discrete_sequence=px.colors.qualitative.Bold, hole=0.45)
+                fsm.update_layout(**_base_layout(), height=300)
+                pie_cols[1].plotly_chart(fsm, use_container_width=True)
+
+        if own_c:
+            ov = CUST[own_c].astype(str).str.upper().str.strip()
+            ov = ov[ov.str.len().between(1, 20) & (ov != "NAN")]
+            if not ov.empty:
+                own_d = ov.value_counts().reset_index()
+                own_d.columns = ["Type", "Count"]
+                fo = px.pie(own_d, names="Type", values="Count",
+                            title="RHS / SHS Split",
+                            color_discrete_sequence=[GREEN, AMBER], hole=0.45)
+                fo.update_layout(**_base_layout(), height=300)
+                pie_cols[2].plotly_chart(fo, use_container_width=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
