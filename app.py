@@ -972,23 +972,99 @@ def _detect_customer_filter(clause: str, df: pd.DataFrame) -> "tuple[pd.DataFram
     return df, []
 
 
+def _detect_billing_model_filter(clause: str, df: pd.DataFrame) -> "tuple[pd.DataFrame, list]":
+    """
+    Filter rows by billing model values:
+      rated / subscribed  → Power Subscription Model column
+      bundled / metered   → Power Usage Model column
+      rhs / shs           → RHS / SHS ownership column
+    Returns (filtered_df, applied_filter_labels).
+    """
+    q = clause.lower()
+    applied = []
+    work = df
+
+    # ── Power Subscription Model ──────────────────────────────────────────
+    pw_sub_col = find_col(work, r"power.*subscription.*model|billing.*model.*power.*subscription")
+    if pw_sub_col:
+        vals = work[pw_sub_col].astype(str).str.strip().str.upper()
+        if re.search(r"\brated\b", q):
+            mask = vals.str.contains("RATED", na=False)
+            if mask.any():
+                work = work[mask].copy()
+                applied.append("Power Sub Model = Rated")
+        elif re.search(r"\bsubscribed\b", q):
+            mask = vals.str.contains("SUBSCRIBED|SUBSCRIB", na=False)
+            if mask.any():
+                work = work[mask].copy()
+                applied.append("Power Sub Model = Subscribed")
+
+    # ── Power Usage Model ─────────────────────────────────────────────────
+    pw_use_col = find_col(work, r"power.*usage.*model|billing.*model.*power.*usage")
+    if pw_use_col:
+        vals = work[pw_use_col].astype(str).str.strip().str.upper()
+        if re.search(r"\bbundled\b", q) and not applied:
+            mask = vals.str.contains("BUNDLED", na=False)
+            if mask.any():
+                work = work[mask].copy()
+                applied.append("Power Usage = Bundled")
+        elif re.search(r"\bmetered\b", q) and not applied:
+            mask = vals.str.contains("METERED", na=False)
+            if mask.any():
+                work = work[mask].copy()
+                applied.append("Power Usage = Metered")
+
+    # ── RHS / SHS ─────────────────────────────────────────────────────────
+    own_col = find_col(work, r"\brhs\b|\bshs\b|ownership")
+    if own_col and not applied:
+        vals = work[own_col].astype(str).str.strip().str.upper()
+        if re.search(r"\brhs\b", q):
+            mask = vals.str.contains("RHS", na=False)
+            if mask.any():
+                work = work[mask].copy()
+                applied.append("Ownership = RHS")
+        elif re.search(r"\bshs\b", q):
+            mask = vals.str.contains("SHS", na=False)
+            if mask.any():
+                work = work[mask].copy()
+                applied.append("Ownership = SHS")
+
+    return work, applied
+
+
+def _clause_has_own_filter(clause: str) -> bool:
+    """Return True if the clause introduces its own row filter (caged/uncaged/rated/…)."""
+    q = clause.lower()
+    return bool(
+        re.search(r"\b(caged|uncaged|rated|subscribed|bundled|metered|rhs|shs)\b", q)
+        or re.findall(r'"([^"]+)"|\'([^\']+)\'', q)
+    )
+
+
 def _detect_text_filter(clause: str, df: pd.DataFrame) -> "tuple[pd.DataFrame, list]":
     """
-    Apply targeted text filtering for caged/uncaged and specific customer names.
-    Does NOT filter on generic column-concept words (power, kw, capacity, etc.)
-    to avoid incorrectly removing all rows.
+    Apply targeted text filtering:
+      1. Caged / Uncaged
+      2. Billing model (rated, subscribed, bundled, metered, RHS, SHS)
+      3. Quoted customer names
+    Does NOT filter on generic column-concept words (power, kw, capacity, etc.).
     """
-    # First apply caged/uncaged filter (most specific)
+    # 1. Caged / Uncaged
     work, applied = _detect_caged_filter(clause, df)
 
-    # Then try customer name filter only if explicitly quoted
+    # 2. Billing model filters (only if caged filter didn't fire)
+    if not applied:
+        work, a2 = _detect_billing_model_filter(clause, work)
+        applied += a2
+
+    # 3. Quoted customer name filter
     q = clause.lower()
     quoted = re.findall(r'"([^"]+)"|\'([^\']+)\'', q)
     if quoted:
-        work2, a2 = _detect_customer_filter(clause, work)
-        if a2:
+        work2, a3 = _detect_customer_filter(clause, work)
+        if a3:
             work = work2
-            applied += a2
+            applied += a3
 
     return work, applied
 
@@ -1003,8 +1079,14 @@ def _parse_or_clauses(query: str) -> list:
     return re.split(r"\s+or\s+", query, flags=re.I)
 
 
-def execute_clause(clause: str, df: pd.DataFrame) -> dict:
-    """Execute a single clause and return a result dict."""
+def execute_clause(clause: str, df: pd.DataFrame,
+                   context_df: "pd.DataFrame | None" = None) -> dict:
+    """
+    Execute a single query clause and return a result dict.
+    context_df: if provided, use this as the base dataset for numeric
+                operations (allows filter context from a previous clause
+                to carry forward). Listing/filter clauses always use `df`.
+    """
     if df.empty:
         return {"title": "No data", "type": "error", "description": "DataFrame is empty."}
 
@@ -1020,10 +1102,22 @@ def execute_clause(clause: str, df: pd.DataFrame) -> dict:
     # Is this a listing query?
     is_listing = any(kw in q for kw in _LIST_KW)
 
-    # Apply location filter
-    work = _loc_filter(clause, df)
+    # ── Choose working dataset ────────────────────────────────────────────
+    # If this clause has no own filter keyword AND it's a pure numeric
+    # operation, inherit the context from the previous filter clause.
+    inherit_context = (
+        context_df is not None
+        and not context_df.empty
+        and detected_op is not None
+        and not _clause_has_own_filter(clause)
+    )
+    base = context_df if inherit_context else df
+    ctx_label = " [context]" if inherit_context else ""
 
-    # Apply caged/uncaged + specific name filter
+    # Apply location filter on the chosen base
+    work = _loc_filter(clause, base)
+
+    # Apply row filters (caged / billing model / customer name)
     filtered, matched_kws = _detect_text_filter(clause, work)
 
     grp = _detect_groupby(clause, filtered)
@@ -1036,49 +1130,82 @@ def execute_clause(clause: str, df: pd.DataFrame) -> dict:
         loc_note = f" ({', '.join(locs)})" if locs and len(locs) < 5 else ""
 
     rows_used = len(filtered)
+    filter_label = (
+        ("Filtered by: " + ", ".join(matched_kws)) if matched_kws
+        else ("Inherited context" if inherit_context else "All records")
+    )
 
-    # If an operation is detected, run it
+    # ── Run numeric operation ─────────────────────────────────────────────
     if detected_op and num_col and num_col in filtered.columns:
         if detected_op in ("Top N Values", "Bottom N Values") and grp is None:
             res, desc = run_op(filtered, num_col, detected_op, None, top_n)
-            return {"title": desc, "type": "table",
+            return {"title": desc + ctx_label, "type": "table",
                     "data": res if isinstance(res, pd.DataFrame) else pd.DataFrame(),
-                    "description": f"*{clause}*"}
+                    "description": f"*{clause}*",
+                    "filter_label": filter_label, "rows_used": rows_used}
         elif grp:
             res, desc = run_op(filtered, num_col, detected_op, grp, top_n)
-            return {"title": desc, "type": "grouped",
+            return {"title": desc + ctx_label, "type": "grouped",
                     "data": res if isinstance(res, pd.DataFrame) else pd.DataFrame(),
                     "description": f"*{clause}*{loc_note}",
-                    "x_col": grp, "y_col": num_col}
+                    "x_col": grp, "y_col": num_col,
+                    "filter_label": filter_label, "rows_used": rows_used}
         else:
             res, desc = run_op(filtered, num_col, detected_op, None, top_n)
-            return {"title": desc, "type": "scalar", "data": res,
+            return {"title": desc + ctx_label, "type": "scalar", "data": res,
                     "description": f"*{clause}*{loc_note}",
-                    "rows_used": rows_used}
+                    "rows_used": rows_used, "filter_label": filter_label,
+                    "num_col": num_col}
+
+    # ── Listing / filter result ───────────────────────────────────────────
     else:
-        # Listing or filtering result
-        kw_note = f"Filtered by: {', '.join(matched_kws)}" if matched_kws else "All records"
         if not is_listing and not matched_kws:
-            # No listing keyword, no filter, no operation → return summary count
             return {"title": f"Records{loc_note}", "type": "table",
-                    "data": filtered,
-                    "description": f"*{clause}*"}
-        return {"title": f"Records{loc_note} — {kw_note}",
+                    "data": filtered, "description": f"*{clause}*",
+                    "filter_label": filter_label, "rows_used": rows_used}
+        return {"title": f"Records{loc_note} — {filter_label}",
                 "type": "table", "data": filtered,
-                "description": f"*{clause}*"}
+                "description": f"*{clause}*",
+                "filter_label": filter_label, "rows_used": rows_used}
+
+
+def _extract_filter_context(result: dict) -> "pd.DataFrame | None":
+    """
+    Return the filtered DataFrame from a result if it is a pure listing/filter
+    result (so subsequent operations can inherit its filter context).
+    """
+    if result.get("type") == "table":
+        d = result.get("data")
+        if isinstance(d, pd.DataFrame) and not d.empty:
+            return d
+    return None
 
 
 def parse_and_execute(query: str, df: pd.DataFrame) -> list:
     """
     Parse compound query with AND/OR logic.
-    AND → independent result blocks.
-    OR  → union of filtered rows.
+
+    Context propagation rules (AND chains):
+    ─────────────────────────────────────────────────────────────────────
+    · A clause that produces a LISTING result (filter without a numeric op)
+      sets the running context for subsequent numeric-only AND clauses.
+    · A clause that introduces its OWN filter keyword (caged, rated, …)
+      resets the context after executing.
+    · OR clauses always run independently without context sharing.
+
+    Examples
+      "list all caged customers AND sum capacity in use AND total power used"
+        → context=caged after clause-1; clauses 2 & 3 sum on caged rows.
+
+      "list all caged customers AND sum capacity in use AND list rated customers"
+        → clauses 1-2 use caged context; clause-3 resets to rated context.
     """
     if df.empty:
         return [{"title": "No data", "type": "error", "description": "DataFrame is empty."}]
 
     results = []
     and_clauses = re.split(r"\s+and\s+", query.strip(), flags=re.I)
+    running_context: "pd.DataFrame | None" = None  # carried across AND clauses
 
     for and_clause in and_clauses:
         and_clause = and_clause.strip()
@@ -1088,26 +1215,43 @@ def parse_and_execute(query: str, df: pd.DataFrame) -> list:
         or_clauses = _parse_or_clauses(and_clause)
 
         if len(or_clauses) > 1:
+            # OR logic → no context sharing; union results
             union_frames = []
             for or_c in or_clauses:
                 res = execute_clause(or_c.strip(), df)
                 if res["type"] in ("table", "grouped") and isinstance(res.get("data"), pd.DataFrame):
                     union_frames.append(res["data"])
-
             if union_frames:
                 merged = pd.concat(union_frames, ignore_index=True, sort=False).drop_duplicates()
-                merged = merged.reset_index(drop=True)
                 results.append({
                     "title": f"OR Combined — {and_clause[:60]}",
-                    "type": "table",
-                    "data": merged,
-                    "description": f"*Union of: {' | '.join(or_clauses)}*"
+                    "type": "table", "data": merged.reset_index(drop=True),
+                    "description": f"*Union of: {' | '.join(or_clauses)}*",
+                    "filter_label": "OR union", "rows_used": len(merged),
                 })
             else:
                 for or_c in or_clauses:
                     results.append(execute_clause(or_c.strip(), df))
+            running_context = None  # reset after OR block
+
         else:
-            results.append(execute_clause(and_clause, df))
+            # Single AND clause — execute with context
+            res = execute_clause(and_clause, df, context_df=running_context)
+            results.append(res)
+
+            # Update running context:
+            # · Pure listing/filter result → becomes the new context
+            # · Numeric op with own filter → becomes the new context (its filtered df)
+            # · Numeric op inherited context → context unchanged
+            if res.get("type") == "table":
+                new_ctx = _extract_filter_context(res)
+                if new_ctx is not None:
+                    running_context = new_ctx
+            elif _clause_has_own_filter(and_clause):
+                # Clause had its own filter but returned a scalar/grouped →
+                # carry the filtered rows as context
+                if isinstance(res.get("data"), pd.DataFrame):
+                    running_context = res["data"]
 
     return results or [{"title": "No results", "type": "error",
                         "description": "Could not interpret the query."}]
@@ -1889,16 +2033,17 @@ with T[4]:
     st.markdown(f"""
     <div style="background:{DARK2};border:1px solid {BORD};border-radius:10px;
          padding:16px 20px;margin-bottom:16px;font-size:.86rem;color:{MUTED}">
-    <b style="color:{TEXT}">Use <code>and</code> to chain results, <code>or</code> for union of filters:</b><br><br>
+    <b style="color:{TEXT}">Compound queries — filter context carries forward automatically:</b><br><br>
     &nbsp;• <code>list all caged customers</code><br>
+    &nbsp;• <code>list all caged customers and sum of capacity in use and total power used</code><br>
+    &nbsp;• <code>list all caged customers and sum capacity in use and total power used and list rated customers</code><br>
+    &nbsp;• <code>list rated customers and sum capacity in use and count customers by location</code><br>
+    &nbsp;• <code>list bundled customers and total revenue</code><br>
+    &nbsp;• <code>show rhs customers and sum capacity purchased</code><br>
     &nbsp;• <code>show uncaged customers in noida</code><br>
-    &nbsp;• <code>total sum of capacity purchased</code><br>
     &nbsp;• <code>count caged customers by location</code><br>
     &nbsp;• <code>total revenue bangalore and average capacity in use noida</code><br>
-    &nbsp;• <code>maximum capacity airoli and minimum capacity noida</code><br>
-    &nbsp;• <code>show customers in airoli or noida</code><br>
-    &nbsp;• <code>list caged customers and total sum capacity purchased</code><br>
-    &nbsp;• <code>sum capacity in use by location</code>
+    &nbsp;• <code>show customers in airoli or noida</code>
     </div>""", unsafe_allow_html=True)
 
     query   = st.text_input(
@@ -1933,14 +2078,26 @@ with T[4]:
             if rtype == "scalar":
                 val = res["data"]
                 rows_used = res.get("rows_used", "?")
+                fl = res.get("filter_label", "")
+                nc_used = res.get("num_col", "")
                 if isinstance(val, (int, float)):
+                    filter_tag = (
+                        f'<div style="font-size:.74rem;color:{AMBER};margin-top:4px;'
+                        f'font-weight:600">{fl}</div>' if fl else ""
+                    )
+                    col_tag = (
+                        f'<div style="font-size:.72rem;color:{MUTED};margin-top:2px">'
+                        f'Column: {nc_used[:50]}</div>' if nc_used else ""
+                    )
                     st.markdown(f"""
                     <div style="background:{DARK2};border:1px solid {BORD};
                          border-radius:14px;padding:24px 32px;text-align:center;margin:8px 0 18px">
                       <div style="font-size:.82rem;color:{MUTED};text-transform:uppercase;
                            font-weight:700;letter-spacing:.06em">{res['title']}</div>
                       <div class="result-big">{fmt(val)}</div>
-                      <div style="font-size:.76rem;color:{MUTED};margin-top:8px">
+                      {filter_tag}
+                      {col_tag}
+                      <div style="font-size:.74rem;color:{MUTED};margin-top:6px">
                         Computed from {rows_used:,} rows</div>
                     </div>""", unsafe_allow_html=True)
                 else:
@@ -1952,8 +2109,14 @@ with T[4]:
                     meta   = [c for c in ["_Location", "_Sheet"] if c in data.columns]
                     show_c = [c for c in data.columns if not c.startswith("_")][:25]
                     display = data[meta + show_c] if meta else data[show_c]
-                    st.markdown(f'<span class="badge">{len(display):,} rows</span>',
-                                unsafe_allow_html=True)
+                    fl2 = res.get("filter_label", "")
+                    fl_badge = (
+                        f'&nbsp;<span class="badge" style="background:{AMBER};color:#000">'
+                        f'{fl2}</span>' if fl2 and fl2 not in ("All records",) else ""
+                    )
+                    st.markdown(
+                        f'<span class="badge">{len(display):,} rows</span>{fl_badge}',
+                        unsafe_allow_html=True)
                     st.dataframe(display.head(500), use_container_width=True, height=340)
                     all_tables.append((res["title"], display))
 
