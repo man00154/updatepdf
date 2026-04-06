@@ -9,6 +9,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 import openpyxl
+from openai import OpenAI as _OpenAI
 
 warnings.filterwarnings("ignore")
 
@@ -1473,15 +1474,13 @@ def ask_llm_smart_query(query: str, df: pd.DataFrame) -> str:
     Returns the LLM's answer as a string.
     """
     try:
-        from openai import OpenAI
-
         base_url = os.environ.get("AI_INTEGRATIONS_OPENAI_BASE_URL", "")
         api_key = os.environ.get("AI_INTEGRATIONS_OPENAI_API_KEY", "dummy")
 
         if not base_url:
             return "**Error**: AI integration not configured. Please check environment setup."
 
-        client = OpenAI(base_url=base_url, api_key=api_key)
+        client = _OpenAI(base_url=base_url, api_key=api_key)
 
         data_context = _build_data_context(df, query, max_rows=250)
 
