@@ -1,3 +1,4 @@
+import os
 import re
 import warnings
 from pathlib import Path
@@ -1023,7 +1024,6 @@ def _full_text_search(query: str, df: pd.DataFrame) -> "pd.DataFrame":
     Only triggered when no structured filter matched.
     """
     tokens = re.findall(r'\b\w[\w\s]*?\b', query.lower())
-    # Keep tokens that are not in the non-filter word list and length > 2
     search_terms = [
         t.strip() for t in tokens
         if t.strip() and t.strip() not in _NON_FILTER_WORDS and len(t.strip()) > 2
@@ -1051,35 +1051,20 @@ def execute_clause(clause: str, df: pd.DataFrame,
                    context_df: "pd.DataFrame | None" = None) -> dict:
     """
     Execute a single query clause and return a result dict.
-
-    Key fixes in this version:
-    - Numeric operations correctly aggregate ONLY the matched/filtered rows
-    - Context propagation works correctly across AND chains
-    - Text search is only applied when there is a meaningful non-keyword term
-    - No false positives from column-concept words being used as row filters
-    - Location filter is applied BEFORE text filters for correct scoping
-    - Results always reflect the actual data — no hallucination
     """
     if df.empty:
         return {"title": "No data", "type": "error", "description": "DataFrame is empty."}
 
     q = clause.lower()
 
-    # ── Detect operation keyword (longest match first) ────────────────────
     detected_op = None
     for kw, op in sorted(_OP_KW.items(), key=lambda x: -len(x[0])):
         if re.search(r"\b" + re.escape(kw) + r"\b", q):
             detected_op = op
             break
 
-    # ── Is this a listing query? ──────────────────────────────────────────
     is_listing = any(kw in q for kw in _LIST_KW)
 
-    # ── Choose working dataset ────────────────────────────────────────────
-    # Inherit context from a previous filter clause IF:
-    #   - context exists and is non-empty
-    #   - this clause is a pure numeric operation (has detected_op)
-    #   - this clause has NO own filter keyword
     inherit_context = (
         context_df is not None
         and not context_df.empty
@@ -1089,17 +1074,13 @@ def execute_clause(clause: str, df: pd.DataFrame,
     base = context_df if inherit_context else df
     ctx_label = " [on filtered rows]" if inherit_context else ""
 
-    # ── Apply location filter ─────────────────────────────────────────────
     work = _loc_filter(clause, base)
 
-    # ── Apply structured row filters (caged / billing model / customer) ───
     filtered, matched_kws = _detect_text_filter(clause, work)
 
-    # ── Detect group-by and top-N ─────────────────────────────────────────
     grp = _detect_groupby(clause, filtered)
     top_n = _detect_top_n(clause)
 
-    # ── Detect the numeric column to operate on ───────────────────────────
     num_col = _detect_num_col(clause, filtered)
 
     loc_note = ""
@@ -1113,10 +1094,8 @@ def execute_clause(clause: str, df: pd.DataFrame,
         else ("Inherited context" if inherit_context else "All records")
     )
 
-    # ── Run numeric operation ─────────────────────────────────────────────
     if detected_op and num_col and num_col in filtered.columns:
         if detected_op in ("Top N Values", "Bottom N Values") and grp is None:
-            # Include customer name if available for context
             cust_col = find_col(filtered, r"customer.*name|client.*name")
             extra_cols = []
             if cust_col and cust_col != num_col:
@@ -1153,17 +1132,13 @@ def execute_clause(clause: str, df: pd.DataFrame,
                     "rows_used": rows_used, "filter_label": filter_label,
                     "num_col": num_col}
 
-    # ── Listing / filter result ───────────────────────────────────────────
     else:
-        # If we have matched structural keywords, return filtered rows
         if matched_kws or is_listing:
             return {"title": f"Records{loc_note} — {filter_label}",
                     "type": "table", "data": filtered,
                     "description": f"*{clause}*",
                     "filter_label": filter_label, "rows_used": rows_used}
 
-        # Try full-text search for free-text queries with no structural filter
-        # but ONLY if query has non-keyword content words
         fts = _full_text_search(clause, filtered)
         if not fts.empty:
             return {
@@ -1174,7 +1149,6 @@ def execute_clause(clause: str, df: pd.DataFrame,
                 "rows_used": len(fts)
             }
 
-        # Default: return all records in scope (with location filter applied)
         return {"title": f"Records{loc_note}", "type": "table",
                 "data": filtered, "description": f"*{clause}*",
                 "filter_label": filter_label, "rows_used": rows_used}
@@ -1192,22 +1166,11 @@ def _extract_filter_context(result: dict) -> "pd.DataFrame | None":
 def parse_and_execute(query: str, df: pd.DataFrame) -> list:
     """
     Parse compound query with AND/OR logic and execute against real data.
-
-    Context propagation rules (AND chains):
-    ─────────────────────────────────────────────────────────────────────
-    · A clause that produces a LISTING result (filter without numeric op)
-      sets the running context for subsequent numeric-only AND clauses.
-    · A clause that introduces its OWN filter keyword (caged, rated, …)
-      resets the context after executing.
-    · OR clauses always run independently without context sharing.
-
-    Results are 100% from actual data — no invented values.
     """
     if df.empty:
         return [{"title": "No data", "type": "error", "description": "DataFrame is empty."}]
 
     results = []
-    # Split on ' and ' at top level (not inside quotes)
     and_clauses = re.split(r"\s+and\s+", query.strip(), flags=re.I)
     running_context: "pd.DataFrame | None" = None
 
@@ -1219,7 +1182,6 @@ def parse_and_execute(query: str, df: pd.DataFrame) -> list:
         or_clauses = _parse_or_clauses(and_clause)
 
         if len(or_clauses) > 1:
-            # OR logic: run each independently, union the table results
             union_frames = []
             scalar_results = []
             for or_c in or_clauses:
@@ -1244,25 +1206,17 @@ def parse_and_execute(query: str, df: pd.DataFrame) -> list:
                 for or_c in or_clauses:
                     results.append(execute_clause(or_c.strip(), df))
 
-            running_context = None  # reset after OR block
+            running_context = None
 
         else:
-            # Single AND clause — execute with context propagation
             res = execute_clause(and_clause, df, context_df=running_context)
             results.append(res)
 
-            # Update running context:
-            # · Pure listing/filter result → becomes the new context
-            # · Numeric op with own filter → carry filtered df as context
-            # · Numeric op that inherited → context unchanged
             if res.get("type") == "table":
                 new_ctx = _extract_filter_context(res)
                 if new_ctx is not None:
                     running_context = new_ctx
             elif _clause_has_own_filter(and_clause):
-                # Clause had its own filter but returned scalar/grouped →
-                # we reconstruct filtered df for context from the original
-                # by re-running just the filter portion
                 filter_only = execute_clause(and_clause, df, context_df=None)
                 if filter_only.get("type") == "table":
                     new_ctx = _extract_filter_context(filter_only)
@@ -1271,6 +1225,291 @@ def parse_and_execute(query: str, df: pd.DataFrame) -> list:
 
     return results or [{"title": "No results", "type": "error",
                         "description": "Could not interpret the query."}]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SMART QUERY AI ENGINE  — uses LLM with SYSTEMPROMPT for natural language answers
+# ─────────────────────────────────────────────────────────────────────────────
+
+SYSTEM_PROMPT = """# SYSTEM PROMPT: Sify Data Centre Excel Query Engine
+
+## YOUR IDENTITY AND MISSION
+
+You are an **ultra-precise data retrieval engine** for Sify Technologies Ltd.'s Data Centre Customer & Capacity Tracker Excel files. Your ONLY job is to read the actual data from the Excel files, understand the user's natural language query semantically, and return **100% factually correct answers** drawn exclusively from the data. You must NEVER guess, assume, approximate, or hallucinate any value. If a value is not found in the data, you say "Not found in data" — you do NOT invent it.
+
+---
+
+## CRITICAL ANTI-HALLUCINATION RULES (READ BEFORE EVERY QUERY)
+
+1. **ZERO TOLERANCE FOR FABRICATION**: Every single number, name, and value in your answer MUST be traceable to a specific cell in a specific sheet in a specific file. If you cannot find it, say so.
+2. **VERIFY BEFORE ANSWERING**: After extracting data, re-read the source cells a second time to confirm accuracy before presenting results.
+3. **NO ASSUMPTIONS**: Do not assume column positions. Different files have different layouts, different header rows, different column orders. You MUST detect headers dynamically every time.
+4. **SHOW YOUR WORK**: For every answer, show: (a) which file(s) the data came from, (b) which sheet(s), (c) which rows/columns. This creates an audit trail.
+5. **WHEN IN DOUBT, SAY SO**: If a query is ambiguous, ask for clarification. If data is partial or unclear, state exactly what was found and what was missing.
+6. **NEVER ROUND UNLESS ASKED**: Return exact values as they appear in the cells.
+7. **CASE-INSENSITIVE MATCHING**: Customer names, column headers, and filter values may have inconsistent casing (e.g., "CAGED", "Caged", "caged"). Always match case-insensitively.
+8. **HANDLE MERGED CELLS AND MULTI-ROW HEADERS**: These files use merged cells and multi-row headers. Read ALL header rows to determine the correct column mapping.
+
+---
+
+## DATA SOURCE DESCRIPTION
+
+You are working with **10 Excel files** covering Sify DC locations across India. Each file may have **1 to 5+ sheets** with different data structures.
+
+### Known Locations
+- Airoli, Rabale T1 T2, Rabale Tower 4, Rabale Tower 5, Bangalore 01, Noida 01, Noida 02, Chennai, Kolkata, Vashi
+
+### Known Sheet Types
+- **Customer Details / Customer details** — Primary customer-level data
+- **Summary / NEW SUMMARY** — Facility-level power and capacity summaries
+- **Facility details** — Infrastructure specs
+- **Terminated / Disconnection details** — Churned customers
+- **Location-specific sheets** — Sub-location customer details
+
+---
+
+## DATA STRUCTURE WARNING: THESE ARE "ODD" EXCEL FILES
+
+These files have irregular structures: headers at different rows, multi-row headers, data not starting at column A, different column names across files, empty rows and gaps, summary/total rows mixed with data, inconsistent data types, and merged cells.
+
+---
+
+## QUERY PARSING AND EXECUTION
+
+### Semantic Matching Rules
+
+| User Says | Maps To |
+|---|---|
+| "caged customers" | caged_uncaged == "Caged" |
+| "uncaged customers" | caged_uncaged == "Uncaged" |
+| "rated customers" | power_subscription_model == "Rated" |
+| "subscribed customers" | power_subscription_model == "Subscribed" |
+| "metered customers" | power_usage_model == "Metered" |
+| "bundled customers" | power_usage_model == "Bundled" |
+| "capacity in use" | capacity_in_use_kw column |
+| "total power used" / "power usage" | usage_kw column |
+| "total capacity purchased" | total_capacity_purchased_kw column |
+| "customers in airoli" | location == "Airoli" |
+| "customers in noida" | location IN ("Noida 01", "Noida 02") |
+| "customers in rabale" | location IN all Rabale towers |
+| "customers in bangalore" | location == "Bangalore 01" |
+| "total revenue" | total_revenue_mrc |
+| "terminated" / "disconnected" | Terminated/Disconnection sheets |
+| "active customers" | Customer Details sheets (NOT Terminated) |
+
+### Location Matching
+- "noida" → include ALL Noida locations
+- "rabale" → include ALL Rabale towers
+- "mumbai" → Airoli + Rabale + Vashi
+
+---
+
+## OUTPUT FORMAT
+
+### For LIST queries:
+Present as a clean table. Include: # | Location | Customer Name | [relevant columns]
+End with: "Total: X customers found"
+
+### For AGGREGATE queries:
+- The aggregate value with unit
+- Breakdown by location if applicable
+- Number of records included
+
+### For COMBINED queries:
+Present each sub-result with headers:
+```
+━━━ RESULT 1: [Title] ━━━
+[table or value]
+
+━━━ RESULT 2: [Title] ━━━
+[table or value]
+```
+
+### Always Include:
+- **Data Source**: Which files and sheets the answer came from
+- **Record Count**: How many rows matched
+- **Caveats**: Any data quality issues
+
+---
+
+## REMEMBER
+**You are a DATA RETRIEVAL engine, not a DATA GENERATION engine.**
+**Every value must come from the actual Excel data provided to you. Period.**
+**If it's not in the data, it doesn't exist in your answer.**
+**An honest "I could not find this data" is infinitely better than a fabricated number.**
+"""
+
+
+def _build_data_context(df: pd.DataFrame, query: str, max_rows: int = 300) -> str:
+    """
+    Build a compact data context string from the DataFrame to pass to the LLM.
+    We send a structured summary of ALL data so the LLM can answer from real values.
+    """
+    if df.empty:
+        return "NO DATA AVAILABLE"
+
+    lines = []
+
+    # ── Schema summary ────────────────────────────────────────────────────
+    lines.append("=== DATA SCHEMA ===")
+    lines.append(f"Total records: {len(df)}")
+
+    if "_Location" in df.columns:
+        loc_counts = df["_Location"].value_counts()
+        lines.append(f"Locations: {', '.join(f'{l}({c})' for l, c in loc_counts.items())}")
+
+    if "_Sheet" in df.columns:
+        sheet_counts = df["_Sheet"].value_counts()
+        lines.append(f"Sheets: {', '.join(f'{s}({c})' for s, c in sheet_counts.items())}")
+
+    data_cols = [c for c in df.columns if not c.startswith("_")]
+    lines.append(f"Columns ({len(data_cols)}): {' | '.join(data_cols[:40])}")
+
+    # ── Numeric column summaries ──────────────────────────────────────────
+    nc = num_cols(df)
+    if nc:
+        lines.append("\n=== NUMERIC COLUMN SUMMARIES ===")
+        for col in nc[:20]:
+            s = pd.to_numeric(df[col], errors="coerce").dropna()
+            if not s.empty:
+                lines.append(
+                    f"{col}: sum={s.sum():.4g}, mean={s.mean():.4g}, "
+                    f"min={s.min():.4g}, max={s.max():.4g}, count={len(s)}"
+                )
+
+    # ── Categorical value counts ──────────────────────────────────────────
+    tc = txt_cols(df)
+    lines.append("\n=== CATEGORICAL COLUMNS ===")
+    for col in tc[:15]:
+        vc = df[col].dropna().value_counts().head(10)
+        if not vc.empty:
+            vals = ", ".join(f"{v}({c})" for v, c in vc.items())
+            lines.append(f"{col}: {vals}")
+
+    # ── Actual data rows (smart subset based on query keywords) ───────────
+    lines.append(f"\n=== DATA ROWS (sample, up to {max_rows} rows) ===")
+
+    # Try to pick most relevant rows based on query keywords
+    q_lower = query.lower()
+    relevant_df = df.copy()
+
+    # Smart row selection: filter by query keywords if possible
+    kw_filter_applied = False
+    for kw in ["caged", "uncaged", "rated", "subscribed", "bundled", "metered", "rhs", "shs"]:
+        if kw in q_lower:
+            caged_col = find_col(df, r"\bcaged\b")
+            pw_sub_col = find_col(df, r"power.*subscription.*model")
+            pw_use_col = find_col(df, r"power.*usage.*model")
+            own_col = find_col(df, r"\brhs\b|\bshs\b|ownership")
+
+            if kw in ("caged", "uncaged") and caged_col:
+                val = "CAGED" if kw == "caged" else "UNCAGED"
+                mask = df[caged_col].astype(str).str.upper().str.strip() == val
+                if mask.any():
+                    relevant_df = df[mask].copy()
+                    kw_filter_applied = True
+                    break
+            elif kw in ("rated", "subscribed") and pw_sub_col:
+                mask = df[pw_sub_col].astype(str).str.upper().str.strip().str.contains(kw.upper(), na=False)
+                if mask.any():
+                    relevant_df = df[mask].copy()
+                    kw_filter_applied = True
+                    break
+            elif kw in ("bundled", "metered") and pw_use_col:
+                mask = df[pw_use_col].astype(str).str.upper().str.strip().str.contains(kw.upper(), na=False)
+                if mask.any():
+                    relevant_df = df[mask].copy()
+                    kw_filter_applied = True
+                    break
+            elif kw in ("rhs", "shs") and own_col:
+                mask = df[own_col].astype(str).str.upper().str.strip().str.contains(kw.upper(), na=False)
+                if mask.any():
+                    relevant_df = df[mask].copy()
+                    kw_filter_applied = True
+                    break
+
+    # Location filter
+    for loc_kw in _LOCATIONS_KW:
+        if loc_kw in q_lower and "_Location" in relevant_df.columns:
+            loc_mask = relevant_df["_Location"].str.lower().str.contains(loc_kw, na=False)
+            if loc_mask.any():
+                relevant_df = relevant_df[loc_mask].copy()
+                break
+
+    sample = relevant_df.head(max_rows)
+
+    # Convert to readable text rows
+    col_order = (
+        [c for c in ["_Location", "_Sheet"] if c in sample.columns] +
+        [c for c in sample.columns if not c.startswith("_")]
+    )
+    col_order = col_order[:30]
+
+    lines.append(" | ".join(col_order))
+    lines.append("-" * min(120, len(" | ".join(col_order))))
+
+    for _, row in sample.iterrows():
+        vals = []
+        for c in col_order:
+            v = row.get(c, "")
+            if pd.isna(v) or str(v).strip() in ("", "None", "nan"):
+                vals.append("")
+            else:
+                vals.append(str(v)[:40])
+        lines.append(" | ".join(vals))
+
+    if len(relevant_df) > max_rows:
+        lines.append(f"... [{len(relevant_df) - max_rows} more rows not shown]")
+
+    if kw_filter_applied:
+        lines.append(f"\n[Note: Showing {len(relevant_df)} rows pre-filtered for query relevance out of {len(df)} total]")
+
+    return "\n".join(lines)
+
+
+def ask_llm_smart_query(query: str, df: pd.DataFrame) -> str:
+    """
+    Send the query + actual data context to the LLM with the system prompt.
+    Returns the LLM's answer as a string.
+    """
+    try:
+        from openai import OpenAI
+
+        base_url = os.environ.get("AI_INTEGRATIONS_OPENAI_BASE_URL", "")
+        api_key = os.environ.get("AI_INTEGRATIONS_OPENAI_API_KEY", "dummy")
+
+        if not base_url:
+            return "**Error**: AI integration not configured. Please check environment setup."
+
+        client = OpenAI(base_url=base_url, api_key=api_key)
+
+        data_context = _build_data_context(df, query, max_rows=250)
+
+        user_message = f"""You have been given the following actual data extracted from Sify DC Excel files.
+Use ONLY this data to answer the query. Do NOT invent or assume any values not present in the data below.
+
+---
+{data_context}
+---
+
+USER QUERY: {query}
+
+Please answer the query based strictly on the data provided above. Follow all the rules in your system prompt.
+Show your work — cite which location/sheet the data came from. If data is insufficient, say so clearly."""
+
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_message}
+            ],
+            max_tokens=4096,
+        )
+
+        return response.choices[0].message.content or "No response from AI."
+
+    except Exception as e:
+        return f"**AI Error**: {str(e)}\n\nPlease check your API configuration."
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1772,259 +2011,205 @@ with T[0]:
 
         if caged_c:
             cv = CUST[caged_c].astype(str).str.upper().str.strip()
-            cv_valid = cv[cv.isin(["CAGED", "UNCAGED"])]
-            if not cv_valid.empty:
-                pie = cv_valid.value_counts().reset_index()
-                pie.columns = ["Type", "Count"]
-                fp = px.pie(pie, names="Type", values="Count",
-                            title="Caged vs Uncaged",
-                            color_discrete_sequence=[CYAN, LBLUE], hole=0.45)
-                fp.update_layout(**_base_layout(), height=300)
-                pie_cols[0].plotly_chart(fp, use_container_width=True)
+            pie_d = cv.value_counts().reset_index()
+            pie_d.columns = ["Status", "Count"]
+            if not pie_d.empty:
+                fig_p1 = px.pie(pie_d, names="Status", values="Count",
+                                title="Caged vs Uncaged",
+                                color_discrete_sequence=[CYAN, LBLUE, GREEN, AMBER])
+                fig_p1.update_layout(**_base_layout(), height=300)
+                pie_cols[0].plotly_chart(fig_p1, use_container_width=True)
 
-        if sub_mode_c:
-            sm_vals = CUST[sub_mode_c].astype(str).str.strip()
-            sm_vals = sm_vals[sm_vals.str.len().between(1, 30) & (sm_vals != "nan")]
-            if not sm_vals.empty:
-                sm_d = sm_vals.value_counts().reset_index()
-                sm_d.columns = ["Mode", "Count"]
-                fsm = px.pie(sm_d, names="Mode", values="Count",
-                             title="Subscription Mode",
-                             color_discrete_sequence=px.colors.qualitative.Bold, hole=0.45)
-                fsm.update_layout(**_base_layout(), height=300)
-                pie_cols[1].plotly_chart(fsm, use_container_width=True)
+        if pw_sub_c:
+            pie_d2 = CUST[pw_sub_c].dropna().value_counts().reset_index()
+            pie_d2.columns = ["Model", "Count"]
+            if not pie_d2.empty:
+                fig_p2 = px.pie(pie_d2, names="Model", values="Count",
+                                title="Power Subscription Model",
+                                color_discrete_sequence=[LBLUE, GREEN, AMBER, RED])
+                fig_p2.update_layout(**_base_layout(), height=300)
+                pie_cols[1].plotly_chart(fig_p2, use_container_width=True)
 
-        if own_c:
-            ov = CUST[own_c].astype(str).str.upper().str.strip()
-            ov = ov[ov.str.len().between(1, 20) & (ov != "NAN")]
-            if not ov.empty:
-                own_d = ov.value_counts().reset_index()
-                own_d.columns = ["Type", "Count"]
-                fo = px.pie(own_d, names="Type", values="Count",
-                            title="RHS / SHS Split",
-                            color_discrete_sequence=[GREEN, AMBER], hole=0.45)
-                fo.update_layout(**_base_layout(), height=300)
-                pie_cols[2].plotly_chart(fo, use_container_width=True)
+        if pw_use_m_c:
+            pie_d3 = CUST[pw_use_m_c].dropna().value_counts().reset_index()
+            pie_d3.columns = ["Model", "Count"]
+            if not pie_d3.empty:
+                fig_p3 = px.pie(pie_d3, names="Model", values="Count",
+                                title="Power Usage Model",
+                                color_discrete_sequence=[GREEN, AMBER, CYAN, RED])
+                fig_p3.update_layout(**_base_layout(), height=300)
+                pie_cols[2].plotly_chart(fig_p3, use_container_width=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 1 – DATA EXPLORER
 # ══════════════════════════════════════════════════════════════════════════════
 with T[1]:
-    st.markdown('<div class="section-title">Data Explorer — All Locations &amp; Sheets</div>',
-                unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Data Explorer</div>', unsafe_allow_html=True)
 
-    de_loc = st.selectbox("Location", ["All"] + sorted(fdata.keys()), key="de_loc")
-    if de_loc == "All":
-        view = COMB.copy()
+    if CUST.empty:
+        st.warning("No data loaded.")
     else:
-        sh_map = fdata.get(de_loc, {})
-        de_sh  = st.selectbox("Sheet", list(sh_map.keys()), key="de_sh")
-        view   = sh_map.get(de_sh, pd.DataFrame()).copy()
-        if "_Location" not in view.columns:
-            view.insert(0, "_Location", de_loc)
-
-    if not view.empty:
-        disp_cols = [c for c in view.columns if not c.startswith("_")]
-        sc1, sc2 = st.columns([1, 2])
-        with sc1:
-            search_col = st.selectbox("Search in column",
-                                      ["Any column"] + disp_cols, key="de_sc")
-        with sc2:
-            search_val = st.text_input("Search value",
-                                       placeholder="Type to filter…", key="de_sv")
-        vw = view.copy()
-        if search_val.strip():
-            sv = search_val.strip().lower()
-            if search_col == "Any column":
-                mask = vw.apply(
-                    lambda r: r.astype(str).str.lower().str.contains(sv, na=False).any(),
-                    axis=1)
+        de1, de2, de3 = st.columns(3)
+        with de1:
+            de_loc = st.selectbox("📍 Location", ["All"] + sorted(fdata.keys()), key="de_loc")
+        with de2:
+            if de_loc != "All":
+                sheet_opts = sorted(fdata.get(de_loc, {}).keys())
             else:
-                mask = vw[search_col].astype(str).str.lower().str.contains(sv, na=False)
-            vw = vw[mask]
+                sheet_opts = sorted({sn for sheets in fdata.values() for sn in sheets})
+            de_sh = st.selectbox("📋 Sheet", ["All"] + sheet_opts, key="de_sh")
+        with de3:
+            de_search = st.text_input("🔍 Search (any column)", key="de_search", placeholder="type to filter…")
 
-        show_c = st.multiselect("Columns to display", disp_cols,
-                                default=disp_cols[:min(14, len(disp_cols))],
-                                key="de_cols")
-        out = vw[[c for c in show_c if c in vw.columns]] if show_c else vw[disp_cols]
+        view_df = CUST.copy()
+        if de_loc != "All" and "_Location" in view_df.columns:
+            view_df = view_df[view_df["_Location"] == de_loc]
+        if de_sh != "All" and "_Sheet" in view_df.columns:
+            view_df = view_df[view_df["_Sheet"] == de_sh]
+        if de_search.strip():
+            mask = view_df.apply(
+                lambda r: r.astype(str).str.lower().str.contains(
+                    de_search.lower(), na=False).any(), axis=1)
+            view_df = view_df[mask]
 
-        st.markdown(f'<span class="badge">{len(out):,} rows</span>', unsafe_allow_html=True)
-        st.dataframe(out.head(500), use_container_width=True, height=420)
-        st.download_button("⬇ Download CSV",
-                           out.to_csv(index=False).encode(), "sify_data.csv", "text/csv")
+        st.markdown(
+            f'<span class="badge">{len(view_df):,} rows</span> '
+            f'<span class="badge" style="background:{DARK2}">{len(view_df.columns)} cols</span>',
+            unsafe_allow_html=True)
+        st.dataframe(view_df.head(1000), use_container_width=True, height=480)
 
-        with st.expander("📊 Column Statistics"):
-            nc2 = num_cols(vw)
-            if nc2:
-                st.dataframe(vw[nc2].describe().round(3).T, use_container_width=True)
-    else:
-        st.info("No data for selected filters.")
+        dl_cols = st.columns(3)
+        dl_cols[0].download_button(
+            "⬇ Download CSV", view_df.to_csv(index=False).encode(),
+            "sify_data.csv", "text/csv")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 2 – OPERATIONS
 # ══════════════════════════════════════════════════════════════════════════════
 with T[2]:
-    st.markdown('<div class="section-title">Aggregate Operations Engine</div>',
-                unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Operations Engine</div>', unsafe_allow_html=True)
 
-    op_src = st.selectbox("Data source",
-                          ["All Locations"] + sorted(fdata.keys()), key="op_src")
-    if op_src == "All Locations":
-        op_df = CUST.copy()
+    if CUST.empty:
+        st.warning("No data loaded.")
     else:
-        op_sh_map = fdata.get(op_src, {})
-        op_sh = st.selectbox("Sheet", list(op_sh_map.keys()), key="op_sh")
-        op_df = op_sh_map.get(op_sh, pd.DataFrame()).copy()
+        op1, op2, op3, op4 = st.columns(4)
+        with op1:
+            op_loc = st.selectbox("📍 Location", ["All"] + sorted(fdata.keys()), key="op_loc")
+        with op2:
+            op_sh_opts = (sorted(fdata.get(op_loc, {}).keys())
+                          if op_loc != "All" else sorted({sn for s in fdata.values() for sn in s}))
+            op_sh = st.selectbox("📋 Sheet", ["All"] + op_sh_opts, key="op_sh")
 
-    if not op_df.empty:
+        op_df = CUST.copy()
+        if op_loc != "All" and "_Location" in op_df.columns:
+            op_df = op_df[op_df["_Location"] == op_loc]
+        if op_sh != "All" and "_Sheet" in op_df.columns:
+            op_df = op_df[op_df["_Sheet"] == op_sh]
+
         nc_op = num_cols(op_df)
         tc_op = txt_cols(op_df)
 
-        oc1, oc2, oc3 = st.columns(3)
-        with oc1:
-            op_col = st.selectbox("📐 Numeric Column",
-                                  nc_op if nc_op else ["(none)"], key="op_col")
-        with oc2:
+        with op3:
+            op_col = st.selectbox("📐 Column", nc_op if nc_op else ["—"], key="op_col")
+        with op4:
             op_op = st.selectbox("🔧 Operation", OPERATIONS, key="op_op")
-        with oc3:
-            op_grp = st.selectbox("📦 Group By (optional)",
-                                  ["(none)"] + tc_op + ["_Location", "_Sheet"], key="op_grp")
 
-        op_n = 10
-        if op_op in ("Top N Values", "Bottom N Values"):
-            op_n = st.slider("N", 5, 50, 10, key="op_n")
+        op5, op6 = st.columns(2)
+        with op5:
+            op_grp = st.selectbox("🗂 Group By (optional)",
+                                  ["None"] + [c for c in tc_op if not c.startswith("_")],
+                                  key="op_grp")
+        with op6:
+            op_n = st.number_input("N (Top/Bottom N)", min_value=1, max_value=100,
+                                   value=10, step=1, key="op_n")
 
-        fc1, fc2 = st.columns(2)
-        with fc1:
-            op_fc = st.selectbox("🔎 Pre-filter Column (optional)",
-                                 ["(none)"] + tc_op, key="op_fc")
-        with fc2:
-            op_fv = ""
-            if op_fc != "(none)":
-                op_fv = st.text_input("Filter value (exact match or partial)", key="op_fv")
-
-        if st.button("▶ Run Operation", key="op_run") and nc_op:
-            wdf = op_df.copy()
-            if op_fc != "(none)" and op_fv.strip():
-                wdf = wdf[wdf[op_fc].astype(str).str.lower()
-                          .str.contains(op_fv.strip().lower(), na=False)]
-            grp = None if op_grp == "(none)" else op_grp
-            res, desc = run_op(wdf, op_col, op_op, grp, op_n)
-
-            st.markdown(
-                f'<div class="result-box"><b style="color:{MUTED}">{desc}</b>',
-                unsafe_allow_html=True)
+        if st.button("▶ Run Operation", key="op_run") and op_col and op_col != "—":
+            grp = op_grp if op_grp != "None" else None
+            res, desc = run_op(op_df, op_col, op_op, grp, int(op_n))
+            st.markdown(f'<div class="section-title">{desc}</div>', unsafe_allow_html=True)
             if isinstance(res, pd.DataFrame):
-                st.dataframe(res.head(100), use_container_width=True)
-                st.download_button("⬇ Download", res.to_csv(index=False).encode(),
-                                   "op_result.csv", "text/csv")
-            elif res is not None:
-                st.markdown(f'<div class="result-big">{fmt(res)}</div>',
-                            unsafe_allow_html=True)
-                st.markdown(f'<div style="color:{MUTED};font-size:.8rem">Computed from '
-                            f'{len(wdf):,} rows</div>', unsafe_allow_html=True)
+                st.dataframe(res, use_container_width=True)
+                if grp:
+                    fig_op = px.bar(res.head(30), x=grp, y=op_col, color=op_col,
+                                    color_continuous_scale="Blues", title=desc)
+                    fig_op.update_layout(**_base_layout(), height=350)
+                    st.plotly_chart(fig_op, use_container_width=True)
+            elif isinstance(res, (int, float)):
+                st.markdown(f"""
+                <div style="background:{DARK2};border:1px solid {BORD};border-radius:14px;
+                     padding:28px;text-align:center;margin:12px 0">
+                  <div style="font-size:.8rem;color:{MUTED};text-transform:uppercase;
+                       font-weight:700;letter-spacing:.08em">{desc}</div>
+                  <div class="result-big">{fmt(res)}</div>
+                </div>""", unsafe_allow_html=True)
             else:
-                st.warning("No result. Check column and filter.")
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            if isinstance(res, pd.DataFrame) and grp and len(res) > 1:
-                fig_op = px.bar(res.head(30), x=grp, y=op_col,
-                                color=op_col, color_continuous_scale="Blues", title=desc)
-                fig_op.update_layout(**_base_layout(), height=380)
-                st.plotly_chart(fig_op, use_container_width=True)
-    else:
-        st.info("No data for selected source.")
+                st.info(str(res))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3 – CHARTS
 # ══════════════════════════════════════════════════════════════════════════════
 with T[3]:
-    st.markdown('<div class="section-title">Chart Studio — All 15 Chart Types</div>',
-                unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Chart Studio</div>', unsafe_allow_html=True)
 
-    ch_src = st.selectbox("Data source",
-                          ["All Locations"] + sorted(fdata.keys()), key="ch_src")
-    if ch_src == "All Locations":
-        ch_df = CUST.copy()
+    if CUST.empty:
+        st.warning("No data loaded.")
     else:
-        ch_sh_map = fdata.get(ch_src, {})
-        ch_sh = st.selectbox("Sheet", list(ch_sh_map.keys()), key="ch_sh")
-        ch_df = ch_sh_map.get(ch_sh, pd.DataFrame()).copy()
-        if "_Location" not in ch_df.columns:
-            ch_df.insert(0, "_Location", ch_src)
+        ch1, ch2, ch3 = st.columns(3)
+        with ch1:
+            ch_loc = st.selectbox("📍 Location", ["All"] + sorted(fdata.keys()), key="ch_loc")
+        with ch2:
+            ch_sh_opts = (sorted(fdata.get(ch_loc, {}).keys())
+                          if ch_loc != "All" else sorted({sn for s in fdata.values() for sn in s}))
+            ch_sh = st.selectbox("📋 Sheet", ["All"] + ch_sh_opts, key="ch_sh")
+        with ch3:
+            ch_type = st.selectbox("📊 Chart Type", CHART_TYPES, key="ch_type")
 
-    if not ch_df.empty:
+        st.caption(CHART_DESC.get(ch_type, ""))
+
+        ch_df = CUST.copy()
+        if ch_loc != "All" and "_Location" in ch_df.columns:
+            ch_df = ch_df[ch_df["_Location"] == ch_loc]
+        if ch_sh != "All" and "_Sheet" in ch_df.columns:
+            ch_df = ch_df[ch_df["_Sheet"] == ch_sh]
+
         nc_ch = num_cols(ch_df)
         tc_ch = txt_cols(ch_df)
 
-        c1, c2 = st.columns([2, 1])
-        with c1:
-            sel_ct = st.selectbox("📊 Chart Type", CHART_TYPES, key="ch_ct")
-        with c2:
-            st.markdown(f"""
-            <div style="background:{DARK2};border:1px solid {BORD};border-radius:8px;
-                 padding:10px 14px;font-size:.8rem;color:{MUTED};margin-top:4px">
-            {CHART_DESC.get(sel_ct, "")}
-            </div>""", unsafe_allow_html=True)
+        needs = CHART_NEEDS.get(ch_type, set())
+        ca, cb, cc, cd = st.columns(4)
+        x_val = ca.selectbox("X-axis / Category",
+                              ["—"] + tc_ch + nc_ch, key="ch_x") if "x_cat" in needs or "x_num" in needs else None
+        y_val = cb.selectbox("Y-axis / Value",
+                              ["—"] + nc_ch, key="ch_y") if "y_num" in needs else None
+        col_val = cc.selectbox("Color",
+                               ["—"] + tc_ch + nc_ch, key="ch_col") if "color" in needs else None
+        sz_val = cd.selectbox("Size",
+                              ["—"] + nc_ch, key="ch_sz") if "size" in needs else None
+        z_val = ca.selectbox("Z-axis",
+                             ["—"] + nc_ch, key="ch_z") if "z_num" in needs else None
 
-        needs = CHART_NEEDS.get(sel_ct, set())
-        ax1, ax2, ax3, ax4 = st.columns(4)
-
-        x_v = color_v = size_v = z_v = None
-        y_v = nc_ch[0] if nc_ch else None
-
-        if "x_cat" in needs and tc_ch:
-            with ax1:
-                xs = st.selectbox("X Axis (category)", ["(auto)"] + tc_ch, key="ch_xc")
-                x_v = None if xs == "(auto)" else xs
-        if "x_num" in needs and nc_ch:
-            with ax1:
-                xs = st.selectbox("X Axis (numeric)", ["(auto)"] + nc_ch, key="ch_xn")
-                x_v = None if xs == "(auto)" else xs
-        if "y_num" in needs and nc_ch:
-            with ax2:
-                ys = st.selectbox("Y Axis (numeric)", ["(auto)"] + nc_ch, key="ch_yn")
-                y_v = None if ys == "(auto)" else ys
-        if "color" in needs:
-            with ax3:
-                cs = st.selectbox("Color by", ["(auto)"] + tc_ch + nc_ch, key="ch_cl")
-                color_v = None if cs == "(auto)" else cs
-        if "size" in needs and nc_ch:
-            with ax4:
-                ss = st.selectbox("Bubble Size", ["(auto)"] + nc_ch, key="ch_sz")
-                size_v = None if ss == "(auto)" else ss
-        if "z_num" in needs and nc_ch:
-            with ax4:
-                zs = st.selectbox("Z Axis", ["(auto)"] + nc_ch, key="ch_z")
-                z_v = None if zs == "(auto)" else zs
-
-        if st.button("🎨 Generate Chart", key="ch_gen"):
-            fig = make_chart(sel_ct, ch_df, x_v, y_v, color_v, size_v, z_v,
-                             title=f"{sel_ct} – {ch_src}")
-        else:
-            fig = make_chart(sel_ct, ch_df.head(200), title=f"{sel_ct} – Preview")
-        st.plotly_chart(fig, use_container_width=True)
-
-        with st.expander("📚 Quick Gallery — All 15 Chart Types"):
-            g_cols = st.columns(3)
-            for i, ct in enumerate(CHART_TYPES):
-                with g_cols[i % 3]:
-                    st.markdown(f"**{ct}**")
-                    fig_sm = make_chart(ct, ch_df.head(80), title="")
-                    fig_sm.update_layout(height=220, margin=dict(l=8, r=8, t=10, b=8))
-                    st.plotly_chart(fig_sm, use_container_width=True)
-    else:
-        st.info("No data for selected source.")
+        if st.button("🎨 Generate Chart", key="ch_run"):
+            kw = dict(
+                x=x_val if x_val and x_val != "—" else None,
+                y=y_val if y_val and y_val != "—" else None,
+                color=col_val if col_val and col_val != "—" else None,
+                size=sz_val if sz_val and sz_val != "—" else None,
+                z=z_val if z_val and z_val != "—" else None,
+                title=f"{ch_type} — {ch_loc} / {ch_sh}",
+            )
+            fig = make_chart(ch_type, ch_df, **kw)
+            fig.update_layout(height=500)
+            st.plotly_chart(fig, use_container_width=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 4 – SMART QUERY  (fully corrected)
+# TAB 4 – SMART QUERY  (AI-powered with SYSTEMPROMPT)
 # ══════════════════════════════════════════════════════════════════════════════
 with T[4]:
-    st.markdown('<div class="section-title">🧠 Smart Query — Compound AND/OR Query Engine</div>',
+    st.markdown('<div class="section-title">🧠 Smart Query — AI-Powered Natural Language Query Engine</div>',
                 unsafe_allow_html=True)
 
     # ── Data source selector for Smart Query ─────────────────────────────
@@ -2046,27 +2231,27 @@ with T[4]:
     st.markdown(f"""
     <div style="background:{DARK2};border:1px solid {BORD};border-radius:10px;
          padding:16px 20px;margin-bottom:16px;font-size:.86rem;color:{MUTED}">
-    <b style="color:{TEXT}">Compound AND/OR queries with context propagation — examples:</b><br><br>
-    &nbsp;• <code>list all caged customers</code><br>
-    &nbsp;• <code>list all caged customers and sum of capacity in use and total power used</code><br>
-    &nbsp;• <code>list all caged customers and sum capacity in use and total power used and list rated customers</code><br>
-    &nbsp;• <code>list rated customers and sum capacity in use and count customers by location</code><br>
-    &nbsp;• <code>list bundled customers and total revenue</code><br>
-    &nbsp;• <code>show rhs customers and sum capacity purchased</code><br>
-    &nbsp;• <code>show uncaged customers in noida</code><br>
-    &nbsp;• <code>count caged customers by location</code><br>
-    &nbsp;• <code>total revenue bangalore and average capacity in use noida</code><br>
-    &nbsp;• <code>show customers in airoli or noida</code><br>
-    &nbsp;• <code>list caged customers in airoli and sum capacity in use and total revenue</code><br>
-    &nbsp;• <code>how many caged customers and how many uncaged customers</code>
+    <b style="color:{TEXT}">AI-powered query engine — answers questions from actual Excel data. Examples:</b><br><br>
+    &nbsp;• <code>List all caged customers</code><br>
+    &nbsp;• <code>What is the total capacity purchased across all locations?</code><br>
+    &nbsp;• <code>Show me all rated customers and their capacity in use</code><br>
+    &nbsp;• <code>How many caged vs uncaged customers are in Airoli?</code><br>
+    &nbsp;• <code>List all customers in Noida and show their total revenue</code><br>
+    &nbsp;• <code>Which customer has the highest capacity purchased in Bangalore?</code><br>
+    &nbsp;• <code>Show bundled customers in Rabale and sum their power usage</code><br>
+    &nbsp;• <code>How many customers have contracts expiring soon?</code><br>
+    &nbsp;• <code>List all RHS customers and their MRC revenue</code><br>
+    &nbsp;• <code>What is the total revenue for Kolkata?</code>
     </div>""", unsafe_allow_html=True)
 
-    query = st.text_input(
+    query = st.text_area(
         "🔍 Enter your query",
-        placeholder="e.g. list all caged customers and total sum of capacity purchased",
-        key="sq_q")
+        placeholder="e.g. List all caged customers and show total capacity in use per location",
+        key="sq_q",
+        height=80,
+    )
 
-    # Optional location restriction on top of data source
+    # Optional location restriction
     sq_locs = st.multiselect(
         "📍 Further restrict to locations (optional — leave empty for all)",
         options=sorted(fdata.keys()),
@@ -2088,7 +2273,11 @@ with T[4]:
 
     col_run, col_clear = st.columns([1, 5])
     with col_run:
-        run_clicked = st.button("🚀 Run Query", key="sq_run")
+        run_clicked = st.button("🚀 Ask AI", key="sq_run")
+
+    # ── Chat history ──────────────────────────────────────────────────────
+    if "sq_chat_history" not in st.session_state:
+        st.session_state["sq_chat_history"] = []
 
     if run_clicked and query.strip():
         if pool_base.empty:
@@ -2103,111 +2292,65 @@ with T[4]:
                     st.warning(f"No data for selected locations: {sq_locs}")
                     st.stop()
 
-            results = parse_and_execute(query.strip(), pool)
+            with st.spinner("🤖 AI is analyzing the data and generating your answer…"):
+                ai_answer = ask_llm_smart_query(query.strip(), pool)
 
-            st.markdown(
-                f'<div style="background:{DARK2};border:1px solid {BORD};border-radius:8px;'
-                f'padding:10px 16px;margin-bottom:14px;font-size:.85rem;color:{MUTED}">'
-                f'Query parsed into <b style="color:{CYAN}">{len(results)}</b> result block(s) · '
-                f'Data from <b style="color:{CYAN}">{len(pool):,}</b> records</div>',
-                unsafe_allow_html=True)
+            # Add to chat history
+            st.session_state["sq_chat_history"].append({
+                "query": query.strip(),
+                "answer": ai_answer,
+                "source": sq_src,
+                "records": len(pool),
+            })
 
-            all_tables = []
+    # ── Display chat history ──────────────────────────────────────────────
+    if st.session_state["sq_chat_history"]:
+        st.markdown(f'<div class="section-title">Query Results</div>', unsafe_allow_html=True)
 
-            for i, res in enumerate(results):
-                st.markdown(f'<div class="section-title">{i+1}. {res["title"]}</div>',
-                            unsafe_allow_html=True)
-                st.caption(res.get("description", ""))
-                rtype = res.get("type", "error")
+        for i, item in enumerate(reversed(st.session_state["sq_chat_history"])):
+            idx = len(st.session_state["sq_chat_history"]) - i
 
-                if rtype == "scalar":
-                    val = res["data"]
-                    rows_used = res.get("rows_used", "?")
-                    fl = res.get("filter_label", "")
-                    nc_used = res.get("num_col", "")
-                    if isinstance(val, (int, float)):
-                        filter_tag = (
-                            f'<div style="font-size:.74rem;color:{AMBER};margin-top:4px;'
-                            f'font-weight:600">{fl}</div>' if fl else ""
-                        )
-                        col_tag = (
-                            f'<div style="font-size:.72rem;color:{MUTED};margin-top:2px">'
-                            f'Column: {nc_used[:60]}</div>' if nc_used else ""
-                        )
-                        st.markdown(f"""
-                        <div style="background:{DARK2};border:1px solid {BORD};
-                             border-radius:14px;padding:24px 32px;text-align:center;margin:8px 0 18px">
-                          <div style="font-size:.82rem;color:{MUTED};text-transform:uppercase;
-                               font-weight:700;letter-spacing:.06em">{res['title']}</div>
-                          <div class="result-big">{fmt(val)}</div>
-                          {filter_tag}
-                          {col_tag}
-                          <div style="font-size:.74rem;color:{MUTED};margin-top:6px">
-                            Computed from {rows_used:,} rows</div>
-                        </div>""", unsafe_allow_html=True)
-                    else:
-                        st.info(f"Result: {val}")
+            # User query bubble
+            st.markdown(f"""
+            <div style="background:{DARK2};border:1px solid {BORD};border-radius:12px;
+                 padding:14px 18px;margin:10px 0 4px;display:flex;align-items:flex-start;gap:12px">
+              <div style="font-size:1.1rem;min-width:28px">❓</div>
+              <div>
+                <div style="font-size:.72rem;color:{MUTED};font-weight:700;
+                     text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">
+                  Query {idx} · {item['source']} · {item['records']:,} records</div>
+                <div style="font-size:.95rem;color:{WHITE};font-weight:600">{item['query']}</div>
+              </div>
+            </div>""", unsafe_allow_html=True)
 
-                elif rtype in ("table", "grouped"):
-                    data = res.get("data", pd.DataFrame())
-                    if isinstance(data, pd.DataFrame) and not data.empty:
-                        meta   = [c for c in ["_Location", "_Sheet"] if c in data.columns]
-                        show_c = [c for c in data.columns if not c.startswith("_")][:25]
-                        display = data[meta + show_c] if meta else data[show_c]
-                        fl2 = res.get("filter_label", "")
-                        fl_badge = (
-                            f'&nbsp;<span class="badge" style="background:{AMBER};color:#000">'
-                            f'{fl2}</span>' if fl2 and fl2 not in ("All records",) else ""
-                        )
-                        st.markdown(
-                            f'<span class="badge">{len(display):,} rows</span>{fl_badge}',
-                            unsafe_allow_html=True)
-                        st.dataframe(display.head(500), use_container_width=True, height=340)
-                        all_tables.append((res["title"], display))
+            # AI answer bubble
+            st.markdown(f"""
+            <div style="background:linear-gradient(135deg,{DARK1} 0%,{DARK2} 100%);
+                 border:1px solid {CYAN}33;border-radius:12px;
+                 padding:18px 22px;margin:4px 0 16px">
+              <div style="font-size:.72rem;color:{CYAN};font-weight:700;
+                   text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">
+                🤖 AI Analysis</div>
+              <div style="font-size:.93rem;color:{TEXT};line-height:1.7;white-space:pre-wrap">{item['answer']}</div>
+            </div>""", unsafe_allow_html=True)
 
-                        if rtype == "grouped":
-                            xc = res.get("x_col", "")
-                            yc = res.get("y_col", "")
-                            if xc and yc and xc in data.columns and yc in data.columns:
-                                fig_g = px.bar(data.head(30), x=xc, y=yc,
-                                               color=yc, color_continuous_scale="Blues",
-                                               title=res["title"])
-                                fig_g.update_layout(**_base_layout(), height=350)
-                                st.plotly_chart(fig_g, use_container_width=True)
+            st.markdown(f"<hr style='border-color:{BORD};margin:6px 0 14px'>",
+                        unsafe_allow_html=True)
 
-                        if "_Location" in data.columns and data["_Location"].nunique() > 1:
-                            lb = data["_Location"].value_counts().reset_index()
-                            lb.columns = ["Location", "Rows"]
-                            fig_lb = px.bar(lb, x="Location", y="Rows",
-                                            color="Rows", color_continuous_scale="Blues",
-                                            title="Row count by Location")
-                            fig_lb.update_layout(**_base_layout(), height=300)
-                            st.plotly_chart(fig_lb, use_container_width=True)
-
-                        nc_res = num_cols(data)
-                        if nc_res:
-                            fig_h = px.histogram(data.dropna(subset=[nc_res[0]]),
-                                                 x=nc_res[0], nbins=25,
-                                                 title=f"Distribution — {nc_res[0]}",
-                                                 color_discrete_sequence=[LBLUE])
-                            fig_h.update_layout(**_base_layout(), height=280)
-                            st.plotly_chart(fig_h, use_container_width=True)
-                    else:
-                        st.warning("No matching rows for this clause.")
-
-                else:
-                    st.error(res.get("description", "Query error."))
-
-                st.markdown(f"<hr style='border-color:{BORD};margin:10px 0 20px'>",
-                            unsafe_allow_html=True)
-
-            if all_tables:
-                combined_out = pd.concat(
-                    [df.assign(_ResultBlock=title) for title, df in all_tables],
-                    ignore_index=True, sort=False)
-                st.download_button("⬇ Download All Results (CSV)",
-                                   combined_out.to_csv(index=False).encode(),
-                                   "smart_query_results.csv", "text/csv")
+        # Clear history button
+        if st.button("🗑 Clear Query History", key="sq_clear"):
+            st.session_state["sq_chat_history"] = []
+            st.rerun()
+    else:
+        st.markdown(f"""
+        <div style="background:{DARK2};border:1px dashed {BORD};border-radius:12px;
+             padding:32px;text-align:center;color:{MUTED};margin-top:16px">
+          <div style="font-size:2rem;margin-bottom:8px">🤖</div>
+          <div style="font-size:.95rem">Enter a query above and click <b style="color:{CYAN}">Ask AI</b>
+          to get answers directly from your Excel data.</div>
+          <div style="font-size:.8rem;margin-top:8px;color:{MUTED}">
+          The AI reads the actual data from all 10 Excel files and gives you precise, sourced answers.</div>
+        </div>""", unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2271,4 +2414,4 @@ with T[5]:
                                xl_agg.to_csv(index=False).encode(),
                                "cross_location.csv", "text/csv")
         else:
-            st.info("No data available for this metric across selected locations.")
+            st.info("No numeric data available for selected metric and locations.")
