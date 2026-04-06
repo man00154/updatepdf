@@ -1231,19 +1231,155 @@ def parse_and_execute(query: str, df: pd.DataFrame) -> list:
 # SMART QUERY AI ENGINE  — structured AI parse → real data execution → table/metric display
 # ─────────────────────────────────────────────────────────────────────────────
 
-_AI_PARSER_PROMPT = """You are a Sify DC data query parser. Convert natural language queries into a JSON array of structured operations.
+# ── Exact semantic column registry (derived from actual Sify DC Excel files) ─
+# Maps: semantic_key → (regex_pattern_against_column_name, priority)
+_SEMANTIC_COLS: dict = {
+    "total_power":              (r"Power Capacity.*Total Capacity Purchased",          1),
+    "power_in_use":             (r"Power Capacity.*Capacity in Use|Power Capacity.*Usage in KW", 1),
+    "power_allocated":          (r"Power Capacity.*Allocated.*Capacity",               1),
+    "power_reserved":           (r"Power Capacity.*Reserved Capacity",                 1),
+    "power_additional_mrc":     (r"Power Capacity.*Additional Capacity Charges",       1),
+    "power_subscribed_given":   (r"Power Capacity.*Subscribed Capacity to be given",   1),
+    "space_subscription":       (r"^Space \| Subscription$",                           1),
+    "space_in_use":             (r"^Space \| In Use$",                                 1),
+    "space_billed":             (r"^Space \| Billed$",                                 1),
+    "space_reserved":           (r"Space.*Reserved Capacity",                          1),
+    "total_revenue":            (r"Revenue.*Total Revenue",                            1),
+    "revenue_space":            (r"Revenue.*Space revenue",                            1),
+    "revenue_power":            (r"Revenue.*Power Usage revenue",                      1),
+    "revenue_additional":       (r"Revenue.*Additional Capacity Revenue",              1),
+    "revenue_seating":          (r"Revenue.*Seating Space",                            1),
+    "revenue_other":            (r"Revenue.*Any Other Items",                          1),
+    "net_rev_total":            (r"Contract Information.*Net Rev Total",               2),
+    "rev_cap_power":            (r"Contract Information.*Total Rev.*Cap.*Power",       2),
+    "seating_subscription":     (r"^Seating Space \| Subscription$",                  1),
+    "seating_in_use":           (r"^Seating Space \| In Use$",                        1),
+    "per_unit_rate":            (r"Per Unit rate|per.*unit.*rate",                     1),
+}
 
-RULES:
-- Return ONLY a valid JSON array. No markdown, no prose, no explanation — just raw JSON.
-- Apply context propagation: if a filter clause ("list caged customers") is followed by an aggregate clause ("and sum capacity in use"), the aggregate inherits that same filter unless overridden.
-- For compound "and" queries, split into separate operations in order.
-- For "or" location queries (e.g. "in airoli or noida"), set location to both in a single operation.
+# Maps field_hint keywords → semantic_key (in priority order)
+_HINT_SEMANTIC: list = [
+    # Power / Capacity
+    # ── Power / capacity ─────────────────────────────────────────────────────
+    ("total capacity purchased",    "total_power"),
+    ("total power",                 "total_power"),
+    ("sum of power",                "total_power"),
+    ("sum power",                   "total_power"),
+    ("power sum",                   "total_power"),
+    ("total kw purchased",          "total_power"),
+    ("power capacity",              "total_power"),
+    ("capacity purchased",          "total_power"),
+    ("sum of capacity",             "total_power"),
+    ("sum capacity",                "total_power"),
+    ("total capacity purchased",    "total_power"),
+    ("total capacity",              "total_power"),
+    ("power total",                 "total_power"),
+    ("power kw",                    "total_power"),
+    ("total kw",                    "total_power"),
+    ("subscribed kw",               "total_power"),
+    ("allocated kw",                "power_allocated"),
+    # ── Power in use ──────────────────────────────────────────────────────────
+    ("power in use",                "power_in_use"),
+    ("capacity in use",             "power_in_use"),
+    ("sum of power in use",         "power_in_use"),
+    ("power used",                  "power_in_use"),
+    ("power usage",                 "power_in_use"),
+    ("usage in kw",                 "power_in_use"),
+    ("kw in use",                   "power_in_use"),
+    ("power reserved",              "power_reserved"),
+    # Space
+    ("total space used",            "space_in_use"),
+    ("space used",                  "space_in_use"),
+    ("space in use",                "space_in_use"),
+    ("total space",                 "space_subscription"),
+    ("space subscription",          "space_subscription"),
+    ("space subscribed",            "space_subscription"),
+    ("space purchased",             "space_subscription"),
+    ("space billed",                "space_billed"),
+    # ── Revenue ──────────────────────────────────────────────────────────────
+    ("total revenue",               "total_revenue"),
+    ("revenue total",               "total_revenue"),
+    ("total mrc",                   "total_revenue"),
+    ("total monthly revenue",       "total_revenue"),
+    ("sum of revenue",              "total_revenue"),
+    ("mrc",                         "total_revenue"),
+    ("revenue including capacity",  "revenue_space"),
+    ("space revenue",               "revenue_space"),
+    ("revenue from space",          "revenue_space"),
+    ("power usage revenue",         "revenue_power"),
+    ("power revenue",               "revenue_power"),
+    ("revenue from power",          "revenue_power"),
+    ("seating revenue",             "revenue_seating"),
+    ("additional capacity revenue", "revenue_additional"),
+    ("other revenue",               "revenue_other"),
+    ("net revenue",                 "net_rev_total"),
+    # Seating
+    ("seating subscription",        "seating_subscription"),
+    ("seating in use",              "seating_in_use"),
+    ("seating space",               "seating_subscription"),
+    # Rate
+    ("per unit rate",               "per_unit_rate"),
+    ("unit rate",                   "per_unit_rate"),
+]
 
-Each operation object:
+
+def _resolve_col_by_semantic(df: pd.DataFrame, field_hint: str) -> "tuple[str|None, str]":
+    """
+    Return (column_name, reason_string) for the best column matching field_hint.
+    Uses semantic registry first, then fuzzy word matching.
+    'reason' explains which pattern matched, for display in UI.
+    """
+    hint_lower = (field_hint or "").lower().strip()
+    nc = num_cols(df)
+
+    # 1. Semantic key lookup
+    for kw, sem_key in _HINT_SEMANTIC:
+        if kw in hint_lower:
+            pattern, _ = _SEMANTIC_COLS[sem_key]
+            for c in df.columns:
+                if re.search(pattern, c, re.I):
+                    return c, f"matched '{kw}' → semantic key '{sem_key}'"
+
+    # 2. Fuzzy: any hint word in column name (numeric cols only)
+    hint_words = [w for w in re.split(r"\W+", hint_lower) if len(w) > 2]
+    for c in nc:
+        if any(w in c.lower() for w in hint_words):
+            return c, f"fuzzy word match ({hint_words})"
+
+    # 3. Last resort: first numeric column
+    if nc:
+        return nc[0], "fallback: first numeric column"
+    return None, "no numeric column found"
+
+
+# ── Unit detection ────────────────────────────────────────────────────────────
+
+def _detect_unit(col_name: str) -> str:
+    if not col_name:
+        return ""
+    c = col_name.lower()
+    if "kva"  in c:                                           return "KVA"
+    if any(k in c for k in ("kwhr", "kw hr", "kw-hr", "kw-hr", "unit rate")):
+        return "₹/kWh"
+    if any(k in c for k in ("revenue", "mrc", "per unit rate", "charges", "billing")):
+        return "₹"
+    if any(k in c for k in ("kw", "kilowatt")):              return "kW"
+    if any(k in c for k in ("sqft", "sq ft", "sq.ft", "subscription", "space", "area")):
+        return "sq.ft"
+    if "rack" in c:                                           return "racks"
+    if any(k in c for k in ("seat", "sitting")):              return "seats"
+    return ""
+
+
+_AI_PARSER_PROMPT = """You are a Sify DC data query parser. Convert natural language into a JSON array of structured operations.
+
+RETURN ONLY raw JSON — no markdown, no prose, no code fences.
+
+Each operation:
 {
   "id": "op1",
   "type": "list" | "aggregate" | "count",
-  "label": "short human-readable label",
+  "label": "short human label",
   "filter": {
     "caged": true|false|null,
     "uncaged": true|false|null,
@@ -1254,223 +1390,90 @@ Each operation object:
     "rhs": true|false|null,
     "shs": true|false|null
   },
-  "location": ["airoli","noida"] | null,
-  "operation": "sum"|"min"|"max"|"avg"|"count"|"largest"|"smallest"|"top"|"bottom"|null,
-  "field_hint": "natural language field description" | null,
+  "location": ["airoli"] | null,
+  "operation": "sum"|"min"|"max"|"avg"|"count"|"top"|"bottom"|null,
+  "field_hint": "one of the exact phrases below" | null,
   "top_n": integer | null,
   "group_by_location": true|false
 }
 
-LOCATION ALIASES (always normalise):
+EXACT field_hint phrases (use these verbatim — do NOT invent new ones):
+- "total capacity purchased" — total KW purchased/subscribed
+- "power in use" — KW actually being used / consumed
+- "power allocated" — allocated KW
+- "total space" — total sqft subscribed/purchased
+- "space in use" — sqft currently occupied/in use
+- "space billed" — sqft being billed
+- "total revenue" — total monthly revenue (MRC)
+- "space revenue" — revenue from space
+- "power revenue" — revenue from power usage
+- "seating revenue" — revenue from seating
+- "additional capacity revenue" — additional capacity charges revenue
+- "other revenue" — other revenue items
+- "net revenue" — net revenue total
+- "seating subscription" — seating subscribed count
+- "seating in use" — seats currently in use
+- "per unit rate" — per unit rate / tariff
+
+LOCATION ALIASES (normalise these — keep lowercase):
 - "mumbai" → ["airoli","rabale","vashi"]
 - "rabale" → ["rabale"]
-- "noida" → ["noida"]  (matches Noida 01 and Noida 02)
+- "noida" → ["noida"]
 - "bangalore"/"bengaluru" → ["bangalore"]
 - "chennai" → ["chennai"]
 - "kolkata"/"calcutta" → ["kolkata"]
 - "airoli" → ["airoli"]
 - "vashi" → ["vashi"]
 
-EXAMPLES:
-Query: "list all caged customers"
-→ [{"id":"op1","type":"list","label":"Caged Customers","filter":{"caged":true},"location":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false}]
+FILTER PROPAGATION: when a list op sets a filter (e.g. caged:true) and the VERY NEXT op is an aggregate with no filter specified, inherit the same filter automatically.
 
-Query: "list all caged customers and sum capacity in use and total power used and list rated customers and show customers in airoli or noida"
+EXAMPLES:
+Query: "list all caged customers AND sum capacity in use AND total power used AND list rated customers AND show customers in airoli or noida"
 → [
   {"id":"op1","type":"list","label":"Caged Customers","filter":{"caged":true},"location":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false},
-  {"id":"op2","type":"aggregate","label":"Total Capacity In Use (Caged)","filter":{"caged":true},"location":null,"operation":"sum","field_hint":"capacity in use","top_n":null,"group_by_location":false},
-  {"id":"op3","type":"aggregate","label":"Total Power Used (Caged)","filter":{"caged":true},"location":null,"operation":"sum","field_hint":"total power used","top_n":null,"group_by_location":false},
+  {"id":"op2","type":"aggregate","label":"Power In Use (Caged)","filter":{"caged":true},"location":null,"operation":"sum","field_hint":"power in use","top_n":null,"group_by_location":false},
+  {"id":"op3","type":"aggregate","label":"Total Power Purchased (Caged)","filter":{"caged":true},"location":null,"operation":"sum","field_hint":"total capacity purchased","top_n":null,"group_by_location":false},
   {"id":"op4","type":"list","label":"Rated Customers","filter":{"rated":true},"location":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false},
   {"id":"op5","type":"list","label":"Customers in Airoli or Noida","filter":null,"location":["airoli","noida"],"operation":null,"field_hint":null,"top_n":null,"group_by_location":false}
 ]
 
-Query: "count caged customers by location"
-→ [{"id":"op1","type":"count","label":"Caged Customers by Location","filter":{"caged":true},"location":null,"operation":"count","field_hint":null,"top_n":null,"group_by_location":true}]
+Query: "total revenue across all locations"
+→ [{"id":"op1","type":"aggregate","label":"Total Revenue (All Locations)","filter":null,"location":null,"operation":"sum","field_hint":"total revenue","top_n":null,"group_by_location":false}]
 
-Query: "top 5 customers by capacity purchased in bangalore"
-→ [{"id":"op1","type":"aggregate","label":"Top 5 Customers by Capacity Purchased (Bangalore)","filter":null,"location":["bangalore"],"operation":"top","field_hint":"capacity purchased","top_n":5,"group_by_location":false}]
+Query: "sum of power"
+→ [{"id":"op1","type":"aggregate","label":"Total Power Purchased","filter":null,"location":null,"operation":"sum","field_hint":"total capacity purchased","top_n":null,"group_by_location":false}]
+
+Query: "total space used"
+→ [{"id":"op1","type":"aggregate","label":"Total Space In Use","filter":null,"location":null,"operation":"sum","field_hint":"space in use","top_n":null,"group_by_location":false}]
 """
 
 
-# ── Unit detection ────────────────────────────────────────────────────────────
-
-def _detect_unit(col_name: str) -> str:
-    """Return measurement unit string for a column name."""
-    if not col_name:
-        return ""
-    c = col_name.lower()
-    if "kva"  in c:                                        return "KVA"
-    if "kwhr" in c or "kw hr" in c or "kw-hr" in c:       return "kWh/month"
-    if any(k in c for k in ("kw", "kilowatt", "power", "capacity")):
-        return "kW"
-    if any(k in c for k in ("sqft", "sq ft", "square feet", "sq.ft")):
-        return "sq.ft"
-    if any(k in c for k in ("revenue", "mrc", "rate", "charge", "billing", "per unit")):
-        return "₹"
-    if "rack" in c:                                        return "racks"
-    if any(k in c for k in ("seat", "sitting")):           return "seats"
-    if any(k in c for k in (" m ", "meter", "metre")):    return "m"
-    return ""
-
-
-# ── Column finder by natural language hint ───────────────────────────────────
-
-_HINT_PATTERNS = [
-    ("capacity in use",           r"capacity.*in.*use"),
-    ("total power used",          r"power.*usage.*in.*use|power.*used"),
-    ("total power",               r"total.*power|power.*subscription|power.*kw"),
-    ("capacity purchased",        r"total.*capacity.*purchased|capacity.*purchased"),
-    ("total capacity",            r"total.*capacity"),
-    ("capacity to be given",      r"capacity.*to.*be.*given|yet.*to.*be.*given"),
-    ("subscribed capacity kw",    r"subscribed.*capacity.*kw"),
-    ("allocated capacity kw",     r"allocated.*capacity.*kw|allocated.*kw"),
-    ("reserved capacity",         r"reserved.*capacity"),
-    ("total revenue",             r"total.*revenue"),
-    ("space revenue",             r"space.*revenue.*including|space.*revenue"),
-    ("additional capacity revenue", r"additional.*capacity.*revenue|additional.*capacity"),
-    ("power usage revenue",       r"power.*usage.*revenue|power.*revenue"),
-    ("seating revenue",           r"seating.*space.*revenue|seating.*revenue"),
-    ("other revenue",             r"any.*other|other.*items"),
-    ("total mrc",                 r"total.*mrc|mrc"),
-    ("revenue",                   r"revenue"),
-    ("space subscription",        r"space.*subscription|subscription"),
-    ("space in use",              r"space.*in.*use"),
-    ("rack",                      r"\brack\b"),
-    ("seat",                      r"seat|sitting"),
-    ("contract term",             r"term.*contract|term.*year"),
-    ("per unit rate",             r"per.*unit.*rate|per.*unit"),
-    ("power",                     r"power|kw|kva"),
-    ("capacity",                  r"capacity"),
-    ("space",                     r"space|area"),
-]
-
-
-def _find_col_by_hint(df: pd.DataFrame, field_hint: str) -> "str | None":
-    """Find the best numeric column matching a natural language field hint."""
-    nc = num_cols(df)
-    if not nc:
-        return None
-    if not field_hint:
-        return nc[0]
-
-    hint_lower = field_hint.lower()
-
-    # Check hint against known patterns in priority order
-    for key_phrase, col_pattern in _HINT_PATTERNS:
-        # Does the hint mention this key phrase?
-        key_words = key_phrase.replace("total ", "").replace("per unit ", "").split()
-        if any(kw in hint_lower for kw in key_words if len(kw) > 2):
-            # Find matching column
-            for c in nc:
-                if re.search(col_pattern, c, re.I):
-                    return c
-
-    # Fallback: match any hint word against column names
-    hint_words = [w for w in re.split(r"\W+", hint_lower) if len(w) > 2]
-    for c in nc:
-        c_lower = c.lower()
-        if any(w in c_lower for w in hint_words):
-            return c
-
-    return nc[0]
-
-
-# ── Filter application ────────────────────────────────────────────────────────
-
-def _apply_op_filters(df: pd.DataFrame,
-                      filter_dict: dict,
-                      locations: "list | None") -> pd.DataFrame:
-    """Apply a structured filter dict + optional location list to a DataFrame."""
-    result = df.copy()
-
-    # Location filter
-    if locations and "_Location" in result.columns:
-        loc_mask = pd.Series([False] * len(result), index=result.index)
-        for loc_kw in locations:
-            loc_mask |= result["_Location"].str.lower().str.contains(
-                re.escape(loc_kw.lower()), na=False)
-        result = result[loc_mask]
-
-    if not filter_dict or result.empty:
-        return result
-
-    caged_col  = find_col(result, r"\bcaged\b")
-    pw_sub_col = find_col(result, r"power.*subscription.*model|billing.*model.*power.*subscription")
-    pw_use_col = find_col(result, r"power.*usage.*model|billing.*model.*power.*usage")
-    own_col    = find_col(result, r"\brhs\b|\bshs\b|ownership")
-
-    if filter_dict.get("caged") and caged_col:
-        mask = result[caged_col].astype(str).str.upper().str.strip() == "CAGED"
-        result = result[mask]
-    elif filter_dict.get("uncaged") and caged_col:
-        mask = result[caged_col].astype(str).str.upper().str.strip().isin(
-            ["UNCAGED", "UN-CAGED", "UN CAGED"])
-        result = result[mask]
-
-    if filter_dict.get("rated") and pw_sub_col:
-        mask = result[pw_sub_col].astype(str).str.upper().str.contains("RATED", na=False)
-        result = result[mask]
-    elif filter_dict.get("subscribed") and pw_sub_col:
-        mask = result[pw_sub_col].astype(str).str.upper().str.contains("SUBSCRIB", na=False)
-        result = result[mask]
-
-    if filter_dict.get("bundled") and pw_use_col:
-        mask = result[pw_use_col].astype(str).str.upper().str.contains("BUNDLED", na=False)
-        result = result[mask]
-    elif filter_dict.get("metered") and pw_use_col:
-        mask = result[pw_use_col].astype(str).str.upper().str.contains("METERED", na=False)
-        result = result[mask]
-
-    if filter_dict.get("rhs") and own_col:
-        mask = result[own_col].astype(str).str.upper().str.contains("RHS", na=False)
-        result = result[mask]
-    elif filter_dict.get("shs") and own_col:
-        mask = result[own_col].astype(str).str.upper().str.contains("SHS", na=False)
-        result = result[mask]
-
-    return result
-
-
-# ── OpenAI client getter ──────────────────────────────────────────────────────
+# ── OpenAI client ─────────────────────────────────────────────────────────────
 
 def _get_openai_client():
-    """Return an OpenAI client using Replit integration or standard API key."""
-    replit_base_url = os.environ.get("AI_INTEGRATIONS_OPENAI_BASE_URL", "")
-    replit_api_key  = os.environ.get("AI_INTEGRATIONS_OPENAI_API_KEY", "")
-    openai_api_key  = os.environ.get("OPENAI_API_KEY", "")
-
-    if not openai_api_key:
-        try:
-            openai_api_key = st.secrets.get("OPENAI_API_KEY", "")
-        except Exception:
-            openai_api_key = ""
-
-    if replit_base_url and replit_api_key:
-        return _OpenAI(base_url=replit_base_url, api_key=replit_api_key)
-    elif openai_api_key:
-        return _OpenAI(api_key=openai_api_key)
+    replit_base = os.environ.get("AI_INTEGRATIONS_OPENAI_BASE_URL", "")
+    replit_key  = os.environ.get("AI_INTEGRATIONS_OPENAI_API_KEY", "")
+    std_key     = os.environ.get("OPENAI_API_KEY", "")
+    if not std_key:
+        try:    std_key = st.secrets.get("OPENAI_API_KEY", "")
+        except Exception: pass
+    if replit_base and replit_key:
+        return _OpenAI(base_url=replit_base, api_key=replit_key)
+    if std_key:
+        return _OpenAI(api_key=std_key)
     return None
 
 
 # ── AI Query Parser ───────────────────────────────────────────────────────────
 
-def parse_query_with_ai(query: str) -> "list | str":
-    """
-    Call GPT-4o to parse the user query into a JSON operations list.
-    Returns list of operation dicts, or error string.
-    """
+def parse_query_with_ai(query: str) -> "list | tuple":
     import json
-
     client = _get_openai_client()
     if client is None:
-        return ("config_error", (
-            "No OpenAI API key found.\n\n"
-            "**Streamlit Cloud:** App Settings → Secrets → add `OPENAI_API_KEY = \"sk-...\"`\n"
-            "**Local:** `export OPENAI_API_KEY=sk-...` then `streamlit run prince.py`"
-        ))
-
+        return ("config_error",
+                "No OpenAI API key found. Add OPENAI_API_KEY in Streamlit secrets or environment.")
     try:
-        response = client.chat.completions.create(
+        resp = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": _AI_PARSER_PROMPT},
@@ -1479,8 +1482,7 @@ def parse_query_with_ai(query: str) -> "list | str":
             max_tokens=2048,
             temperature=0,
         )
-        raw = response.choices[0].message.content or "[]"
-        # Strip any accidental markdown fences
+        raw = resp.choices[0].message.content or "[]"
         raw = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.I)
         raw = re.sub(r"\s*```$", "", raw.strip())
         ops = json.loads(raw)
@@ -1489,13 +1491,56 @@ def parse_query_with_ai(query: str) -> "list | str":
         return ("parse_error", str(e))
 
 
+# ── Filter application ────────────────────────────────────────────────────────
+
+def _apply_op_filters(df: pd.DataFrame,
+                      filter_dict: dict,
+                      locations: "list | None") -> pd.DataFrame:
+    result = df.copy()
+
+    # Location filter (substring match on _Location column)
+    if locations and "_Location" in result.columns:
+        loc_mask = pd.Series(False, index=result.index)
+        for loc_kw in locations:
+            loc_mask |= result["_Location"].str.lower().str.contains(
+                re.escape(loc_kw.lower()), na=False)
+        result = result[loc_mask]
+
+    if not filter_dict or result.empty:
+        return result
+
+    caged_col  = find_col(result, r"\bcaged\b|caged.*uncaged|space.*caged")
+    pw_sub_col = find_col(result, r"Power Subscription Model|power.*subscription.*model")
+    pw_use_col = find_col(result, r"Power Usage Model|power.*usage.*model")
+    own_col    = find_col(result, r"\brhs\b|\bshs\b|ownership")
+
+    if filter_dict.get("caged") and caged_col:
+        result = result[result[caged_col].astype(str).str.upper().str.strip() == "CAGED"]
+    elif filter_dict.get("uncaged") and caged_col:
+        result = result[result[caged_col].astype(str).str.upper().str.strip().isin(
+            ["UNCAGED", "UN-CAGED", "UN CAGED"])]
+
+    if filter_dict.get("rated") and pw_sub_col:
+        result = result[result[pw_sub_col].astype(str).str.upper().str.contains("RATED", na=False)]
+    elif filter_dict.get("subscribed") and pw_sub_col:
+        result = result[result[pw_sub_col].astype(str).str.upper().str.contains("SUBSCRIB", na=False)]
+
+    if filter_dict.get("bundled") and pw_use_col:
+        result = result[result[pw_use_col].astype(str).str.upper().str.contains("BUNDLED", na=False)]
+    elif filter_dict.get("metered") and pw_use_col:
+        result = result[result[pw_use_col].astype(str).str.upper().str.contains("METERED", na=False)]
+
+    if filter_dict.get("rhs") and own_col:
+        result = result[result[own_col].astype(str).str.upper().str.contains("RHS", na=False)]
+    elif filter_dict.get("shs") and own_col:
+        result = result[result[own_col].astype(str).str.upper().str.contains("SHS", na=False)]
+
+    return result
+
+
 # ── Execute AI Operations ─────────────────────────────────────────────────────
 
 def execute_ai_operations(operations: list, df: pd.DataFrame) -> list:
-    """
-    Execute a list of parsed AI operations against the actual DataFrame.
-    Returns a list of result dicts ready for display.
-    """
     results = []
 
     for op in operations:
@@ -1511,108 +1556,124 @@ def execute_ai_operations(operations: list, df: pd.DataFrame) -> list:
         filtered = _apply_op_filters(df, filter_dict, locations)
 
         if filtered.empty:
-            results.append({
-                "type": "empty", "label": label,
-                "message": "No matching records for this filter.",
-            })
+            results.append({"type": "empty", "label": label,
+                            "message": "No records match this filter."})
             continue
 
+        # ── LIST ─────────────────────────────────────────────────────────────
         if op_type == "list":
-            # Clean display columns
-            meta_cols  = [c for c in ["_Location", "_Sheet"] if c in filtered.columns]
-            data_cols  = [c for c in filtered.columns if not c.startswith("_")][:30]
-            display_df = filtered[meta_cols + data_cols].reset_index(drop=True)
-            display_df.index = display_df.index + 1
-            results.append({
-                "type": "table", "label": label,
-                "data": display_df, "row_count": len(display_df),
-            })
+            meta  = [c for c in ["_Location", "_Sheet"] if c in filtered.columns]
+            data  = [c for c in filtered.columns if not c.startswith("_")][:30]
+            disp  = filtered[meta + data].reset_index(drop=True)
+            disp.index += 1
+            results.append({"type": "table", "label": label,
+                            "data": disp, "row_count": len(disp)})
 
+        # ── AGGREGATE / TOP / BOTTOM ─────────────────────────────────────────
         elif op_type in ("aggregate", "top", "bottom"):
-            col = _find_col_by_hint(filtered, field_hint)
+            col, reason = _resolve_col_by_semantic(filtered, field_hint)
+
             if not col or col not in filtered.columns:
-                results.append({
-                    "type": "error", "label": label,
-                    "message": f"Could not find a column matching \"{field_hint}\".",
-                })
+                results.append({"type": "error", "label": label,
+                                "message": f"No column matched '{field_hint}'."})
                 continue
 
-            unit = _detect_unit(col)
-            series = pd.to_numeric(filtered[col], errors="coerce").dropna()
+            unit   = _detect_unit(col)
+            series = pd.to_numeric(filtered[col], errors="coerce")
+            valid  = series.dropna()
+            total  = len(series)
 
-            if operation in ("top", "largest", "top"):
-                cust_c = find_col(filtered, r"customer.*name|client.*name")
-                extra  = ([c for c in ["_Location", cust_c] if c and c in filtered.columns])
-                sub    = filtered[extra + [col]].copy()
+            # TOP / BOTTOM tables
+            if operation in ("top", "largest"):
+                cname = find_col(filtered, r"customer.*name|client.*name")
+                extra = [c for c in ["_Location", cname] if c and c in filtered.columns]
+                sub   = filtered[extra + [col]].copy()
                 sub[col] = pd.to_numeric(sub[col], errors="coerce")
                 sub = sub.dropna(subset=[col]).nlargest(top_n, col).reset_index(drop=True)
                 sub.index += 1
-                results.append({
-                    "type": "table", "label": label,
-                    "data": sub, "row_count": len(sub), "unit": unit, "column": col,
-                })
+                results.append({"type": "table", "label": label, "data": sub,
+                                "row_count": len(sub), "unit": unit, "column": col,
+                                "col_reason": reason})
                 continue
 
             if operation in ("bottom", "smallest"):
-                cust_c = find_col(filtered, r"customer.*name|client.*name")
-                extra  = [c for c in ["_Location", cust_c] if c and c in filtered.columns]
-                sub    = filtered[extra + [col]].copy()
+                cname = find_col(filtered, r"customer.*name|client.*name")
+                extra = [c for c in ["_Location", cname] if c and c in filtered.columns]
+                sub   = filtered[extra + [col]].copy()
                 sub[col] = pd.to_numeric(sub[col], errors="coerce")
                 sub = sub.dropna(subset=[col]).nsmallest(top_n, col).reset_index(drop=True)
                 sub.index += 1
-                results.append({
-                    "type": "table", "label": label,
-                    "data": sub, "row_count": len(sub), "unit": unit, "column": col,
-                })
+                results.append({"type": "table", "label": label, "data": sub,
+                                "row_count": len(sub), "unit": unit, "column": col,
+                                "col_reason": reason})
                 continue
 
-            if series.empty:
-                results.append({
-                    "type": "error", "label": label,
-                    "message": f"No numeric data in column \"{col}\".",
-                })
+            if valid.empty:
+                results.append({"type": "error", "label": label,
+                                "message": f"Column '{col}' has no numeric values."})
                 continue
 
-            if   operation == "sum":  val = series.sum()
-            elif operation == "avg":  val = series.mean()
-            elif operation == "min":  val = series.min()
-            elif operation == "max":  val = series.max()
-            elif operation == "count": val = len(series)
-            else:                     val = series.sum()
+            if   operation == "sum":   val = valid.sum()
+            elif operation == "avg":   val = valid.mean()
+            elif operation == "min":   val = valid.min()
+            elif operation == "max":   val = valid.max()
+            elif operation == "count": val = len(valid)
+            else:                      val = valid.sum()
 
-            # Optional per-location breakdown
+            # Per-location breakdown
             loc_breakdown = None
             if grp_by_loc and "_Location" in filtered.columns:
-                grp = filtered.groupby("_Location")[col].apply(
-                    lambda x: pd.to_numeric(x, errors="coerce").sum()
-                ).reset_index()
-                grp.columns = ["Location", col + f" ({unit})" if unit else col]
-                grp = grp.sort_values(grp.columns[1], ascending=False).reset_index(drop=True)
+                grp = (
+                    filtered.groupby("_Location")[col]
+                    .apply(lambda x: pd.to_numeric(x, errors="coerce").sum())
+                    .reset_index()
+                )
+                col_label = f"{col} ({unit})" if unit else col
+                grp.columns = ["Location", col_label]
+                grp = grp.sort_values(col_label, ascending=False).reset_index(drop=True)
                 grp.index += 1
                 loc_breakdown = grp
 
             results.append({
                 "type": "scalar", "label": label,
-                "value": val, "unit": unit,
-                "column": col, "row_count": len(series),
+                "value": val, "unit": unit, "column": col,
+                "col_reason": reason,
+                "row_count": total, "valid_count": len(valid),
                 "operation": operation, "loc_breakdown": loc_breakdown,
+                # Include per-location breakdown even if not explicitly requested
+                "auto_loc": None,
             })
 
+            # Auto per-location breakdown for sum/avg (always show)
+            if operation in ("sum", "avg") and "_Location" in filtered.columns:
+                grp2 = (
+                    filtered.groupby("_Location")[col]
+                    .apply(lambda x: pd.to_numeric(x, errors="coerce").sum())
+                    .reset_index()
+                )
+                col_label2 = f"{col} ({unit})" if unit else col
+                grp2.columns = ["Location", col_label2]
+                grp2 = grp2.sort_values(col_label2, ascending=False).reset_index(drop=True)
+                grp2.index += 1
+                results[-1]["auto_loc"] = grp2
+
+        # ── COUNT ─────────────────────────────────────────────────────────────
         elif op_type == "count":
             if grp_by_loc and "_Location" in filtered.columns:
-                grp = filtered.groupby("_Location").size().reset_index(name="Count")
-                grp = grp.sort_values("Count", ascending=False).reset_index(drop=True)
+                grp = (filtered.groupby("_Location").size()
+                       .reset_index(name="Count")
+                       .sort_values("Count", ascending=False)
+                       .reset_index(drop=True))
                 grp.index += 1
-                results.append({
-                    "type": "table", "label": label,
-                    "data": grp, "row_count": grp["Count"].sum(),
-                })
+                results.append({"type": "table", "label": label,
+                                "data": grp, "row_count": grp["Count"].sum()})
             else:
                 results.append({
                     "type": "scalar", "label": label,
                     "value": len(filtered), "unit": "customers",
-                    "column": "", "row_count": len(filtered),
-                    "operation": "count", "loc_breakdown": None,
+                    "column": "", "col_reason": "count of filtered rows",
+                    "row_count": len(filtered), "valid_count": len(filtered),
+                    "operation": "count", "loc_breakdown": None, "auto_loc": None,
                 })
 
     return results
@@ -2317,7 +2378,7 @@ with T[4]:
     st.markdown('<div class="section-title">🧠 Smart Query — AI-Powered Structured Query Engine</div>',
                 unsafe_allow_html=True)
 
-    # ── Data source selector ──────────────────────────────────────────────────
+    # ── Data source ───────────────────────────────────────────────────────────
     sq_src_opts = ["All Locations & All Sheets"] + sorted(fdata.keys())
     sq_src = st.selectbox("📂 Query data source", sq_src_opts, key="sq_src")
 
@@ -2325,24 +2386,22 @@ with T[4]:
         pool_base = CUST.copy()
     else:
         loc_frames = []
-        for sn, df in fdata.get(sq_src, {}).items():
-            tmp = df.copy()
+        for sn, df_loc in fdata.get(sq_src, {}).items():
+            tmp = df_loc.copy()
             tmp.insert(0, "_Sheet", sn)
             tmp.insert(0, "_Location", sq_src)
             loc_frames.append(tmp)
         pool_base = pd.concat(loc_frames, ignore_index=True, sort=False) if loc_frames else pd.DataFrame()
 
-    # Pool info
     if not pool_base.empty:
-        pool_info_locs   = pool_base["_Location"].nunique() if "_Location" in pool_base.columns else 1
-        pool_info_sheets = pool_base["_Sheet"].nunique()   if "_Sheet"    in pool_base.columns else 1
+        n_locs   = pool_base["_Location"].nunique() if "_Location" in pool_base.columns else 1
+        n_sheets = pool_base["_Sheet"].nunique()    if "_Sheet"    in pool_base.columns else 1
         st.markdown(
             f'<div style="font-size:.78rem;color:{MUTED};margin-bottom:10px">'
             f'Query pool: <b style="color:{CYAN}">{len(pool_base):,}</b> records · '
-            f'<b style="color:{CYAN}">{pool_info_locs}</b> location(s) · '
-            f'<b style="color:{CYAN}">{pool_info_sheets}</b> sheet(s)</div>',
-            unsafe_allow_html=True
-        )
+            f'<b style="color:{CYAN}">{n_locs}</b> location(s) · '
+            f'<b style="color:{CYAN}">{n_sheets}</b> sheet(s)</div>',
+            unsafe_allow_html=True)
 
     # ── Query input ───────────────────────────────────────────────────────────
     query = st.text_area(
@@ -2362,8 +2421,8 @@ with T[4]:
         key="sq_locs"
     )
 
-    col_run, _ = st.columns([1, 6])
-    with col_run:
+    c_run, _ = st.columns([1, 6])
+    with c_run:
         run_clicked = st.button("🚀 Run Query", key="sq_run")
 
     if "sq_results_history" not in st.session_state:
@@ -2377,28 +2436,29 @@ with T[4]:
             pool = pool_base.copy()
             if sq_locs and "_Location" in pool.columns:
                 pool = pool[pool["_Location"].isin(sq_locs)]
-
-            with st.spinner("🤖 Parsing and executing query…"):
-                ops_raw = parse_query_with_ai(query.strip())
-
-            if isinstance(ops_raw, tuple):
-                # Error tuple (config_error | parse_error, message)
-                err_type, err_msg = ops_raw
-                st.error(f"**{'Configuration' if err_type == 'config_error' else 'AI Parse'} Error**\n\n{err_msg}")
-            elif not ops_raw:
-                st.warning("The AI could not parse your query into operations. Try rephrasing.")
+            if pool.empty:
+                st.warning("No records for selected locations.")
             else:
-                results = execute_ai_operations(ops_raw, pool)
-                st.session_state["sq_results_history"].append({
-                    "query":   query.strip(),
-                    "source":  sq_src,
-                    "records": len(pool),
-                    "results": results,
-                })
+                with st.spinner("🤖 Parsing and executing query…"):
+                    ops_raw = parse_query_with_ai(query.strip())
 
-    # ── Display results ───────────────────────────────────────────────────────
+                if isinstance(ops_raw, tuple):
+                    err_type, err_msg = ops_raw
+                    st.error(f"**{'Config' if err_type == 'config_error' else 'Parse'} Error**: {err_msg}")
+                elif not ops_raw:
+                    st.warning("Could not parse query. Please try rephrasing.")
+                else:
+                    results = execute_ai_operations(ops_raw, pool)
+                    st.session_state["sq_results_history"].append({
+                        "query":   query.strip(),
+                        "source":  sq_src,
+                        "records": len(pool),
+                        "results": results,
+                    })
+
+    # ── Display ───────────────────────────────────────────────────────────────
     if st.session_state.get("sq_results_history"):
-        for hist_item in reversed(st.session_state["sq_results_history"]):
+        for hist in reversed(st.session_state["sq_results_history"]):
             # Query bubble
             st.markdown(f"""
             <div style="background:{DARK2};border:1px solid {BORD};border-radius:12px;
@@ -2407,39 +2467,44 @@ with T[4]:
               <div>
                 <div style="font-size:.72rem;color:{MUTED};font-weight:700;
                      text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">
-                  {hist_item['source']} · {hist_item['records']:,} records</div>
-                <div style="font-size:.95rem;color:{WHITE};font-weight:600">{hist_item['query']}</div>
+                  {hist['source']} · {hist['records']:,} records</div>
+                <div style="font-size:.95rem;color:{WHITE};font-weight:600">{hist['query']}</div>
               </div>
             </div>""", unsafe_allow_html=True)
 
-            # Render each result
-            for res in hist_item["results"]:
+            # Results
+            for res in hist["results"]:
                 rtype = res["type"]
                 label = res["label"]
 
+                # ── Table result ──────────────────────────────────────────────
                 if rtype == "table":
                     st.markdown(
                         f'<div style="font-size:.8rem;color:{CYAN};font-weight:700;'
                         f'text-transform:uppercase;letter-spacing:.06em;margin:12px 0 4px">'
-                        f'📋 {label} &nbsp;<span style="color:{MUTED};font-weight:400;font-size:.75rem">'
-                        f'— {res["row_count"]:,} row(s)</span></div>',
-                        unsafe_allow_html=True
-                    )
+                        f'📋 {label} &nbsp;<span style="color:{MUTED};font-weight:400;'
+                        f'font-size:.75rem">— {res["row_count"]:,} row(s)</span></div>',
+                        unsafe_allow_html=True)
                     st.dataframe(res["data"], use_container_width=True)
                     csv_bytes = res["data"].to_csv(index=True).encode("utf-8")
                     st.download_button(
                         f"⬇️ Download {label} (CSV)",
                         data=csv_bytes,
-                        file_name=f"{label.replace(' ', '_')}.csv",
+                        file_name=f"{label.replace(' ','_')}.csv",
                         mime="text/csv",
                         key=f"dl_{label}_{id(res)}"
                     )
 
+                # ── Scalar / metric result ────────────────────────────────────
                 elif rtype == "scalar":
-                    unit  = res.get("unit", "")
-                    val   = res["value"]
-                    col_n = res.get("column", "")
-                    op    = res.get("operation", "sum").upper()
+                    unit        = res.get("unit", "")
+                    val         = res["value"]
+                    col_n       = res.get("column", "")
+                    col_reason  = res.get("col_reason", "")
+                    valid_count = res.get("valid_count", res["row_count"])
+                    total_count = res["row_count"]
+                    operation   = (res.get("operation") or "sum").upper()
+                    pct_valid   = (valid_count / total_count * 100) if total_count else 0
 
                     # Format value
                     if unit == "₹":
@@ -2449,10 +2514,11 @@ with T[4]:
                             disp = f"₹ {val/1_00_000:,.2f} L"
                         else:
                             disp = f"₹ {val:,.2f}"
-                    elif unit in ("kW", "KVA", "kWh/month"):
+                    elif unit in ("kW", "KVA"):
                         disp = f"{val:,.2f} {unit}"
                     elif unit == "customers":
-                        disp = f"{int(val):,} customers"
+                        disp = f"{int(val):,}"
+                        unit = "customers"
                     elif unit:
                         disp = f"{val:,.2f} {unit}"
                     else:
@@ -2461,30 +2527,36 @@ with T[4]:
                         except Exception:
                             disp = str(val)
 
+                    warn_color = AMBER if pct_valid < 50 else GREEN
+
                     st.markdown(f"""
                     <div style="background:{DARK2};border:1px solid {BORD};border-radius:14px;
-                         padding:20px 28px;margin:10px 0;display:inline-block;min-width:260px">
+                         padding:20px 28px;margin:10px 0">
                       <div style="font-size:.72rem;color:{MUTED};font-weight:700;
                            text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">
-                        {op}: {label}</div>
-                      <div style="font-size:2.1rem;font-weight:800;color:{CYAN};
-                           letter-spacing:-.01em;line-height:1.1">{disp}</div>
-                      <div style="font-size:.75rem;color:{MUTED};margin-top:6px">
-                        {res["row_count"]:,} records · column: {col_n}</div>
+                        {operation} · {label}</div>
+                      <div style="font-size:2.4rem;font-weight:900;color:{CYAN};
+                           letter-spacing:-.01em;line-height:1.1">{disp}
+                        <span style="font-size:1rem;color:{MUTED};font-weight:500"> {unit}</span>
+                      </div>
+                      <div style="font-size:.74rem;color:{MUTED};margin-top:8px;
+                           border-top:1px solid {BORD};padding-top:8px">
+                        📊 Column used: <b style="color:{TEXT}">{col_n}</b><br>
+                        ✅ <b style="color:{warn_color}">{valid_count:,}</b> of
+                        <b style="color:{TEXT}">{total_count:,}</b> rows had numeric values
+                        ({pct_valid:.0f}%)
+                        {"⚠️ Many blank/text values — sum may be partial" if pct_valid < 50 else ""}
+                      </div>
                     </div>""", unsafe_allow_html=True)
 
-                    # Per-location breakdown table
-                    if res.get("loc_breakdown") is not None:
-                        st.markdown(
-                            f'<div style="font-size:.78rem;color:{MUTED};margin:6px 0 2px">'
-                            f'Per-location breakdown:</div>',
-                            unsafe_allow_html=True
-                        )
-                        st.dataframe(res["loc_breakdown"], use_container_width=True)
+                    # Auto per-location table
+                    auto_loc = res.get("auto_loc")
+                    if auto_loc is not None and not auto_loc.empty:
+                        with st.expander("📍 Per-location breakdown", expanded=True):
+                            st.dataframe(auto_loc, use_container_width=True)
 
                 elif rtype == "empty":
                     st.info(f"**{label}**: {res['message']}")
-
                 elif rtype == "error":
                     st.warning(f"**{label}**: {res['message']}")
 
@@ -2499,10 +2571,15 @@ with T[4]:
         <div style="background:{DARK2};border:1px dashed {BORD};border-radius:12px;
              padding:32px;text-align:center;color:{MUTED};margin-top:16px">
           <div style="font-size:2rem;margin-bottom:10px">🤖</div>
-          <div style="font-size:.95rem;color:{TEXT}">Enter a query above and click
-          <b style="color:{CYAN}">Run Query</b></div>
-          <div style="font-size:.82rem;margin-top:8px">
-          Try: <i>List all caged customers AND sum capacity in use AND total power used AND list rated customers AND show customers in airoli or noida</i>
+          <div style="font-size:.95rem;color:{TEXT}">
+            Enter a query above and click <b style="color:{CYAN}">Run Query</b>
+          </div>
+          <div style="font-size:.82rem;margin-top:10px">
+            Examples:<br>
+            <i>sum of power</i> &nbsp;·&nbsp;
+            <i>total space used</i> &nbsp;·&nbsp;
+            <i>total revenue</i> &nbsp;·&nbsp;
+            <i>list all caged customers AND sum capacity in use AND total revenue by location</i>
           </div>
         </div>""", unsafe_allow_html=True)
 
