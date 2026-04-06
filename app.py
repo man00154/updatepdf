@@ -1323,6 +1323,23 @@ _HINT_SEMANTIC: list = [
 ]
 
 
+def _detect_unit(col_name: str) -> str:
+    if not col_name:
+        return ""
+    c = col_name.lower()
+    if "kva"  in c:                                           return "KVA"
+    if any(k in c for k in ("kwhr", "kw hr", "kw-hr", "unit rate")):
+        return "₹/kWh"
+    if any(k in c for k in ("revenue", "mrc", "per unit rate", "charges", "billing")):
+        return "₹"
+    if any(k in c for k in ("kw", "kilowatt")):              return "kW"
+    if any(k in c for k in ("sqft", "sq ft", "sq.ft", "subscription", "space", "area")):
+        return "sq.ft"
+    if "rack" in c:                                           return "racks"
+    if any(k in c for k in ("seat", "sitting")):              return "seats"
+    return ""
+
+
 _AI_PARSER_PROMPT = """You are a Sify DC data query parser. Convert natural language into a JSON array of structured operations.
 
 RETURN ONLY raw JSON — no markdown, no prose, no code fences.
