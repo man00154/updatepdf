@@ -96,7 +96,6 @@ _BASE = Path(__file__).parent
 def _excel_dirs():
     candidates = [
         _BASE / "excel_files",
-        _BASE / "attached_assets",
         _BASE,
     ]
     return [d for d in candidates if d.is_dir()]
@@ -1553,7 +1552,7 @@ with st.sidebar:
 
     all_locs = sorted(ALL.keys())
     if not all_locs:
-        st.error("No Excel files found. Place files in the 'excel_files/' or 'attached_assets/' folder.")
+        st.error("No Excel files found. Place your Excel files in the 'excel_files/' folder.")
         st.stop()
 
     sel_locs = st.multiselect("📍 Locations", all_locs, default=all_locs)
