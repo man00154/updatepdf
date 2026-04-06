@@ -1323,54 +1323,6 @@ _HINT_SEMANTIC: list = [
 ]
 
 
-def _resolve_col_by_semantic(df: pd.DataFrame, field_hint: str) -> "tuple[str|None, str]":
-    """
-    Return (column_name, reason_string) for the best column matching field_hint.
-    Uses semantic registry first, then fuzzy word matching.
-    'reason' explains which pattern matched, for display in UI.
-    """
-    hint_lower = (field_hint or "").lower().strip()
-    nc = num_cols(df)
-
-    # 1. Semantic key lookup
-    for kw, sem_key in _HINT_SEMANTIC:
-        if kw in hint_lower:
-            pattern, _ = _SEMANTIC_COLS[sem_key]
-            for c in df.columns:
-                if re.search(pattern, c, re.I):
-                    return c, f"matched '{kw}' → semantic key '{sem_key}'"
-
-    # 2. Fuzzy: any hint word in column name (numeric cols only)
-    hint_words = [w for w in re.split(r"\W+", hint_lower) if len(w) > 2]
-    for c in nc:
-        if any(w in c.lower() for w in hint_words):
-            return c, f"fuzzy word match ({hint_words})"
-
-    # 3. Last resort: first numeric column
-    if nc:
-        return nc[0], "fallback: first numeric column"
-    return None, "no numeric column found"
-
-
-# ── Unit detection ────────────────────────────────────────────────────────────
-
-def _detect_unit(col_name: str) -> str:
-    if not col_name:
-        return ""
-    c = col_name.lower()
-    if "kva"  in c:                                           return "KVA"
-    if any(k in c for k in ("kwhr", "kw hr", "kw-hr", "kw-hr", "unit rate")):
-        return "₹/kWh"
-    if any(k in c for k in ("revenue", "mrc", "per unit rate", "charges", "billing")):
-        return "₹"
-    if any(k in c for k in ("kw", "kilowatt")):              return "kW"
-    if any(k in c for k in ("sqft", "sq ft", "sq.ft", "subscription", "space", "area")):
-        return "sq.ft"
-    if "rack" in c:                                           return "racks"
-    if any(k in c for k in ("seat", "sitting")):              return "seats"
-    return ""
-
-
 _AI_PARSER_PROMPT = """You are a Sify DC data query parser. Convert natural language into a JSON array of structured operations.
 
 RETURN ONLY raw JSON — no markdown, no prose, no code fences.
@@ -1391,61 +1343,164 @@ Each operation:
     "shs": true|false|null
   },
   "location": ["airoli"] | null,
-  "operation": "sum"|"min"|"max"|"avg"|"count"|"top"|"bottom"|null,
+  "operation": "sum"|"avg"|"min"|"max"|"count"|"std"|"median"|"variance"|"range"|"count_nonzero"|"top"|"bottom"|null,
   "field_hint": "one of the exact phrases below" | null,
   "top_n": integer | null,
   "group_by_location": true|false
 }
 
-EXACT field_hint phrases (use these verbatim — do NOT invent new ones):
+EXACT field_hint phrases (use verbatim):
 - "total capacity purchased" — total KW purchased/subscribed
-- "power in use" — KW actually being used / consumed
-- "power allocated" — allocated KW
-- "total space" — total sqft subscribed/purchased
-- "space in use" — sqft currently occupied/in use
-- "space billed" — sqft being billed
-- "total revenue" — total monthly revenue (MRC)
-- "space revenue" — revenue from space
-- "power revenue" — revenue from power usage
-- "seating revenue" — revenue from seating
-- "additional capacity revenue" — additional capacity charges revenue
-- "other revenue" — other revenue items
-- "net revenue" — net revenue total
-- "seating subscription" — seating subscribed count
-- "seating in use" — seats currently in use
-- "per unit rate" — per unit rate / tariff
+- "power in use"             — KW currently consumed
+- "power allocated"          — allocated KW
+- "total space"              — total sqft subscribed
+- "space in use"             — sqft currently in use
+- "space billed"             — sqft being billed
+- "total revenue"            — total monthly revenue (MRC)
+- "space revenue"            — revenue from space
+- "power revenue"            — revenue from power usage
+- "seating revenue"          — revenue from seating
+- "additional capacity revenue" — additional capacity charges
+- "other revenue"            — other revenue items
+- "net revenue"              — net revenue total
+- "seating subscription"     — seats subscribed
+- "seating in use"           — seats in use
+- "per unit rate"            — per unit rate / tariff
 
-LOCATION ALIASES (normalise these — keep lowercase):
+OPERATION MEANINGS:
+- "sum"           : total of all values (handles decimals precisely)
+- "avg" / "mean"  : arithmetic mean
+- "min"           : minimum value
+- "max"           : maximum value
+- "count"         : number of records
+- "std"           : standard deviation
+- "median"        : median value
+- "variance"      : statistical variance
+- "range"         : max minus min
+- "count_nonzero" : count of non-zero values
+- "top"           : top N records by value (use top_n)
+- "bottom"        : bottom N records by value (use top_n)
+
+LOCATION ALIASES (normalise lowercase):
 - "mumbai" → ["airoli","rabale","vashi"]
 - "rabale" → ["rabale"]
-- "noida" → ["noida"]
+- "noida"  → ["noida"]
 - "bangalore"/"bengaluru" → ["bangalore"]
 - "chennai" → ["chennai"]
-- "kolkata"/"calcutta" → ["kolkata"]
-- "airoli" → ["airoli"]
-- "vashi" → ["vashi"]
+- "kolkata" → ["kolkata"]
+- "airoli"  → ["airoli"]
+- "vashi"   → ["vashi"]
 
-FILTER PROPAGATION: when a list op sets a filter (e.g. caged:true) and the VERY NEXT op is an aggregate with no filter specified, inherit the same filter automatically.
+FILTER PROPAGATION: if a list op sets a filter and the NEXT op is aggregate without explicit filter, inherit the same filter.
 
 EXAMPLES:
-Query: "list all caged customers AND sum capacity in use AND total power used AND list rated customers AND show customers in airoli or noida"
-→ [
+Query: "sum of power" → [{"id":"op1","type":"aggregate","label":"Total Power Purchased","filter":null,"location":null,"operation":"sum","field_hint":"total capacity purchased","top_n":null,"group_by_location":false}]
+Query: "std of total revenue" → [{"id":"op1","type":"aggregate","label":"Std Dev of Total Revenue","filter":null,"location":null,"operation":"std","field_hint":"total revenue","top_n":null,"group_by_location":false}]
+Query: "median power in use across locations" → [{"id":"op1","type":"aggregate","label":"Median Power In Use","filter":null,"location":null,"operation":"median","field_hint":"power in use","top_n":null,"group_by_location":true}]
+Query: "range of per unit rate" → [{"id":"op1","type":"aggregate","label":"Range of Per Unit Rate","filter":null,"location":null,"operation":"range","field_hint":"per unit rate","top_n":null,"group_by_location":false}]
+Query: "list all caged customers AND sum capacity in use AND total power used AND list rated customers AND show customers in airoli or noida" → [
   {"id":"op1","type":"list","label":"Caged Customers","filter":{"caged":true},"location":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false},
   {"id":"op2","type":"aggregate","label":"Power In Use (Caged)","filter":{"caged":true},"location":null,"operation":"sum","field_hint":"power in use","top_n":null,"group_by_location":false},
   {"id":"op3","type":"aggregate","label":"Total Power Purchased (Caged)","filter":{"caged":true},"location":null,"operation":"sum","field_hint":"total capacity purchased","top_n":null,"group_by_location":false},
   {"id":"op4","type":"list","label":"Rated Customers","filter":{"rated":true},"location":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false},
   {"id":"op5","type":"list","label":"Customers in Airoli or Noida","filter":null,"location":["airoli","noida"],"operation":null,"field_hint":null,"top_n":null,"group_by_location":false}
 ]
-
-Query: "total revenue across all locations"
-→ [{"id":"op1","type":"aggregate","label":"Total Revenue (All Locations)","filter":null,"location":null,"operation":"sum","field_hint":"total revenue","top_n":null,"group_by_location":false}]
-
-Query: "sum of power"
-→ [{"id":"op1","type":"aggregate","label":"Total Power Purchased","filter":null,"location":null,"operation":"sum","field_hint":"total capacity purchased","top_n":null,"group_by_location":false}]
-
-Query: "total space used"
-→ [{"id":"op1","type":"aggregate","label":"Total Space In Use","filter":null,"location":null,"operation":"sum","field_hint":"space in use","top_n":null,"group_by_location":false}]
 """
+
+
+def _robust_to_numeric(series: pd.Series) -> pd.Series:
+    """
+    Precisely convert a Series to float64, handling:
+      • Comma-formatted numbers  : "1,23,456.78"  → 123456.78
+      • Currency prefixes        : "₹ 1,234.56"   → 1234.56
+      • Whitespace / % suffix    : "  12.5 %  "   → 12.5
+      • Already float/int values : preserved as-is (no repr drift)
+      • #DIV, #REF errors        : → NaN
+      • Dash / blank / None      : → NaN
+    Preserves full float64 precision (uses Decimal internally for string parsing).
+    """
+    from decimal import Decimal, InvalidOperation
+
+    def _parse(v):
+        if v is None:
+            return np.nan
+        if isinstance(v, bool):
+            return np.nan
+        if isinstance(v, (int, float)):
+            if pd.isna(v):
+                return np.nan
+            return float(v)           # already numeric — no repr drift
+        s = str(v).strip()
+        if not s or s in ("-", "–", "—", "nan", "NaN", "None", "N/A",
+                          "#N/A", "#REF!", "#DIV/0!", "#VALUE!", "#NAME?"):
+            return np.nan
+        # Strip currency / whitespace
+        s = re.sub(r"[₹$£€\s]", "", s)
+        s = s.rstrip("%").strip()
+        if not s:
+            return np.nan
+        # Remove commas (handles both Indian 12,34,567 and Western 1,234,567)
+        s = s.replace(",", "")
+        try:
+            return float(Decimal(s))   # Decimal avoids float-parse drift
+        except (InvalidOperation, ValueError):
+            return np.nan
+
+    return series.apply(_parse)
+
+
+def _fmt_decimal(val: float, unit: str = "") -> str:
+    """
+    Format a float for display with appropriate decimal precision:
+      • Near-zero difference from int  : show as integer
+      • Large revenue values           : 2 dp with comma separators
+      • Small rates / ratios           : up to 6 significant digits
+    Avoids showing floating-point drift like 881.451999999997.
+    """
+    if pd.isna(val):
+        return "N/A"
+
+    # Round to 10 sig figs to eliminate float drift (e.g. 881.451999999997 → 881.452)
+    import math
+    if val == 0:
+        rounded = 0.0
+    else:
+        mag = math.floor(math.log10(abs(val)))
+        rounded = round(val, max(0, 9 - mag))
+
+    # Decide decimal places
+    if rounded == int(rounded) and abs(rounded) < 1e12:
+        disp_val = f"{int(rounded):,}"
+    elif abs(rounded) >= 10_000:
+        disp_val = f"{rounded:,.2f}"
+    elif abs(rounded) >= 1:
+        disp_val = f"{rounded:,.4f}".rstrip("0").rstrip(".")
+    else:
+        disp_val = f"{rounded:.6g}"
+
+    return disp_val
+
+
+def _resolve_col_by_semantic(df: pd.DataFrame, field_hint: str) -> "tuple[str|None, str]":
+    """Return (column_name, reason_string) for field_hint — semantic first, fuzzy fallback."""
+    hint_lower = (field_hint or "").lower().strip()
+    nc = num_cols(df)
+
+    for kw, sem_key in _HINT_SEMANTIC:
+        if kw in hint_lower:
+            pattern, _ = _SEMANTIC_COLS[sem_key]
+            for c in df.columns:
+                if re.search(pattern, c, re.I):
+                    return c, f"matched '{kw}' → '{sem_key}'"
+
+    hint_words = [w for w in re.split(r"\W+", hint_lower) if len(w) > 2]
+    for c in nc:
+        if any(w in c.lower() for w in hint_words):
+            return c, f"fuzzy word match ({hint_words})"
+
+    if nc:
+        return nc[0], "fallback: first numeric column"
+    return None, "no numeric column found"
 
 
 # ── OpenAI client ─────────────────────────────────────────────────────────────
@@ -1498,7 +1553,6 @@ def _apply_op_filters(df: pd.DataFrame,
                       locations: "list | None") -> pd.DataFrame:
     result = df.copy()
 
-    # Location filter (substring match on _Location column)
     if locations and "_Location" in result.columns:
         loc_mask = pd.Series(False, index=result.index)
         for loc_kw in locations:
@@ -1540,6 +1594,24 @@ def _apply_op_filters(df: pd.DataFrame,
 
 # ── Execute AI Operations ─────────────────────────────────────────────────────
 
+_EXTENDED_OPS = {
+    "sum":         lambda s: s.sum(),
+    "avg":         lambda s: s.mean(),
+    "mean":        lambda s: s.mean(),
+    "min":         lambda s: s.min(),
+    "max":         lambda s: s.max(),
+    "count":       lambda s: float(len(s)),
+    "std":         lambda s: s.std(ddof=1),
+    "median":      lambda s: s.median(),
+    "variance":    lambda s: s.var(ddof=1),
+    "var":         lambda s: s.var(ddof=1),
+    "range":       lambda s: s.max() - s.min(),
+    "sum_abs":     lambda s: s.abs().sum(),
+    "count_nonzero": lambda s: float((s != 0).sum()),
+    "pct_nonzero": lambda s: float((s != 0).sum()) / max(len(s), 1) * 100,
+}
+
+
 def execute_ai_operations(operations: list, df: pd.DataFrame) -> list:
     results = []
 
@@ -1548,7 +1620,7 @@ def execute_ai_operations(operations: list, df: pd.DataFrame) -> list:
         label       = op.get("label", "Result")
         filter_dict = op.get("filter") or {}
         locations   = op.get("location")
-        operation   = (op.get("operation") or "sum").lower()
+        operation   = (op.get("operation") or "sum").lower().strip()
         field_hint  = op.get("field_hint") or ""
         top_n       = int(op.get("top_n") or 10)
         grp_by_loc  = bool(op.get("group_by_location"))
@@ -1579,16 +1651,18 @@ def execute_ai_operations(operations: list, df: pd.DataFrame) -> list:
                 continue
 
             unit   = _detect_unit(col)
-            series = pd.to_numeric(filtered[col], errors="coerce")
+
+            # Use _robust_to_numeric to handle all decimal/string/currency formats
+            series = _robust_to_numeric(filtered[col])
             valid  = series.dropna()
             total  = len(series)
 
-            # TOP / BOTTOM tables
+            # TOP table
             if operation in ("top", "largest"):
                 cname = find_col(filtered, r"customer.*name|client.*name")
                 extra = [c for c in ["_Location", cname] if c and c in filtered.columns]
                 sub   = filtered[extra + [col]].copy()
-                sub[col] = pd.to_numeric(sub[col], errors="coerce")
+                sub[col] = _robust_to_numeric(sub[col])
                 sub = sub.dropna(subset=[col]).nlargest(top_n, col).reset_index(drop=True)
                 sub.index += 1
                 results.append({"type": "table", "label": label, "data": sub,
@@ -1596,11 +1670,12 @@ def execute_ai_operations(operations: list, df: pd.DataFrame) -> list:
                                 "col_reason": reason})
                 continue
 
+            # BOTTOM table
             if operation in ("bottom", "smallest"):
                 cname = find_col(filtered, r"customer.*name|client.*name")
                 extra = [c for c in ["_Location", cname] if c and c in filtered.columns]
                 sub   = filtered[extra + [col]].copy()
-                sub[col] = pd.to_numeric(sub[col], errors="coerce")
+                sub[col] = _robust_to_numeric(sub[col])
                 sub = sub.dropna(subset=[col]).nsmallest(top_n, col).reset_index(drop=True)
                 sub.index += 1
                 results.append({"type": "table", "label": label, "data": sub,
@@ -1613,19 +1688,25 @@ def execute_ai_operations(operations: list, df: pd.DataFrame) -> list:
                                 "message": f"Column '{col}' has no numeric values."})
                 continue
 
-            if   operation == "sum":   val = valid.sum()
-            elif operation == "avg":   val = valid.mean()
-            elif operation == "min":   val = valid.min()
-            elif operation == "max":   val = valid.max()
-            elif operation == "count": val = len(valid)
-            else:                      val = valid.sum()
+            # Compute with full precision
+            op_fn = _EXTENDED_OPS.get(operation)
+            if op_fn is None:
+                # Try known aliases
+                for alias_key in ("sum",):
+                    if alias_key in operation:
+                        op_fn = _EXTENDED_OPS[alias_key]
+                        break
+                if op_fn is None:
+                    op_fn = _EXTENDED_OPS["sum"]
 
-            # Per-location breakdown
+            val = op_fn(valid)
+
+            # Per-location breakdown using _robust_to_numeric
             loc_breakdown = None
             if grp_by_loc and "_Location" in filtered.columns:
                 grp = (
                     filtered.groupby("_Location")[col]
-                    .apply(lambda x: pd.to_numeric(x, errors="coerce").sum())
+                    .apply(lambda x: _robust_to_numeric(x).sum())
                     .reset_index()
                 )
                 col_label = f"{col} ({unit})" if unit else col
@@ -1634,28 +1715,31 @@ def execute_ai_operations(operations: list, df: pd.DataFrame) -> list:
                 grp.index += 1
                 loc_breakdown = grp
 
+            # Auto per-location breakdown for sum/avg/std/median
+            auto_loc = None
+            if operation in ("sum", "avg", "mean", "median", "std") \
+                    and "_Location" in filtered.columns:
+                grp2 = (
+                    filtered.groupby("_Location")[col]
+                    .apply(lambda x: _robust_to_numeric(x).sum()
+                           if operation == "sum" else
+                           _robust_to_numeric(x).mean())
+                    .reset_index()
+                )
+                col_lbl2 = f"{col} ({unit})" if unit else col
+                grp2.columns = ["Location", col_lbl2]
+                grp2 = grp2.sort_values(col_lbl2, ascending=False).reset_index(drop=True)
+                grp2.index += 1
+                auto_loc = grp2
+
             results.append({
                 "type": "scalar", "label": label,
                 "value": val, "unit": unit, "column": col,
                 "col_reason": reason,
                 "row_count": total, "valid_count": len(valid),
                 "operation": operation, "loc_breakdown": loc_breakdown,
-                # Include per-location breakdown even if not explicitly requested
-                "auto_loc": None,
+                "auto_loc": auto_loc,
             })
-
-            # Auto per-location breakdown for sum/avg (always show)
-            if operation in ("sum", "avg") and "_Location" in filtered.columns:
-                grp2 = (
-                    filtered.groupby("_Location")[col]
-                    .apply(lambda x: pd.to_numeric(x, errors="coerce").sum())
-                    .reset_index()
-                )
-                col_label2 = f"{col} ({unit})" if unit else col
-                grp2.columns = ["Location", col_label2]
-                grp2 = grp2.sort_values(col_label2, ascending=False).reset_index(drop=True)
-                grp2.index += 1
-                results[-1]["auto_loc"] = grp2
 
         # ── COUNT ─────────────────────────────────────────────────────────────
         elif op_type == "count":
@@ -1670,13 +1754,14 @@ def execute_ai_operations(operations: list, df: pd.DataFrame) -> list:
             else:
                 results.append({
                     "type": "scalar", "label": label,
-                    "value": len(filtered), "unit": "customers",
+                    "value": float(len(filtered)), "unit": "customers",
                     "column": "", "col_reason": "count of filtered rows",
                     "row_count": len(filtered), "valid_count": len(filtered),
                     "operation": "count", "loc_breakdown": None, "auto_loc": None,
                 })
 
     return results
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LOAD DATA
@@ -2506,26 +2591,22 @@ with T[4]:
                     operation   = (res.get("operation") or "sum").upper()
                     pct_valid   = (valid_count / total_count * 100) if total_count else 0
 
-                    # Format value
+                    # Format value — use _fmt_decimal to avoid float drift
                     if unit == "₹":
-                        if val >= 1_00_00_000:
-                            disp = f"₹ {val/1_00_00_000:,.2f} Cr"
-                        elif val >= 1_00_000:
-                            disp = f"₹ {val/1_00_000:,.2f} L"
+                        import math as _math
+                        _rval = round(val, max(0, 9 - (int(_math.floor(_math.log10(abs(val)))) if val else 0)))
+                        if _rval >= 1_00_00_000:
+                            disp = f"₹ {_rval/1_00_00_000:,.2f} Cr"
+                        elif _rval >= 1_00_000:
+                            disp = f"₹ {_rval/1_00_000:,.2f} L"
                         else:
-                            disp = f"₹ {val:,.2f}"
-                    elif unit in ("kW", "KVA"):
-                        disp = f"{val:,.2f} {unit}"
+                            disp = f"₹ {_rval:,.2f}"
                     elif unit == "customers":
                         disp = f"{int(val):,}"
                         unit = "customers"
-                    elif unit:
-                        disp = f"{val:,.2f} {unit}"
                     else:
-                        try:
-                            disp = f"{int(val):,}" if val == int(val) else f"{val:,.2f}"
-                        except Exception:
-                            disp = str(val)
+                        _raw = _fmt_decimal(val, unit)
+                        disp = f"{_raw} {unit}".strip() if unit else _raw
 
                     warn_color = AMBER if pct_valid < 50 else GREEN
 
