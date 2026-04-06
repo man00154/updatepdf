@@ -1474,13 +1474,34 @@ def ask_llm_smart_query(query: str, df: pd.DataFrame) -> str:
     Returns the LLM's answer as a string.
     """
     try:
-        base_url = os.environ.get("AI_INTEGRATIONS_OPENAI_BASE_URL", "")
-        api_key = os.environ.get("AI_INTEGRATIONS_OPENAI_API_KEY", "dummy")
+        # ── Resolve API credentials ────────────────────────────────────────
+        # Priority 1: Replit AI Integration (when hosted on Replit)
+        replit_base_url = os.environ.get("AI_INTEGRATIONS_OPENAI_BASE_URL", "")
+        replit_api_key  = os.environ.get("AI_INTEGRATIONS_OPENAI_API_KEY", "")
 
-        if not base_url:
-            return "**Error**: AI integration not configured. Please check environment setup."
+        # Priority 2: Standard OpenAI key (Streamlit Cloud / self-hosting)
+        #   Set OPENAI_API_KEY in Streamlit secrets or as an env var.
+        openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not openai_api_key:
+            try:
+                openai_api_key = st.secrets.get("OPENAI_API_KEY", "")
+            except Exception:
+                openai_api_key = ""
 
-        client = _OpenAI(base_url=base_url, api_key=api_key)
+        if replit_base_url and replit_api_key:
+            client = _OpenAI(base_url=replit_base_url, api_key=replit_api_key)
+        elif openai_api_key:
+            client = _OpenAI(api_key=openai_api_key)
+        else:
+            return (
+                "**Configuration Error**: No OpenAI API key found.\n\n"
+                "**To fix this on Streamlit Cloud:**\n"
+                "1. Go to your app's Settings → Secrets\n"
+                "2. Add: `OPENAI_API_KEY = \"sk-...\"`\n\n"
+                "**To fix locally:** Set the environment variable `OPENAI_API_KEY` before running:\n"
+                "`export OPENAI_API_KEY=sk-...`\n"
+                "`streamlit run prt.py`"
+            )
 
         data_context = _build_data_context(df, query, max_rows=250)
 
