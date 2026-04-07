@@ -3103,6 +3103,234 @@ def _sq_execute_with_schema(ops_raw: list, pool: "pd.DataFrame") -> list:
     return results
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# SMART QUERY: CUSTOMER-WISE LOOKUP HELPERS  (additive — T[4] only)
+# No existing functions, globals, or other tabs are changed.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Profile metadata columns shown in the customer card
+_SQ_CUST_PROFILE_PATS: list = [
+    (r"\bfloor\b|\bmodule\b",                                         "Floor / Module"),
+    (r"\bSH\b|sub.*hall",                                             "Sub-Hall"),
+    (r"caged.*uncaged|caged",                                         "Caged / Uncaged"),
+    (r"ownership.*sify.*cust|ownership",                              "Ownership"),
+    (r"subscription.*mode|space.*subscription.*mode",                 "Subscription Mode"),
+    (r"power.*subscription.*model|billing.*model.*power.*subscr",     "Power Subscription Model"),
+    (r"power.*usage.*model|billing.*model.*power.*usage",             "Power Usage Model"),
+    (r"uom.*kva|uom",                                                 "UoM (KW/KVA)"),
+    (r"billing.*frequency|frequency",                                 "Billing Frequency"),
+]
+
+# Data column patterns to include in the customer metrics table (in display order)
+_SQ_CUST_DATA_PATS: list = [
+    (r"Power Capacity.*Total Capacity Purchased|Total Capacity Purchased", "Power Capacity Purchased"),
+    (r"Power Capacity.*Capacity in Use|^Capacity in Use$",                 "Power Capacity in Use"),
+    (r"Power Capacity.*Usage in KW|Usage in KW",                           "Power Usage (KW)"),
+    (r'Power Capacity.*"?Allocated"?.*Capacity',                           "Allocated Capacity (KW)"),
+    (r"Power Capacity.*Subscribed Capacity.*KW",                           "Subscribed Capacity to be Given (KW)"),
+    (r"Power Capacity.*Capacity to be given",                              "Capacity to be Given"),
+    (r"Power Capacity.*Reserved Capacity",                                 "Reserved Capacity"),
+    (r"Power Capacity.*Additional Capacity Charges",                       "Additional Capacity Charges (₹)"),
+    (r"^Space \| Subscription$|Space.*Subscription",                       "Space Subscription"),
+    (r"^Space \| In Use$|Space.*In Use",                                   "Space In Use"),
+    (r"^Space \| Billed$|Space.*Billed",                                   "Space Billed"),
+    (r"^Space \| Yet to be given",                                         "Space Yet to be Given"),
+    (r"Seating Space.*Subscription",                                        "Seating Subscription"),
+    (r"Seating Space.*In Use",                                              "Seating In Use"),
+    (r"Revenue.*Space revenue|Space revenue",                               "Revenue — Space (₹)"),
+    (r"Revenue.*Power Usage revenue",                                       "Revenue — Power (₹)"),
+    (r"Revenue.*Additional Capacity Revenue",                               "Revenue — Add. Capacity (₹)"),
+    (r"Revenue.*Seating Space",                                             "Revenue — Seating (₹)"),
+    (r"Revenue.*Total Revenue|Total Revenue",                               "Total Revenue (₹)"),
+    (r"Contract Information.*Net Rev Total",                                "Net Revenue Total (₹)"),
+    (r"Contract Information.*Total Rev.*Cap.*Power",                        "Total Rev (Cap + Power) (₹)"),
+    (r"Power Usage.*Unit Rate|Per Unit rate",                               "Per Unit Rate (₹/kWh)"),
+    (r"Contract Information.*Term of Contract",                             "Contract Term (Years)"),
+    (r"Contract Information.*Contract Start",                               "Contract Start Date"),
+    (r"Contract Information.*Current Ex",                                   "Contract Expiry Date"),
+    (r"Contract Information.*Sales Order",                                  "Sales Order Ref"),
+]
+
+
+def _sq_detect_customer_query(query: str) -> "tuple[str, str]":
+    """
+    Extract customer name from a natural-language query.
+    Returns (customer_name, remaining_field_hint).
+    Returns ("", query) when no customer name pattern is detected.
+
+    Patterns recognised:
+      "power capacity purchased for Oracle"         → ("Oracle", "power capacity purchased")
+      "Oracle's power capacity"                     → ("Oracle", "power capacity")
+      "show data for CISCO SYSTEMS"                 → ("CISCO SYSTEMS", "show data")
+      "total revenue of Wipro"                      → ("Wipro", "total revenue")
+      "customer Mahindra capacity in use"           → ("Mahindra", "capacity in use")
+    """
+    q = query.strip()
+
+    # Pattern 1: "... for <CustomerName>" — most common natural phrasing
+    m = re.search(
+        r"\bfor\s+([A-Za-z][\w\s&().,'\"/-]{2,60}?)(?:\s+(?:at|in|across|from|by|across)\b|\s*$)",
+        q, re.I
+    )
+    if m:
+        cust = m.group(1).strip().rstrip(",.?")
+        field = re.sub(r"\bfor\s+" + re.escape(cust), "", q, flags=re.I).strip()
+        return cust, field
+
+    # Pattern 2: "<CustomerName>'s <field>"
+    m = re.search(r"^([A-Za-z][\w\s&().,'/-]{1,60}?)\s*[''`]s\s+(.+)$", q, re.I)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+
+    # Pattern 3: "customer <CustomerName>"
+    m = re.search(r"\bcustomer\s+([A-Z][\w\s&().,'/-]{1,60}?)(?:\s+and\b|\s*$)", q, re.I)
+    if m:
+        cust = m.group(1).strip().rstrip(",.?")
+        field = re.sub(r"\bcustomer\s+" + re.escape(cust), "", q, flags=re.I).strip()
+        return cust, field
+
+    # Pattern 4: "... of <CapitalisedCustomer>" (only if capitalised, avoids "sum of power")
+    m = re.search(
+        r"\bof\s+([A-Z][A-Za-z][\w\s&().,'/-]{1,60}?)(?:\s+(?:at|in|across|from|and|for)\b|\s*$)",
+        q
+    )
+    if m:
+        cust = m.group(1).strip().rstrip(",.?")
+        if len(cust) > 3:
+            field = re.sub(r"\bof\s+" + re.escape(cust), "", q, flags=re.I).strip()
+            return cust, field
+
+    return "", q
+
+
+def _sq_find_customers(search: str, df: "pd.DataFrame") -> "pd.DataFrame":
+    """
+    Return all rows in df whose customer-name column contains `search`
+    (case-insensitive substring).  Tries DEMARC | Customer Name first,
+    then any column matching customer.*name.
+    """
+    cust_col = find_col(df,
+        r"DEMARC.*Customer Name",
+        r"customer.*name",
+        r"client.*name",
+    )
+    if not cust_col or not search.strip():
+        return pd.DataFrame()
+    mask = df[cust_col].astype(str).str.lower().str.contains(
+        re.escape(search.strip().lower()), na=False
+    )
+    return df[mask].copy().reset_index(drop=True)
+
+
+def _sq_build_customer_profile(rows: "pd.DataFrame",
+                                customer_search: str,
+                                field_hint: str) -> dict:
+    """
+    Build a richly structured result dict for a customer-wise lookup.
+    Keys:
+      type, label, customer, row_count,
+      profile_df   — metadata profile table
+      focus_col    — specifically requested column (if field_hint given)
+      focus_val    — sum of that column for this customer
+      focus_unit   — unit string
+      metrics_df   — all numeric data columns with values
+      raw_df       — full detail table for download
+    """
+    cust_col = find_col(rows,
+        r"DEMARC.*Customer Name", r"customer.*name", r"client.*name")
+
+    # ── Canonical customer display name ──────────────────────────────────────
+    if cust_col:
+        names = rows[cust_col].dropna().astype(str).str.strip().unique()
+        names = [n for n in names if n and n.lower() not in ("none","nan","")]
+        display_name = names[0] if names else customer_search
+    else:
+        display_name = customer_search
+
+    # ── Profile card ─────────────────────────────────────────────────────────
+    profile_rows = []
+    if "_Location" in rows.columns:
+        locs = rows["_Location"].unique().tolist()
+        profile_rows.append({"Field": "Location(s)", "Value": ", ".join(locs)})
+    if "_Sheet" in rows.columns:
+        sheets = rows["_Sheet"].unique().tolist()
+        profile_rows.append({"Field": "Sheet(s)", "Value": ", ".join(sheets)})
+    profile_rows.append({"Field": "Matched Rows", "Value": str(len(rows))})
+
+    for pat, label in _SQ_CUST_PROFILE_PATS:
+        c = find_col(rows, pat)
+        if c and c in rows.columns:
+            vals = rows[c].dropna().astype(str).str.strip().unique()
+            vals = [v for v in vals if v and v.lower() not in ("none","nan","")]
+            if vals:
+                profile_rows.append({"Field": label, "Value": ", ".join(vals[:5])})
+
+    profile_df = pd.DataFrame(profile_rows) if profile_rows else pd.DataFrame()
+
+    # ── Metrics table (all numeric data columns) ──────────────────────────────
+    metric_rows = []
+    seen_cols: set = set()
+    for pat, metric_label in _SQ_CUST_DATA_PATS:
+        c = find_col(rows, pat)
+        if not c or c in seen_cols or c.startswith("_"):
+            continue
+        seen_cols.add(c)
+        series = _robust_to_numeric(rows[c])
+        valid = series.dropna()
+        if valid.empty:
+            continue
+        total_val = valid.sum()
+        unit = _detect_unit(c)
+        display_val = (
+            f"₹ {total_val:,.2f}" if unit == "₹"
+            else f"{_fmt_decimal(total_val)} {unit}".strip()
+        )
+        metric_rows.append({
+            "Metric":  metric_label,
+            "Value":   display_val,
+            "_raw_val": total_val,
+            "_col":    c,
+            "_unit":   unit,
+            "_n_rows": f"{len(valid)}/{len(rows)}",
+        })
+
+    metrics_df = (
+        pd.DataFrame(metric_rows).drop(columns=["_raw_val","_col","_unit","_n_rows"])
+        if metric_rows else pd.DataFrame()
+    )
+    # Keep the raw detail separately for the focus value lookup
+    _metric_detail = metric_rows
+
+    # ── Focus column (specifically requested metric) ──────────────────────────
+    focus_col, focus_reason, focus_val, focus_unit = None, "", None, ""
+    if field_hint.strip():
+        focus_col, focus_reason = _sq_resolve_field(rows, field_hint)
+        if focus_col and focus_col in rows.columns:
+            _s = _robust_to_numeric(rows[focus_col]).dropna()
+            focus_val  = float(_s.sum()) if not _s.empty else None
+            focus_unit = _detect_unit(focus_col)
+
+    # ── Full raw detail table ─────────────────────────────────────────────────
+    meta_c = [c for c in ["_Location", "_Sheet"] if c in rows.columns]
+    data_c = [c for c in rows.columns if not c.startswith("_")]
+    raw_df = rows[meta_c + data_c].reset_index(drop=True)
+    raw_df.index += 1
+
+    return {
+        "type":         "customer_lookup",
+        "label":        f"Customer: {display_name}",
+        "customer":     display_name,
+        "row_count":    len(rows),
+        "profile_df":   profile_df,
+        "metrics_df":   metrics_df,
+        "focus_col":    focus_col,
+        "focus_val":    focus_val,
+        "focus_unit":   focus_unit,
+        "focus_reason": focus_reason,
+        "raw_df":       raw_df,
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # TAB 4 – SMART QUERY
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3210,6 +3438,18 @@ with T[4]:
                     st.warning("Could not parse query. Please try rephrasing.")
                 else:
                     results = _sq_execute_with_schema(ops_raw, pool)
+
+                    # ── Customer-wise lookup: detect & prepend (additive) ────
+                    _sq_cust_name, _sq_field_part = _sq_detect_customer_query(query.strip())
+                    if _sq_cust_name:
+                        _sq_cust_rows = _sq_find_customers(_sq_cust_name, pool)
+                        if not _sq_cust_rows.empty:
+                            _sq_cust_res = _sq_build_customer_profile(
+                                _sq_cust_rows, _sq_cust_name, _sq_field_part
+                            )
+                            results = [_sq_cust_res] + results
+                    # ────────────────────────────────────────────────────────
+
                     st.session_state["sq_results_history"].append({
                         "query":   query.strip(),
                         "source":  sq_src,
@@ -3317,6 +3557,79 @@ with T[4]:
                 elif rtype == "error":
                     st.warning(f"**{label}**: {res['message']}")
 
+                # ── Customer lookup result (additive) ─────────────────────
+                elif rtype == "customer_lookup":
+                    cust_disp = res["customer"]
+                    n_rows    = res["row_count"]
+                    st.markdown(
+                        f'<div style="background:{DARK2};border:2px solid {CYAN};'
+                        f'border-radius:14px;padding:20px 24px;margin:12px 0">'
+                        f'<div style="font-size:1.1rem;font-weight:900;color:{WHITE};'
+                        f'margin-bottom:4px">👤 {cust_disp}</div>'
+                        f'<div style="font-size:.8rem;color:{MUTED}">'
+                        f'{n_rows} matching row(s) across all locations</div></div>',
+                        unsafe_allow_html=True
+                    )
+
+                    # Focus metric (the specifically requested value)
+                    if res.get("focus_col") and res.get("focus_val") is not None:
+                        _fval  = res["focus_val"]
+                        _funit = res.get("focus_unit","")
+                        _fcol  = res["focus_col"].split("|")[-1].strip() if "|" in res["focus_col"] else res["focus_col"]
+                        _fdisplay = (
+                            f"₹ {_fval:,.2f}" if _funit == "₹"
+                            else f"{_fmt_decimal(_fval)} {_funit}".strip()
+                        )
+                        st.markdown(
+                            f'<div style="background:{CARD};border:1px solid {BORD};'
+                            f'border-radius:12px;padding:20px 28px;margin:8px 0;'
+                            f'display:inline-block;min-width:260px">'
+                            f'<div style="font-size:.75rem;color:{MUTED};font-weight:700;'
+                            f'text-transform:uppercase;letter-spacing:.06em">{_fcol}</div>'
+                            f'<div class="result-big">{_fdisplay}</div>'
+                            f'<div style="font-size:.72rem;color:{CYAN};margin-top:6px">'
+                            f'for {cust_disp}</div></div>',
+                            unsafe_allow_html=True
+                        )
+
+                    # Two-column layout: profile + metrics
+                    _pc1, _pc2 = st.columns([1, 2])
+                    with _pc1:
+                        if not res["profile_df"].empty:
+                            st.markdown(
+                                f'<div style="font-size:.78rem;color:{CYAN};font-weight:700;'
+                                f'text-transform:uppercase;letter-spacing:.06em;'
+                                f'margin:10px 0 4px">📋 Profile</div>',
+                                unsafe_allow_html=True
+                            )
+                            _pf = res["profile_df"].copy()
+                            _pf.index = [""] * len(_pf)
+                            st.dataframe(_pf, use_container_width=True, hide_index=True)
+
+                    with _pc2:
+                        if not res["metrics_df"].empty:
+                            st.markdown(
+                                f'<div style="font-size:.78rem;color:{CYAN};font-weight:700;'
+                                f'text-transform:uppercase;letter-spacing:.06em;'
+                                f'margin:10px 0 4px">📊 Metrics</div>',
+                                unsafe_allow_html=True
+                            )
+                            _mf = res["metrics_df"].copy()
+                            _mf.index = [""] * len(_mf)
+                            st.dataframe(_mf, use_container_width=True, hide_index=True)
+
+                    # Full detail table in expander
+                    with st.expander(f"🔎 Full detail table — {n_rows} row(s)", expanded=False):
+                        st.dataframe(res["raw_df"], use_container_width=True)
+                        st.download_button(
+                            "⬇ Download CSV",
+                            res["raw_df"].to_csv(index=False).encode(),
+                            f"customer_{cust_disp.replace(' ','_')[:30]}.csv",
+                            "text/csv",
+                            key=f"dl_cust_{hash(cust_disp)}",
+                        )
+                # ── End customer lookup ────────────────────────────────────
+
             st.markdown(f"<hr style='border-color:{BORD};margin:10px 0 16px'>",
                         unsafe_allow_html=True)
 
@@ -3340,7 +3653,172 @@ with T[4]:
           </div>
         </div>""", unsafe_allow_html=True)
 
+    # ══════════════════════════════════════════════════════════════════════════
+    # STANDALONE CUSTOMER LOOKUP  (additive sub-section of Smart Query tab)
+    # Completely independent of the AI query block above.
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown(f"<hr style='border-color:{BORD};margin:32px 0 20px'>",
+                unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-title">👤 Customer Lookup — Name-Based Data Retrieval</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div style="font-size:.85rem;color:{MUTED};margin-bottom:16px">'
+        f'Directly look up any customer across all DC locations. '
+        f'Type part of the customer name (e.g. <b style="color:{CYAN}">Oracle</b>, '
+        f'<b style="color:{CYAN}">Wipro</b>, <b style="color:{CYAN}">Cisco</b>). '
+        f'Optionally specify a metric to highlight (e.g. <i>power capacity purchased</i>, '
+        f'<i>total revenue</i>, <i>space in use</i>).</div>',
+        unsafe_allow_html=True,
+    )
 
+    _cl_c1, _cl_c2, _cl_c3 = st.columns([2, 2, 1])
+    with _cl_c1:
+        _cl_cust_input = st.text_input(
+            "🔍 Customer Name (partial match)",
+            placeholder="e.g. Oracle, Wipro, Cisco, YES BANK …",
+            key="cl_cust_input",
+        )
+    with _cl_c2:
+        _cl_field_input = st.text_input(
+            "📐 Metric / Field (optional)",
+            placeholder="e.g. power capacity purchased, total revenue …",
+            key="cl_field_input",
+        )
+    with _cl_c3:
+        st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
+        _cl_run = st.button("Find Customer", key="cl_run", use_container_width=True)
+
+    # Autocomplete hint — show matching customer names as a small reference table
+    if _cl_cust_input and not _cl_run:
+        if not pool_base.empty:
+            _cl_hint_rows = _sq_find_customers(_cl_cust_input.strip(), pool_base)
+            _cl_cust_col  = find_col(_cl_hint_rows,
+                r"DEMARC.*Customer Name", r"customer.*name", r"client.*name")
+            if not _cl_hint_rows.empty and _cl_cust_col:
+                _cl_matches = (
+                    _cl_hint_rows[_cl_cust_col]
+                    .dropna().astype(str).str.strip()
+                    .unique().tolist()
+                )
+                _cl_matches = [m for m in _cl_matches
+                               if m and m.lower() not in ("none","nan","")]
+                if _cl_matches:
+                    st.markdown(
+                        f'<div style="font-size:.77rem;color:{CYAN};font-weight:700;'
+                        f'margin:4px 0 2px">Matching customers ({len(_cl_matches)}):</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(
+                        " &nbsp; ".join(
+                            f'<span class="badge">{m[:50]}</span>'
+                            for m in sorted(set(_cl_matches))[:20]
+                        ),
+                        unsafe_allow_html=True,
+                    )
+
+    # Execute lookup
+    if _cl_run:
+        if not _cl_cust_input.strip():
+            st.warning("Please enter a customer name.")
+        elif pool_base.empty:
+            st.error("No data loaded. Please check your Excel files.")
+        else:
+            _cl_pool = pool_base.copy()
+            if sq_locs and "_Location" in _cl_pool.columns:
+                _cl_pool = _cl_pool[_cl_pool["_Location"].isin(sq_locs)]
+
+            _cl_rows = _sq_find_customers(_cl_cust_input.strip(), _cl_pool)
+
+            if _cl_rows.empty:
+                st.warning(
+                    f"No rows found matching **'{_cl_cust_input}'**. "
+                    f"Try a shorter search term (e.g. just part of the company name)."
+                )
+            else:
+                _cl_res = _sq_build_customer_profile(
+                    _cl_rows, _cl_cust_input.strip(), _cl_field_input.strip()
+                )
+                cust_disp = _cl_res["customer"]
+                n_rows    = _cl_res["row_count"]
+
+                # Header card
+                st.markdown(
+                    f'<div style="background:{DARK2};border:2px solid {CYAN};'
+                    f'border-radius:14px;padding:20px 24px;margin:12px 0">'
+                    f'<div style="font-size:1.1rem;font-weight:900;color:{WHITE};'
+                    f'margin-bottom:4px">👤 {cust_disp}</div>'
+                    f'<div style="font-size:.8rem;color:{MUTED}">'
+                    f'{n_rows} matching row(s) across selected locations</div></div>',
+                    unsafe_allow_html=True,
+                )
+
+                # Focus metric (highlighted answer)
+                if _cl_res.get("focus_col") and _cl_res.get("focus_val") is not None:
+                    _cfval   = _cl_res["focus_val"]
+                    _cfunit  = _cl_res.get("focus_unit", "")
+                    _cfcol   = (
+                        _cl_res["focus_col"].split("|")[-1].strip()
+                        if "|" in _cl_res["focus_col"] else _cl_res["focus_col"]
+                    )
+                    _cfdisplay = (
+                        f"₹ {_cfval:,.2f}" if _cfunit == "₹"
+                        else f"{_fmt_decimal(_cfval)} {_cfunit}".strip()
+                    )
+                    st.markdown(
+                        f'<div style="background:{CARD};border:1px solid {BORD};'
+                        f'border-radius:12px;padding:22px 32px;margin:10px 0;'
+                        f'display:inline-block;min-width:280px">'
+                        f'<div style="font-size:.75rem;color:{MUTED};font-weight:700;'
+                        f'text-transform:uppercase;letter-spacing:.06em">{_cfcol}</div>'
+                        f'<div class="result-big">{_cfdisplay}</div>'
+                        f'<div style="font-size:.72rem;color:{CYAN};margin-top:6px">'
+                        f'for {cust_disp}</div></div>',
+                        unsafe_allow_html=True,
+                    )
+
+                # Profile + Metrics columns
+                _cc1, _cc2 = st.columns([1, 2])
+                with _cc1:
+                    if not _cl_res["profile_df"].empty:
+                        st.markdown(
+                            f'<div style="font-size:.78rem;color:{CYAN};font-weight:700;'
+                            f'text-transform:uppercase;letter-spacing:.06em;'
+                            f'margin:12px 0 4px">📋 Profile</div>',
+                            unsafe_allow_html=True,
+                        )
+                        _cpf = _cl_res["profile_df"].copy()
+                        _cpf.index = [""] * len(_cpf)
+                        st.dataframe(_cpf, use_container_width=True, hide_index=True)
+
+                with _cc2:
+                    if not _cl_res["metrics_df"].empty:
+                        st.markdown(
+                            f'<div style="font-size:.78rem;color:{CYAN};font-weight:700;'
+                            f'text-transform:uppercase;letter-spacing:.06em;'
+                            f'margin:12px 0 4px">📊 All Metrics</div>',
+                            unsafe_allow_html=True,
+                        )
+                        _cmf = _cl_res["metrics_df"].copy()
+                        _cmf.index = [""] * len(_cmf)
+                        st.dataframe(_cmf, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No numeric metrics found for this customer.")
+
+                # Full detail table
+                with st.expander(
+                    f"🔎 Full detail rows — {n_rows} row(s) for {cust_disp}",
+                    expanded=False
+                ):
+                    st.dataframe(_cl_res["raw_df"], use_container_width=True)
+                    st.download_button(
+                        "⬇ Download CSV",
+                        _cl_res["raw_df"].to_csv(index=False).encode(),
+                        f"customer_{cust_disp.replace(' ','_')[:40]}.csv",
+                        "text/csv",
+                        key="cl_download",
+                    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
