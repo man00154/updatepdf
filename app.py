@@ -449,55 +449,100 @@ OPERATIONS = [
 
 def run_op(df: pd.DataFrame, col: str, op: str,
            group_by: str = None, top_n: int = 10):
+    """Run a numeric operation on col, using _robust_to_numeric to handle
+    comma-formatted numbers, currency strings (₹), #REF errors, etc."""
     if col not in df.columns:
         return None, f"Column '{col}' not found."
-    series = pd.to_numeric(df[col], errors="coerce").dropna()
-    if series.empty:
-        return None, "No numeric data in column."
 
+    # Use robust parser — handles "1,234.56", "₹ 500.00", None, "#REF!", etc.
+    numeric_series = _robust_to_numeric(df[col])
+    valid = numeric_series.dropna()
+    total = len(numeric_series)
+
+    if valid.empty:
+        return None, f"No numeric values found in column '{col}' (all rows are text, blank, or error)."
+
+    # ── GROUPED OPERATION ────────────────────────────────────────────────────
     if group_by and group_by in df.columns:
-        g = df[[group_by, col]].copy()
-        g[col] = pd.to_numeric(g[col], errors="coerce")
-        g = g.dropna(subset=[col])
-        fn = {
+        tmp = df[[group_by, col]].copy()
+        tmp[col] = _robust_to_numeric(tmp[col])
+        tmp = tmp.dropna(subset=[col])
+
+        fn_map = {
             "Sum": "sum", "Mean (Avg)": "mean", "Median": "median",
             "Min": "min", "Max": "max", "Count": "count",
             "Std Deviation": "std", "Variance": "var",
-        }.get(op, "sum")
-        res = g.groupby(group_by)[col].agg(fn).reset_index()
-        res[col] = res[col].round(3)
-        return res, f"{op} of '{col}' by '{group_by}'"
+            "Range (Max-Min)": lambda s: s.max() - s.min(),
+        }
+        fn = fn_map.get(op, "sum")
+        if callable(fn):
+            res = tmp.groupby(group_by)[col].apply(fn).reset_index()
+        else:
+            res = tmp.groupby(group_by)[col].agg(fn).reset_index()
 
-    if op == "Sum":               v = series.sum()
-    elif op == "Mean (Avg)":      v = series.mean()
-    elif op == "Median":          v = series.median()
-    elif op == "Min":             v = series.min()
-    elif op == "Max":             v = series.max()
-    elif op == "Count":           v = len(series)
-    elif op == "Std Deviation":   v = series.std()
-    elif op == "Variance":        v = series.var()
-    elif op == "Range (Max-Min)": v = series.max() - series.min()
-    elif op == "% of Total":      v = 100.0
-    elif op == "Top N Values":
-        res = df[[col]].copy()
-        res[col] = pd.to_numeric(res[col], errors="coerce")
-        return res.dropna().nlargest(top_n, col).reset_index(drop=True), f"Top {top_n} of '{col}'"
-    elif op == "Bottom N Values":
-        res = df[[col]].copy()
-        res[col] = pd.to_numeric(res[col], errors="coerce")
-        return res.dropna().nsmallest(top_n, col).reset_index(drop=True), f"Bottom {top_n} of '{col}'"
+        # Sort descending by value
+        res = res.sort_values(col, ascending=False).reset_index(drop=True)
+        res.index += 1
+        valid_pct = f"{len(tmp) / total * 100:.1f}%" if total else "—"
+        return res, f"{op} of '{col}' grouped by '{group_by}'", valid_pct, len(valid), total
+
+    # ── SCALAR OPERATIONS ─────────────────────────────────────────────────────
+    if op == "Sum":               v = valid.sum()
+    elif op == "Mean (Avg)":      v = valid.mean()
+    elif op == "Median":          v = valid.median()
+    elif op == "Min":             v = valid.min()
+    elif op == "Max":             v = valid.max()
+    elif op == "Count":           v = float(len(valid))
+    elif op == "Std Deviation":   v = valid.std(ddof=1)
+    elif op == "Variance":        v = valid.var(ddof=1)
+    elif op == "Range (Max-Min)": v = valid.max() - valid.min()
+    elif op == "% of Total":
+        # % of grand total across all locations
+        grand = _robust_to_numeric(df[col]).dropna().sum()
+        v = (valid.sum() / grand * 100) if grand else 0.0
+    elif op in ("Top N Values", "Bottom N Values"):
+        # Include context columns: location, customer name
+        ctx = [c for c in ["_Location", "_Sheet"] if c in df.columns]
+        cname = find_col(df, r"customer.*name|client.*name")
+        if cname:
+            ctx.append(cname)
+        sub = df[ctx + [col]].copy()
+        sub[col] = _robust_to_numeric(sub[col])
+        sub = sub.dropna(subset=[col])
+        if op == "Top N Values":
+            sub = sub.nlargest(top_n, col)
+        else:
+            sub = sub.nsmallest(top_n, col)
+        sub = sub.reset_index(drop=True)
+        sub.index += 1
+        valid_pct = f"{len(valid) / total * 100:.1f}%" if total else "—"
+        return sub, f"{'Top' if 'Top' in op else 'Bottom'} {top_n} of '{col}'", valid_pct, len(valid), total
     elif op == "Cumulative Sum":
-        res = pd.DataFrame({"Row": range(len(series)), col: series.cumsum().values})
-        return res, f"Cumulative Sum of '{col}'"
+        sub = pd.DataFrame({
+            "Row #": range(1, len(valid) + 1),
+            col:     valid.values,
+            "Cumulative Sum": valid.cumsum().values,
+        })
+        valid_pct = f"{len(valid) / total * 100:.1f}%" if total else "—"
+        return sub, f"Cumulative Sum of '{col}'", valid_pct, len(valid), total
     elif op == "Rank (Desc)":
-        res = df[[col]].copy()
-        res[col] = pd.to_numeric(res[col], errors="coerce")
-        res = res.dropna()
-        res["Rank"] = res[col].rank(ascending=False).astype(int)
-        return res.sort_values("Rank").reset_index(drop=True), f"Rank by '{col}'"
+        ctx = [c for c in ["_Location"] if c in df.columns]
+        cname = find_col(df, r"customer.*name|client.*name")
+        if cname:
+            ctx.append(cname)
+        sub = df[ctx + [col]].copy()
+        sub[col] = _robust_to_numeric(sub[col])
+        sub = sub.dropna(subset=[col])
+        sub["Rank"] = sub[col].rank(ascending=False, method="min").astype(int)
+        sub = sub.sort_values("Rank").reset_index(drop=True)
+        sub.index += 1
+        valid_pct = f"{len(valid) / total * 100:.1f}%" if total else "—"
+        return sub, f"Rank (Desc) by '{col}'", valid_pct, len(valid), total
     else:
-        v = series.sum()
-    return round(float(v), 4), f"{op} of '{col}'"
+        v = valid.sum()
+
+    valid_pct = f"{len(valid) / total * 100:.1f}%" if total else "—"
+    return float(v), f"{op} of '{col}'", valid_pct, len(valid), total
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1120,14 +1165,14 @@ def execute_clause(clause: str, df: pd.DataFrame,
                     "filter_label": filter_label, "rows_used": rows_used}
 
         elif grp:
-            res, desc = run_op(filtered, num_col, detected_op, grp, top_n)
+            res, desc, *_ = run_op(filtered, num_col, detected_op, grp, top_n)
             return {"title": desc + ctx_label, "type": "grouped",
                     "data": res if isinstance(res, pd.DataFrame) else pd.DataFrame(),
                     "description": f"*{clause}*{loc_note}",
                     "x_col": grp, "y_col": num_col,
                     "filter_label": filter_label, "rows_used": rows_used}
         else:
-            res, desc = run_op(filtered, num_col, detected_op, None, top_n)
+            res, desc, *_ = run_op(filtered, num_col, detected_op, None, top_n)
             return {"title": desc + ctx_label, "type": "scalar", "data": res,
                     "description": f"*{clause}*{loc_note}",
                     "rows_used": rows_used, "filter_label": filter_label,
@@ -2439,60 +2484,169 @@ with T[2]:
     st.markdown('<div class="section-title">Operations Engine</div>', unsafe_allow_html=True)
 
     if CUST.empty:
-        st.warning("No data loaded.")
+        st.warning("No data loaded. Please check that Excel files are present.")
     else:
-        op1, op2, op3, op4 = st.columns(4)
+        # ── Row 1: Location + Sheet filters ──────────────────────────────────
+        op1, op2 = st.columns(2)
         with op1:
-            op_loc = st.selectbox("📍 Location", ["All"] + sorted(fdata.keys()), key="op_loc")
+            op_loc = st.selectbox("📍 Filter by Location",
+                                  ["All"] + sorted(fdata.keys()), key="op_loc")
         with op2:
             op_sh_opts = (sorted(fdata.get(op_loc, {}).keys())
-                          if op_loc != "All" else sorted({sn for s in fdata.values() for sn in s}))
-            op_sh = st.selectbox("📋 Sheet", ["All"] + op_sh_opts, key="op_sh")
+                          if op_loc != "All"
+                          else sorted({sn for s in fdata.values() for sn in s}))
+            op_sh = st.selectbox("📋 Filter by Sheet",
+                                 ["All"] + op_sh_opts, key="op_sh")
 
+        # Apply location / sheet filter
         op_df = CUST.copy()
         if op_loc != "All" and "_Location" in op_df.columns:
-            op_df = op_df[op_df["_Location"] == op_loc]
+            op_df = op_df[op_df["_Location"].str.contains(op_loc, case=False, na=False)]
         if op_sh != "All" and "_Sheet" in op_df.columns:
             op_df = op_df[op_df["_Sheet"] == op_sh]
 
-        nc_op = num_cols(op_df)
-        tc_op = txt_cols(op_df)
+        st.caption(f"🔢 **{len(op_df):,}** rows available "
+                   f"({'all locations' if op_loc == 'All' else op_loc}"
+                   f"{', ' + op_sh if op_sh != 'All' else ''})")
 
+        # ── ALL selectable columns (not just dtype-numeric) ──────────────────
+        # _robust_to_numeric will parse them correctly at run time
+        all_cols = [c for c in op_df.columns if not c.startswith("_")]
+        nc_op    = num_cols(op_df)   # already-numeric (dtype) — highlighted
+        tc_op    = txt_cols(op_df)   # text / categoricals
+
+        # Group-by candidates: categorical + Location/Sheet meta
+        grp_candidates = (
+            [c for c in ["_Location", "_Sheet"] if c in op_df.columns]
+            + [c for c in tc_op if c not in ("_Location", "_Sheet")]
+        )
+
+        # ── Row 2: Column + Operation + Group-by ─────────────────────────────
+        op3, op4, op5 = st.columns([2, 2, 2])
         with op3:
-            op_col = st.selectbox("📐 Column", nc_op if nc_op else ["—"], key="op_col")
+            # Show ALL columns; mark already-numeric with ★
+            col_display = {c: (f"★ {c}" if c in nc_op else c) for c in all_cols}
+            op_col_disp = st.selectbox(
+                "📐 Column  (★ = already numeric)",
+                options=list(col_display.values()),
+                key="op_col_disp",
+            )
+            # Map back to real column name
+            op_col = next((k for k, v in col_display.items() if v == op_col_disp), op_col_disp)
+
         with op4:
             op_op = st.selectbox("🔧 Operation", OPERATIONS, key="op_op")
 
-        op5, op6 = st.columns(2)
         with op5:
-            op_grp = st.selectbox("🗂 Group By (optional)",
-                                  ["None"] + [c for c in tc_op if not c.startswith("_")],
-                                  key="op_grp")
-        with op6:
-            op_n = st.number_input("N (Top/Bottom N)", min_value=1, max_value=100,
-                                   value=10, step=1, key="op_n")
+            op_grp = st.selectbox(
+                "🗂 Group By  (optional)",
+                ["None"] + [c for c in grp_candidates if c != op_col],
+                key="op_grp",
+            )
 
-        if st.button("▶ Run Operation", key="op_run") and op_col and op_col != "—":
-            grp = op_grp if op_grp != "None" else None
-            res, desc = run_op(op_df, op_col, op_op, grp, int(op_n))
-            st.markdown(f'<div class="section-title">{desc}</div>', unsafe_allow_html=True)
-            if isinstance(res, pd.DataFrame):
-                st.dataframe(res, use_container_width=True)
-                if grp:
-                    fig_op = px.bar(res.head(30), x=grp, y=op_col, color=op_col,
-                                    color_continuous_scale="Blues", title=desc)
-                    fig_op.update_layout(**_base_layout(), height=350)
-                    st.plotly_chart(fig_op, use_container_width=True)
-            elif isinstance(res, (int, float)):
-                st.markdown(f"""
-                <div style="background:{DARK2};border:1px solid {BORD};border-radius:14px;
-                     padding:28px;text-align:center;margin:12px 0">
-                  <div style="font-size:.8rem;color:{MUTED};text-transform:uppercase;
-                       font-weight:700;letter-spacing:.08em">{desc}</div>
-                  <div class="result-big">{fmt(res)}</div>
-                </div>""", unsafe_allow_html=True)
+        op6, op7 = st.columns([1, 3])
+        with op6:
+            op_n = st.number_input("N  (for Top / Bottom N)",
+                                   min_value=1, max_value=500, value=10, step=1, key="op_n")
+
+        # ── Quick column preview (before running) ─────────────────────────────
+        if op_col and op_col in op_df.columns:
+            preview_series = _robust_to_numeric(op_df[op_col])
+            valid_preview  = preview_series.dropna()
+            total_preview  = len(preview_series)
+            pct_v          = valid_preview.shape[0] / max(total_preview, 1) * 100
+            col_p1, col_p2, col_p3, col_p4 = st.columns(4)
+            col_p1.metric("Total Rows",   f"{total_preview:,}")
+            col_p2.metric("Numeric Rows", f"{len(valid_preview):,}")
+            col_p3.metric("Valid %",      f"{pct_v:.1f}%")
+            if not valid_preview.empty:
+                col_p4.metric("Quick Sum", _fmt_decimal(valid_preview.sum()))
+
+        # ── Run button ────────────────────────────────────────────────────────
+        if st.button("▶  Run Operation", key="op_run", use_container_width=True):
+            if not op_col or op_col not in op_df.columns:
+                st.error("Please select a valid column.")
             else:
-                st.info(str(res))
+                grp = op_grp if op_grp != "None" else None
+                out = run_op(op_df, op_col, op_op, grp, int(op_n))
+
+                # run_op always returns 5-tuple; first element may be None
+                if out[0] is None:
+                    # Error string in out[1]
+                    st.error(out[1])
+                else:
+                    result, desc, valid_pct, valid_count, total_count = out
+
+                    st.markdown(
+                        f'<div class="section-title">📊 {desc}</div>',
+                        unsafe_allow_html=True,
+                    )
+
+                    # ── Scalar result ─────────────────────────────────────────
+                    if isinstance(result, (int, float)):
+                        unit  = _detect_unit(op_col)
+                        raw   = _fmt_decimal(result, unit)
+                        disp  = f"₹ {_fmt_decimal(result)} {unit}".strip() if unit == "₹" else raw
+
+                        r1, r2, r3 = st.columns(3)
+                        with r1:
+                            st.markdown(f"""
+                            <div style="background:{DARK2};border:1px solid {BORD};
+                                 border-radius:14px;padding:24px 28px;text-align:center">
+                              <div style="font-size:.75rem;color:{MUTED};font-weight:700;
+                                   text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px">
+                                {op_op}</div>
+                              <div style="font-size:2.2rem;font-weight:900;color:{CYAN};
+                                   line-height:1.1">{disp}</div>
+                              <div style="font-size:.8rem;color:{MUTED};margin-top:8px">
+                                {op_col}</div>
+                            </div>""", unsafe_allow_html=True)
+                        with r2:
+                            st.metric("Rows used", f"{valid_count:,} / {total_count:,}")
+                            st.metric("Valid %", valid_pct)
+                        with r3:
+                            if unit:
+                                st.info(f"Unit detected: **{unit}**")
+                            st.caption(f"Source: {op_loc} › {op_sh}")
+
+                    # ── Table result (grouped / Top-N / etc.) ─────────────────
+                    elif isinstance(result, pd.DataFrame):
+                        st.dataframe(result, use_container_width=True)
+
+                        # Stat pills
+                        sp1, sp2, sp3 = st.columns(3)
+                        sp1.metric("Rows returned", len(result))
+                        sp2.metric("Rows used (valid)", f"{valid_count:,} / {total_count:,}")
+                        sp3.metric("Valid %", valid_pct)
+
+                        # Bar chart when grouped and column exists in result
+                        if grp and op_col in result.columns and grp in result.columns:
+                            plot_df = result.head(30).copy()
+                            fig_op = px.bar(
+                                plot_df,
+                                x=grp, y=op_col,
+                                color=op_col,
+                                color_continuous_scale="Blues",
+                                title=desc,
+                                labels={op_col: op_op, grp: grp},
+                                text=op_col,
+                            )
+                            fig_op.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
+                            fig_op.update_layout(**_base_layout(), height=420,
+                                                 xaxis_tickangle=-35)
+                            st.plotly_chart(fig_op, use_container_width=True)
+
+                        # Download button
+                        csv_bytes = result.to_csv(index=True).encode()
+                        st.download_button(
+                            "⬇️  Download result as CSV",
+                            data=csv_bytes,
+                            file_name=f"ops_result_{op_col[:20]}_{op_op}.csv",
+                            mime="text/csv",
+                            key="op_download",
+                        )
+                    else:
+                        st.info(str(result))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2787,7 +2941,7 @@ with T[5]:
         for loc in sel_locs:
             loc_df = CUST[CUST["_Location"] == loc] if "_Location" in CUST.columns else CUST
             if not loc_df.empty and xl_col in loc_df.columns:
-                val, _ = run_op(loc_df, xl_col, xl_op)
+                val, *_ = run_op(loc_df, xl_col, xl_op)
                 if isinstance(val, (int, float)):
                     rows.append({"Location": loc, xl_col: val})
         xl_agg = (pd.DataFrame(rows).sort_values(xl_col, ascending=False)
