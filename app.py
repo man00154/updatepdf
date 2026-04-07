@@ -2706,9 +2706,406 @@ with T[3]:
             st.plotly_chart(fig, use_container_width=True)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 4 – SMART QUERY  (Structured AI parse → real data execution)
-# ══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+# SMART QUERY — ENHANCED DATA INGESTION + ACCURATE SCHEMA MAPPING  (additive)
+# These functions are used ONLY by the Smart Query tab (T[4]).
+# All other tabs and all existing functions/globals remain completely unchanged.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Comprehensive field-hint → column pattern registry ─────────────────────────
+# Covers every real column name variant observed across all 10 DC Excel files.
+_SQ_FIELD_PATTERNS: dict = {
+    # Power / Capacity ─────────────────────────────────────────────────────────
+    "total capacity purchased": [
+        r"Power Capacity\s*\|\s*Total Capacity Purchased",
+        r"^Total Capacity Purchased",
+        r"Total Capacity Purchased \(KW\)",
+        r"capacity.*purchased",
+        r"subscribed.*kw|kw.*subscribed",
+    ],
+    "power in use": [
+        r"Power Capacity\s*\|\s*Capacity in Use",
+        r"Power Capacity\s*\|\s*Usage in KW",
+        r"Capacity in Use \(KW\)",
+        r"^Capacity in Use$",
+        r"capacity\s+in\s+use",
+        r"usage\s+in\s+kw",
+    ],
+    "power allocated": [
+        r'Power Capacity\s*\|\s*"?Allocated"?\s*Capacity',
+        r"allocated.*capacity.*kw",
+        r"allocated.*kw",
+    ],
+    "power usage kw": [
+        r"Power Capacity\s*\|\s*Usage in KW",
+        r"Power Usage.*Raw Power",
+        r"Power Usage \(All in KW\)",
+        r"usage\s+in\s+kw",
+        r"actual.*usage.*kw",
+        r"Actual Load KVA",
+    ],
+    "subscribed capacity kw": [
+        r"Power Capacity\s*\|\s*Subscribed Capacity to be given in KW",
+        r"subscribed.*capacity.*to.*be.*given",
+        r"capacity.*to.*be.*given.*kw",
+    ],
+    "capacity to be given": [
+        r"Power Capacity\s*\|\s*Capacity to be given",
+        r"capacity.*to.*be.*given",
+    ],
+    "reserved capacity": [
+        r"Power Capacity\s*\|\s*Reserved Capacity",
+        r"reserved.*capacity",
+        r"Seating Space\s*\|\s*Reserved Capacity",
+    ],
+    "additional capacity charges": [
+        r"Power Capacity\s*\|\s*Additional Capacity Charges",
+        r"Power Capacity\s*\|\s*Billable Additional Capacity",
+        r"additional.*capacity.*charges",
+        r"billable.*additional.*capacity",
+    ],
+    # Space / Racks ─────────────────────────────────────────────────────────────
+    "total space": [
+        r"^Space \| Subscription$",
+        r"Space\s*\|\s*Subscription",
+        r"Sitting Space \(Subscription\)",
+        r"space.*subscription",
+        r"Subscription\(No\. of Racks\)",
+    ],
+    "space in use": [
+        r"^Space \| In Use$",
+        r"Space\s*\|\s*In Use",
+        r"In Use\(No\. of Racks\)",
+        r"space.*in.*use",
+    ],
+    "space billed": [
+        r"^Space \| Billed$",
+        r"Space\s*\|\s*Billed",
+        r"space.*billed",
+        r"Seating Space\s*\|\s*Billed",
+    ],
+    "space yet to be given": [
+        r"Space\s*\|\s*Yet to be given",
+        r"yet.*to.*be.*given",
+        r"Seating Space\s*\|\s*Yet to be given",
+    ],
+    "seating subscription": [
+        r"^Seating Space \| Subscription$",
+        r"Seating Space\s*\|\s*Subscription",
+        r"seating.*space.*subscription",
+        r"sitting.*space.*subscription",
+    ],
+    "seating in use": [
+        r"^Seating Space \| In Use$",
+        r"Seating Space\s*\|\s*In Use",
+        r"seating.*space.*in.*use",
+    ],
+    # Revenue ───────────────────────────────────────────────────────────────────
+    "total revenue": [
+        r"Revenue \(Monthly\s*\)\s*\|\s*Total Revenue",
+        r"Revenue.*\|\s*Total Revenue",
+        r"^Total Revenue$",
+        r"total.*revenue",
+        r"total.*mrc",
+        r"Total Rev \(Cap \+ Power\)",
+        r"Total\s*\|\s*\d",   # summary total rows
+    ],
+    "space revenue": [
+        r"Revenue \(Monthly\s*\)\s*\|\s*Space revenue",
+        r"Revenue.*\|\s*Space revenue",
+        r"space.*revenue.*including",
+        r"space.*revenue",
+    ],
+    "power revenue": [
+        r"Revenue \(Monthly\s*\)\s*\|\s*Power Usage revenue",
+        r"Revenue.*\|\s*Power Usage revenue",
+        r"Contract Information\s*\|\s*Power Revenue",
+        r"power.*usage.*revenue",
+        r"power.*revenue",
+    ],
+    "additional capacity revenue": [
+        r"Revenue \(Monthly\s*\)\s*\|\s*Additional Capacity Revenue",
+        r"Revenue.*\|\s*Additional Capacity Revenue",
+        r"additional.*capacity.*revenue",
+        r"Contract Information\s*\|\s*Capacity Revenue",
+    ],
+    "seating revenue": [
+        r"Revenue \(Monthly\s*\)\s*\|\s*Seating Space",
+        r"Revenue.*\|\s*Seating Space",
+        r"seating.*space.*revenue",
+        r"seating.*revenue",
+    ],
+    "net revenue": [
+        r"Contract Information\s*\|\s*Net Rev Total",
+        r"Contract Information\s*\|\s*Total Rev \(Cap \+ Power\)",
+        r"net.*rev.*total",
+        r"net.*revenue",
+        r"Total Rev \(Cap \+ Power\)",
+    ],
+    # Rate ──────────────────────────────────────────────────────────────────────
+    "per unit rate": [
+        r"Power Usage\s*\|\s*Unit Rate \(per KW-HR\)",
+        r"Power Usage\s*\|\s*Unit rate.*KW",
+        r"Space\s*\|\s*Per Unit rate",
+        r"Seating Space\s*\|\s*Per Unit rate",
+        r"per.*unit.*rate",
+        r"unit.*rate.*kw",
+    ],
+    # Contract ──────────────────────────────────────────────────────────────────
+    "contract start": [
+        r"Contract Information\s*\|\s*Contract Start",
+        r"contract.*start",
+        r"start.*date",
+    ],
+    "contract expiry": [
+        r"Contract Information\s*\|\s*Current Ex[ip]iry Date",
+        r"expiry.*date",
+        r"current.*expiry",
+    ],
+    "contract term": [
+        r"Contract Information\s*\|\s*Term of Contract",
+        r"term.*of.*contract",
+        r"contract.*term",
+        r"no.*of.*years",
+    ],
+}
+
+# Extended phrase → field key aliases (checked before _HINT_SEMANTIC)
+_SQ_HINT_ALIASES: list = [
+    # Power
+    ("total capacity purchased",     "total capacity purchased"),
+    ("total power purchased",        "total capacity purchased"),
+    ("total kw purchased",           "total capacity purchased"),
+    ("total kva purchased",          "total capacity purchased"),
+    ("power purchased",              "total capacity purchased"),
+    ("capacity purchased",           "total capacity purchased"),
+    ("subscribed capacity",          "total capacity purchased"),
+    ("total capacity",               "total capacity purchased"),
+    ("power capacity",               "total capacity purchased"),
+    ("sum of power",                 "total capacity purchased"),
+    ("total power",                  "total capacity purchased"),
+    ("power kw",                     "total capacity purchased"),
+    ("total kw",                     "total capacity purchased"),
+    ("power in use",                 "power in use"),
+    ("capacity in use",              "power in use"),
+    ("power used",                   "power in use"),
+    ("power usage",                  "power in use"),
+    ("usage in kw",                  "power in use"),
+    ("kw in use",                    "power in use"),
+    ("power usage kw",               "power usage kw"),
+    ("actual usage",                 "power usage kw"),
+    ("raw power",                    "power usage kw"),
+    ("power allocated",              "power allocated"),
+    ("allocated capacity",           "power allocated"),
+    ("allocated kw",                 "power allocated"),
+    ("capacity to be given",         "capacity to be given"),
+    ("subscribed capacity kw",       "subscribed capacity kw"),
+    ("reserved capacity",            "reserved capacity"),
+    ("additional capacity charges",  "additional capacity charges"),
+    # Space
+    ("total space",                  "total space"),
+    ("space subscription",           "total space"),
+    ("space subscribed",             "total space"),
+    ("space purchased",              "total space"),
+    ("sitting space subscription",   "total space"),
+    ("total racks",                  "total space"),
+    ("number of racks",              "total space"),
+    ("space in use",                 "space in use"),
+    ("space used",                   "space in use"),
+    ("racks in use",                 "space in use"),
+    ("space billed",                 "space billed"),
+    ("space yet to be given",        "space yet to be given"),
+    ("seating subscription",         "seating subscription"),
+    ("seating space subscription",   "seating subscription"),
+    ("seating in use",               "seating in use"),
+    ("seating space in use",         "seating in use"),
+    # Revenue
+    ("total revenue",                "total revenue"),
+    ("total mrc",                    "total revenue"),
+    ("total monthly revenue",        "total revenue"),
+    ("sum of revenue",               "total revenue"),
+    ("sum revenue",                  "total revenue"),
+    ("revenue total",                "total revenue"),
+    ("mrc",                          "total revenue"),
+    ("space revenue",                "space revenue"),
+    ("revenue from space",           "space revenue"),
+    ("space including capacity",     "space revenue"),
+    ("power revenue",                "power revenue"),
+    ("power usage revenue",          "power revenue"),
+    ("revenue from power",           "power revenue"),
+    ("additional capacity revenue",  "additional capacity revenue"),
+    ("seating revenue",              "seating revenue"),
+    ("net revenue",                  "net revenue"),
+    ("net rev",                      "net revenue"),
+    ("total rev",                    "net revenue"),
+    # Rate
+    ("per unit rate",                "per unit rate"),
+    ("unit rate",                    "per unit rate"),
+    ("tariff",                       "per unit rate"),
+    ("rate per kw",                  "per unit rate"),
+]
+
+
+def _sq_resolve_field(df: "pd.DataFrame", field_hint: str) -> "tuple[str|None, str]":
+    """
+    Enhanced column resolver for Smart Query tab only.
+    Priority order:
+      1. Extended _SQ_FIELD_PATTERNS via _SQ_HINT_ALIASES (covers all DC Excel column variants)
+      2. Original _HINT_SEMANTIC / _SEMANTIC_COLS (legacy fallback)
+      3. Fuzzy multi-word match across ALL columns (not just dtype-numeric)
+      4. First numeric column
+    Returns (column_name, reason_string).
+    """
+    hint_lower = (field_hint or "").lower().strip()
+    nc = num_cols(df)
+
+    # ── 1. Extended pattern registry ──────────────────────────────────────────
+    resolved_key = None
+    for alias, key in _SQ_HINT_ALIASES:
+        if alias in hint_lower:
+            resolved_key = key
+            break
+    if resolved_key is None:
+        for key in _SQ_FIELD_PATTERNS:
+            if key in hint_lower or hint_lower in key:
+                resolved_key = key
+                break
+
+    if resolved_key and resolved_key in _SQ_FIELD_PATTERNS:
+        for pat in _SQ_FIELD_PATTERNS[resolved_key]:
+            for c in df.columns:
+                if re.search(pat, c, re.I):
+                    return c, f"extended schema: '{resolved_key}' via «{pat}»"
+
+    # ── 2. Original _HINT_SEMANTIC / _SEMANTIC_COLS ───────────────────────────
+    for kw, sem_key in _HINT_SEMANTIC:
+        if kw in hint_lower:
+            pattern, _ = _SEMANTIC_COLS[sem_key]
+            for c in df.columns:
+                if re.search(pattern, c, re.I):
+                    return c, f"original semantic: '{kw}' → '{sem_key}'"
+
+    # ── 3. Fuzzy word match across all columns ────────────────────────────────
+    hint_words = [w for w in re.split(r"\W+", hint_lower) if len(w) > 2]
+    best_col, best_score = None, 0
+    for c in df.columns:
+        c_lower = c.lower()
+        score = sum(1 for w in hint_words if w in c_lower)
+        if score > best_score:
+            best_score, best_col = score, c
+    if best_col and best_score > 0:
+        return best_col, f"fuzzy match ({hint_words}, score={best_score})"
+
+    # ── 4. Fallback ───────────────────────────────────────────────────────────
+    if nc:
+        return nc[0], "fallback: first numeric column"
+    return None, "no column found"
+
+
+# Known non-customer row patterns for ingestion filter
+_SQ_JUNK_NAMES: frozenset = frozenset({
+    "customer name", "sr. no", "sno", "s.no", "no.", "sl. no",
+    "total", "sub total", "subtotal", "grand total", "summary",
+    "description", "floor", "module", "floor / module",
+    "power summary", "nan", "none", "", "remark", "remarks",
+    "total bangalore", "total kolkata", "total noida", "total chennai",
+    "total vashi", "total airoli", "total rabale", "total mumbai",
+    "uom", "uom (kva/kw)", "value",
+})
+
+
+def _sq_preprocess_pool(df: "pd.DataFrame") -> "pd.DataFrame":
+    """
+    Data ingestion enrichment for Smart Query pool (additive — does NOT
+    alter any global state or other tabs).
+
+    Step 1 — Remove non-customer rows:
+        Rows whose customer-name cell is blank, a section header, a serial
+        number, or a known aggregate label are dropped.
+
+    Step 2 — Promote object columns to float64:
+        Columns whose names suggest numeric content (power, revenue, capacity,
+        space, rack, rate …) are run through _robust_to_numeric().  A column
+        is only replaced if ≥ 20 % of its non-null values parse successfully —
+        this keeps genuinely categorical columns untouched while converting
+        columns that happen to contain "₹ 1,234.56" or "1,23,456.78" strings.
+    """
+    if df.empty:
+        return df
+
+    result = df.copy()
+
+    # ── Step 1: Remove non-customer rows ─────────────────────────────────────
+    cust_col = find_col(result, r"customer.*name|client.*name|DEMARC.*Customer Name")
+    if cust_col:
+        def _is_real_customer(v):
+            s = str(v).strip()
+            if not s or s.lower() in _SQ_JUNK_NAMES:
+                return False
+            if re.fullmatch(r"\d+", s):      # pure serial number
+                return False
+            if re.fullmatch(r"[-–—]+", s):   # dash placeholder
+                return False
+            if len(s) < 2:
+                return False
+            return True
+
+        valid_mask = result[cust_col].apply(_is_real_customer)
+        if valid_mask.sum() > 0:
+            result = result[valid_mask].reset_index(drop=True)
+
+    # ── Step 2: Promote suspected numeric columns to float64 ─────────────────
+    _NUMERIC_KW = {
+        "subscription", "in use", "billed", "reserved", "capacity",
+        "purchased", "allocated", "revenue", "mrc", "rate", "charge",
+        "kw", "kva", "rack", "space", "seat", "sitting", "kwhr",
+        "quantity", "qty", "amount", "total", "yet to be given",
+        "subscribed", "usage", "consumption", "additional",
+    }
+    metadata_cols = {c for c in result.columns if c.startswith("_")}
+
+    for col in result.columns:
+        if col in metadata_cols:
+            continue
+        if pd.api.types.is_numeric_dtype(result[col]):
+            continue                           # already float/int — skip
+        col_lower = col.lower()
+        if not any(kw in col_lower for kw in _NUMERIC_KW):
+            continue                           # not a candidate — skip
+
+        converted = _robust_to_numeric(result[col])
+        non_null  = result[col].notna().sum()
+        parsed_ok = converted.notna().sum()
+        if non_null > 0 and parsed_ok / max(non_null, 1) >= 0.20:
+            result[col] = converted            # promote to numeric
+
+    return result
+
+
+def _sq_execute_with_schema(ops_raw: list, pool: "pd.DataFrame") -> list:
+    """
+    Wrapper around execute_ai_operations that temporarily substitutes the
+    enhanced column resolver _sq_resolve_field for _resolve_col_by_semantic
+    so that all 10 DC Excel column name variants are correctly matched.
+    Restores the original resolver after execution.
+    """
+    import sys as _sys
+    _mod = _sys.modules[__name__]
+    _orig = getattr(_mod, "_resolve_col_by_semantic", None)
+    try:
+        # Patch global resolver with the enhanced version
+        _mod._resolve_col_by_semantic = _sq_resolve_field
+        results = execute_ai_operations(ops_raw, pool)
+    finally:
+        # Always restore original, even on exception
+        if _orig is not None:
+            _mod._resolve_col_by_semantic = _orig
+    return results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAB 4 – SMART QUERY
+# ─────────────────────────────────────────────────────────────────────────────
 with T[4]:
     st.markdown('<div class="section-title">🧠 Smart Query — AI-Powered Structured Query Engine</div>',
                 unsafe_allow_html=True)
@@ -2718,7 +3115,7 @@ with T[4]:
     sq_src = st.selectbox("📂 Query data source", sq_src_opts, key="sq_src")
 
     if sq_src == "All Locations & All Sheets":
-        pool_base = CUST.copy()
+        pool_base = _sq_preprocess_pool(CUST.copy())
     else:
         loc_frames = []
         for sn, df_loc in fdata.get(sq_src, {}).items():
@@ -2726,17 +3123,46 @@ with T[4]:
             tmp.insert(0, "_Sheet", sn)
             tmp.insert(0, "_Location", sq_src)
             loc_frames.append(tmp)
-        pool_base = pd.concat(loc_frames, ignore_index=True, sort=False) if loc_frames else pd.DataFrame()
+        _raw_pool = pd.concat(loc_frames, ignore_index=True, sort=False) if loc_frames else pd.DataFrame()
+        pool_base = _sq_preprocess_pool(_raw_pool)
 
     if not pool_base.empty:
         n_locs   = pool_base["_Location"].nunique() if "_Location" in pool_base.columns else 1
         n_sheets = pool_base["_Sheet"].nunique()    if "_Sheet"    in pool_base.columns else 1
+        # Count how many columns were promoted to numeric by pre-processing
+        _nc_after = num_cols(pool_base)
         st.markdown(
-            f'<div style="font-size:.78rem;color:{MUTED};margin-bottom:10px">'
+            f'<div style="font-size:.78rem;color:{MUTED};margin-bottom:6px">'
             f'Query pool: <b style="color:{CYAN}">{len(pool_base):,}</b> records · '
             f'<b style="color:{CYAN}">{n_locs}</b> location(s) · '
-            f'<b style="color:{CYAN}">{n_sheets}</b> sheet(s)</div>',
+            f'<b style="color:{CYAN}">{n_sheets}</b> sheet(s) · '
+            f'<b style="color:{CYAN}">{len(_nc_after)}</b> numeric columns available</div>',
             unsafe_allow_html=True)
+
+        # ── Schema awareness panel ────────────────────────────────────────────
+        with st.expander("📐 Data Schema — available columns & field hints", expanded=False):
+            _schema_cols = [c for c in pool_base.columns if not c.startswith("_")]
+            _num_set = set(_nc_after)
+            _schema_rows = []
+            for c in _schema_cols:
+                dtype  = "numeric" if c in _num_set else "text"
+                sample = pool_base[c].dropna()
+                s_val  = str(sample.iloc[0])[:40] if not sample.empty else "—"
+                _schema_rows.append({"Column": c, "Type": dtype, "Sample value": s_val})
+            if _schema_rows:
+                st.dataframe(pd.DataFrame(_schema_rows), use_container_width=True)
+            st.markdown(
+                f'<div style="font-size:.76rem;color:{MUTED};margin-top:8px">'
+                f'<b>Key field hints for Smart Query:</b><br>'
+                f'<code>total capacity purchased</code> · '
+                f'<code>power in use</code> · '
+                f'<code>total revenue</code> · '
+                f'<code>space in use</code> · '
+                f'<code>per unit rate</code> · '
+                f'<code>seating subscription</code> · '
+                f'<code>net revenue</code>'
+                f'</div>',
+                unsafe_allow_html=True)
 
     # ── Query input ───────────────────────────────────────────────────────────
     query = st.text_area(
@@ -2783,7 +3209,7 @@ with T[4]:
                 elif not ops_raw:
                     st.warning("Could not parse query. Please try rephrasing.")
                 else:
-                    results = execute_ai_operations(ops_raw, pool)
+                    results = _sq_execute_with_schema(ops_raw, pool)
                     st.session_state["sq_results_history"].append({
                         "query":   query.strip(),
                         "source":  sq_src,
