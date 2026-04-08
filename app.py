@@ -1849,9 +1849,56 @@ Query: "top 5 customers by revenue"
 → [{"id":"op1","type":"aggregate","label":"Top 5 Customers by Revenue","filter":null,"location":null,"files":null,"sheets":null,"operation":"top","field_hint":"total revenue","canonical_columns":["Revenue | Monthly"],"top_n":5,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
 
 Query: "find Rated/Subscribed/Metered customers in Bangalore"
-→ [{"id":"op1","type":"cell_lookup","label":"Rated/Subscribed/Metered customers — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":null,"operation":null,"field_hint":null,"canonical_columns":["Space | Rated/Subscribed/Metered"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":"rated/subscribed/metered","return_columns":null,"match_mode":"is_not_null"}]
-"""
+→ [{"id":"op1","type":"cell_lookup","label":"Customers with Rated/Subscribed/Metered billing model — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Billing Model | Power Subscription Model (Rated/Subscribed)","Billing Model | Power Usage Model (Bundled / Metered)"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":"billing model","return_columns":["Customer Name","Floor","Floor / Module","Billing Model | Power Subscription Model (Rated/Subscribed)","Billing Model | Power Usage Model (Bundled / Metered)"],"match_mode":"is_not_null"}]
 
+Query: "list all Rated customers in Bangalore"
+→ [{"id":"op1","type":"cell_lookup","label":"Rated customers — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Billing Model | Power Subscription Model (Rated/Subscribed)"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Rated","target_column_hint":"power subscription model","return_columns":["Customer Name","Floor","Floor / Module"],"match_mode":"exact"}]
+
+Query: "list all Subscribed customers in Bangalore"
+→ [{"id":"op1","type":"cell_lookup","label":"Subscribed customers — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Billing Model | Power Subscription Model (Rated/Subscribed)"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Subscribed","target_column_hint":"power subscription model","return_columns":["Customer Name","Floor","Floor / Module"],"match_mode":"exact"}]
+
+Query: "list all Metered customers in Bangalore"
+→ [{"id":"op1","type":"cell_lookup","label":"Metered customers — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Billing Model | Power Usage Model (Bundled / Metered)"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Metered","target_column_hint":"power usage model","return_columns":["Customer Name","Floor","Floor / Module"],"match_mode":"exact"}]
+
+Query: "list all Bundled customers in Bangalore"
+→ [{"id":"op1","type":"cell_lookup","label":"Bundled customers — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Billing Model | Power Usage Model (Bundled / Metered)"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Bundled","target_column_hint":"power usage model","return_columns":["Customer Name","Floor","Floor / Module"],"match_mode":"exact"}]
+
+Query: "show caged customers in Bangalore"
+→ [{"id":"op1","type":"cell_lookup","label":"Caged customers — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Space | Caged /Uncaged"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Caged","target_column_hint":"caged/uncaged","return_columns":["Customer Name","Floor","Floor / Module","Space | Subscription","Space | In Use"],"match_mode":"exact"}]
+
+Query: "show uncaged customers in Bangalore"
+→ [{"id":"op1","type":"cell_lookup","label":"Uncaged customers — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Space | Caged /Uncaged"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Uncaged","target_column_hint":"caged/uncaged","return_columns":["Customer Name","Floor","Floor / Module"],"match_mode":"exact"}]
+
+Query: "find customers on floor L3 in Bangalore"
+→ [{"id":"op1","type":"cell_lookup","label":"Customers on Floor L3 — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Floor"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"L3","target_column_hint":"floor","return_columns":["Customer Name","Floor / Module","Space | Subscription Mode","Power Capacity | Total Capacity Purchased"],"match_mode":"exact"}]
+
+Query: "list all customers in module DC-3 Bangalore"
+→ [{"id":"op1","type":"cell_lookup","label":"Customers in DC-3 — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Floor / Module"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"DC-3","target_column_hint":"floor / module","return_columns":["Customer Name","Floor","Billing Model | Power Subscription Model (Rated/Subscribed)","Power Capacity | Total Capacity Purchased"],"match_mode":"exact"}]
+
+Query: "show customers with RHS/SH = yes in Bangalore"
+→ [{"id":"op1","type":"cell_lookup","label":"RHS/SH customers — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["RHS/SH"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"yes","target_column_hint":"rhs/sh","return_columns":["Customer Name","Floor","Floor / Module"],"match_mode":"exact"}]
+
+Query: "find Rack subscription customers in Bangalore"
+→ [{"id":"op1","type":"cell_lookup","label":"Rack subscription customers — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Space | Subscription Mode"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Rack","target_column_hint":"subscription mode","return_columns":["Customer Name","Floor","Floor / Module","Space | Subscription","Space | In Use"],"match_mode":"exact"}]
+
+Query: "show disconnected customers in Bangalore"
+→ [{"id":"op1","type":"cell_lookup","label":"Disconnected customers — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Disconnection details"],"operation":null,"field_hint":null,"canonical_columns":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":["Customer Name","Floor","Floor / Module","Billing Model | Power Subscription Model (Rated/Subscribed)","Power Capacity | Total Capacity Purchased"],"match_mode":"is_not_null"}]
+
+Query: "find customers with power capacity in use > 0 in Bangalore"
+→ [{"id":"op1","type":"cell_lookup","label":"Customers with active power usage — Bangalore","filter":{"column":"Power Capacity | Capacity in Use","operator":">","value":0},"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Power Capacity | Capacity in Use"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":"capacity in use","return_columns":["Customer Name","Power Capacity | Total Capacity Purchased","Power Capacity | Capacity in Use","Power Capacity | Usage in KW"],"match_mode":null}]
+
+Query: "list customers with reserved capacity in Bangalore"
+→ [{"id":"op1","type":"cell_lookup","label":"Customers with reserved capacity — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Power Capacity | Reserved Capacity        if any"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":"reserved capacity","return_columns":["Customer Name","Power Capacity | Reserved Capacity        if any","Power Capacity | Total Capacity Purchased"],"match_mode":"is_not_null"}]
+
+Query: "show customers with seating space in Bangalore"
+→ [{"id":"op1","type":"cell_lookup","label":"Customers with seating space — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Seating Space | Subscription"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":"seating space subscription","return_columns":["Customer Name","Seating Space | Subscription","Seating Space | In Use","Seating Space | Billed"],"match_mode":"is_not_null"}]
+
+Query: "find customers expiring in 2026 in Bangalore"
+→ [{"id":"op1","type":"cell_lookup","label":"Customers expiring in 2026 — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Contract Information | Current Expiry Date"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"2026","target_column_hint":"current expiry date","return_columns":["Customer Name","Contract Information | Contract Start Date","Contract Information | Current Expiry Date","Contract Information | Term of Contract (No of Years)"],"match_mode":"contains"}]
+
+Query: "show customers with cross connect in Bangalore"
+→ [{"id":"op1","type":"cell_lookup","label":"Cross connect customers — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Contract Information | Cross connect"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":"cross connect","return_columns":["Customer Name","Floor","Floor / Module","Contract Information | Cross connect"],"match_mode":"is_not_null"}]
+"""
 def _robust_to_numeric(series: pd.Series) -> pd.Series:
     """
     Precisely convert a Series to float64, handling:
