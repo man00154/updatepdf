@@ -4731,258 +4731,258 @@ with T[4]:
 
 
     # ══════════════════════════════════════════════════════════════════════════
-      # COLUMN HEADER LOOKUP — Find any column by exact/partial header name
-      # across all 10 DC Excel files and all sheets, with optional aggregations
-      # ══════════════════════════════════════════════════════════════════════════
+    # COLUMN HEADER LOOKUP — Find any column by exact/partial header name
+    # across all 10 DC Excel files and all sheets, with optional aggregations
+    # ══════════════════════════════════════════════════════════════════════════
 
-      st.markdown(f"<hr style='border-color:{BORD};margin:32px 0 20px'>",
-                  unsafe_allow_html=True)
-      st.markdown(
-          '<div class="section-title">🔎 Column Header Lookup — Search Any Column Across All Files & Sheets</div>',
-          unsafe_allow_html=True,
-      )
-      st.markdown(
-          f'<div style="font-size:.85rem;color:{MUTED};margin-bottom:16px">'
-          f'Type a column header name (exact or partial) to find and retrieve data from '
-          f'<b>all matching columns across all 10 DC Excel files and all sheets</b>. '
-          f'Numeric columns support aggregation metrics (Sum, Avg, Min, Max …); '
-          f'text columns support Count, Unique Count, and Value Counts.</div>',
-          unsafe_allow_html=True,
-      )
+    st.markdown(f"<hr style='border-color:{BORD};margin:32px 0 20px'>",
+                unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-title">🔎 Column Header Lookup — Search Any Column Across All Files & Sheets</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div style="font-size:.85rem;color:{MUTED};margin-bottom:16px">'
+        f'Type a column header name (exact or partial) to find and retrieve data from '
+        f'<b>all matching columns across all 10 DC Excel files and all sheets</b>. '
+        f'Numeric columns support aggregation metrics (Sum, Avg, Min, Max …); '
+        f'text columns support Count, Unique Count, and Value Counts.</div>',
+        unsafe_allow_html=True,
+    )
 
-      _chl_all_cols = sorted(
-          [c for c in CUST.columns if not c.startswith("_")]
-      ) if not CUST.empty else []
+    _chl_all_cols = sorted(
+        [c for c in CUST.columns if not c.startswith("_")]
+    ) if not CUST.empty else []
 
-      _chl_r1a, _chl_r1b = st.columns([4, 2])
-      with _chl_r1a:
-          _chl_header_search = st.text_input(
-              "🔍 Column Header Name (partial match, case-insensitive)",
-              placeholder="e.g.  Customer Name  |  Subscription  |  Power Capacity  |  MRC  |  Revenue",
-              key="chl_header_search",
-          )
-      with _chl_r1b:
-          _chl_loc_sel = st.selectbox(
-              "📍 Location Filter",
-              ["All Locations"] + sorted(fdata.keys()),
-              key="chl_loc_sel",
-          )
+    _chl_r1a, _chl_r1b = st.columns([4, 2])
+    with _chl_r1a:
+        _chl_header_search = st.text_input(
+            "🔍 Column Header Name (partial match, case-insensitive)",
+            placeholder="e.g.  Customer Name  |  Subscription  |  Power Capacity  |  MRC  |  Revenue",
+            key="chl_header_search",
+        )
+    with _chl_r1b:
+        _chl_loc_sel = st.selectbox(
+            "📍 Location Filter",
+            ["All Locations"] + sorted(fdata.keys()),
+            key="chl_loc_sel",
+        )
 
-      _chl_search_lower = _chl_header_search.strip().lower()
-      _chl_matched = (
-          [c for c in _chl_all_cols if _chl_search_lower in c.lower()]
-          if _chl_search_lower else _chl_all_cols
-      )
+    _chl_search_lower = _chl_header_search.strip().lower()
+    _chl_matched = (
+        [c for c in _chl_all_cols if _chl_search_lower in c.lower()]
+        if _chl_search_lower else _chl_all_cols
+    )
 
-      _chl_r2a, _chl_r2b = st.columns([4, 2])
-      with _chl_r2a:
-          _chl_selected_col = st.selectbox(
-              f"📋 Matched Columns — {len(_chl_matched)} found",
-              ["— pick a column —"] + _chl_matched,
-              key="chl_selected_col",
-          )
-      with _chl_r2b:
-          _chl_sheet_opts = ["All Sheets"]
-          if _chl_loc_sel != "All Locations":
-              _chl_sheet_opts += sorted(fdata.get(_chl_loc_sel, {}).keys())
-          _chl_sheet_sel = st.selectbox("📄 Sheet Filter", _chl_sheet_opts, key="chl_sheet_sel")
+    _chl_r2a, _chl_r2b = st.columns([4, 2])
+    with _chl_r2a:
+        _chl_selected_col = st.selectbox(
+            f"📋 Matched Columns — {len(_chl_matched)} found",
+            ["— pick a column —"] + _chl_matched,
+            key="chl_selected_col",
+        )
+    with _chl_r2b:
+        _chl_sheet_opts = ["All Sheets"]
+        if _chl_loc_sel != "All Locations":
+            _chl_sheet_opts += sorted(fdata.get(_chl_loc_sel, {}).keys())
+        _chl_sheet_sel = st.selectbox("📄 Sheet Filter", _chl_sheet_opts, key="chl_sheet_sel")
 
-      _chl_is_numeric = False
-      if _chl_selected_col != "— pick a column —" and not CUST.empty and _chl_selected_col in CUST.columns:
-          _chl_probe = CUST[_chl_selected_col].dropna()
-          _chl_is_numeric = (
-              pd.to_numeric(_chl_probe, errors="coerce").notna().sum() /
-              max(len(_chl_probe), 1) > 0.4
-          )
+    _chl_is_numeric = False
+    if _chl_selected_col != "— pick a column —" and not CUST.empty and _chl_selected_col in CUST.columns:
+        _chl_probe = CUST[_chl_selected_col].dropna()
+        _chl_is_numeric = (
+            pd.to_numeric(_chl_probe, errors="coerce").notna().sum() /
+            max(len(_chl_probe), 1) > 0.4
+        )
 
-      _chl_r3a, _chl_r3b, _chl_r3c = st.columns([3, 2, 1])
-      with _chl_r3a:
-          if _chl_is_numeric:
-              _chl_metric = st.selectbox(
-                  "📐 Metric (optional — numeric column)",
-                  ["— none (show raw data) —", "Sum", "Average", "Min", "Max",
-                   "Count", "Median", "Std Dev", "Count Non-Zero"],
-                  key="chl_metric",
-              )
-          else:
-              _chl_metric = st.selectbox(
-                  "📐 Operation (optional — text column)",
-                  ["— none (show raw data) —", "Count (non-null)", "Unique Count", "Value Counts"],
-                  key="chl_metric",
-              )
-      with _chl_r3b:
-          _chl_max_rows = st.number_input(
-              "Max rows to show", min_value=10, max_value=500, value=50, step=10,
-              key="chl_max_rows",
-          )
-      with _chl_r3c:
-          st.markdown("<br>", unsafe_allow_html=True)
-          _chl_run = st.button("🔎 Lookup", key="chl_run", use_container_width=True)
+    _chl_r3a, _chl_r3b, _chl_r3c = st.columns([3, 2, 1])
+    with _chl_r3a:
+        if _chl_is_numeric:
+            _chl_metric = st.selectbox(
+                "📐 Metric (optional — numeric column)",
+                ["— none (show raw data) —", "Sum", "Average", "Min", "Max",
+                 "Count", "Median", "Std Dev", "Count Non-Zero"],
+                key="chl_metric",
+            )
+        else:
+            _chl_metric = st.selectbox(
+                "📐 Operation (optional — text column)",
+                ["— none (show raw data) —", "Count (non-null)", "Unique Count", "Value Counts"],
+                key="chl_metric",
+            )
+    with _chl_r3b:
+        _chl_max_rows = st.number_input(
+            "Max rows to show", min_value=10, max_value=500, value=50, step=10,
+            key="chl_max_rows",
+        )
+    with _chl_r3c:
+        st.markdown("<br>", unsafe_allow_html=True)
+        _chl_run = st.button("🔎 Lookup", key="chl_run", use_container_width=True)
 
-      if _chl_run:
-          if _chl_selected_col == "— pick a column —":
-              st.warning("Please search for and select a column header to look up.")
-          elif CUST.empty:
-              st.warning("No data loaded. Check that the Excel files are accessible.")
-          else:
-              _chl_df = CUST.copy()
-              if _chl_loc_sel != "All Locations" and "_Location" in _chl_df.columns:
-                  _chl_df = _chl_df[_chl_df["_Location"] == _chl_loc_sel]
-              if _chl_sheet_sel != "All Sheets" and "_Sheet" in _chl_df.columns:
-                  _chl_df = _chl_df[_chl_df["_Sheet"] == _chl_sheet_sel]
+    if _chl_run:
+        if _chl_selected_col == "— pick a column —":
+            st.warning("Please search for and select a column header to look up.")
+        elif CUST.empty:
+            st.warning("No data loaded. Check that the Excel files are accessible.")
+        else:
+            _chl_df = CUST.copy()
+            if _chl_loc_sel != "All Locations" and "_Location" in _chl_df.columns:
+                _chl_df = _chl_df[_chl_df["_Location"] == _chl_loc_sel]
+            if _chl_sheet_sel != "All Sheets" and "_Sheet" in _chl_df.columns:
+                _chl_df = _chl_df[_chl_df["_Sheet"] == _chl_sheet_sel]
 
-              if _chl_selected_col not in _chl_df.columns:
-                  st.error(
-                      f"Column ‘{_chl_selected_col}’ not found "
-                      f"in the selected scope."
-                  )
-              else:
-                  _chl_col_data = _chl_df[_chl_selected_col].dropna()
-                  _chl_scope = (
-                      _chl_loc_sel if _chl_loc_sel != "All Locations"
-                      else "All Locations"
-                  )
-                  if _chl_sheet_sel != "All Sheets":
-                      _chl_scope += f" / {_chl_sheet_sel}"
+            if _chl_selected_col not in _chl_df.columns:
+                st.error(
+                    f"Column ‘{_chl_selected_col}’ not found "
+                    f"in the selected scope."
+                )
+            else:
+                _chl_col_data = _chl_df[_chl_selected_col].dropna()
+                _chl_scope = (
+                    _chl_loc_sel if _chl_loc_sel != "All Locations"
+                    else "All Locations"
+                )
+                if _chl_sheet_sel != "All Sheets":
+                    _chl_scope += f" / {_chl_sheet_sel}"
 
-                  _chl_no_metric = _chl_metric == "— none (show raw data) —"
+                _chl_no_metric = _chl_metric == "— none (show raw data) —"
 
-                  if not _chl_no_metric:
-                      if _chl_is_numeric:
-                          _chl_num = pd.to_numeric(_chl_col_data, errors="coerce").dropna()
-                          _chl_num_ops = {
-                              "Sum":            _chl_num.sum(),
-                              "Average":        _chl_num.mean(),
-                              "Min":            _chl_num.min(),
-                              "Max":            _chl_num.max(),
-                              "Count":          float(len(_chl_num)),
-                              "Median":         _chl_num.median(),
-                              "Std Dev":        _chl_num.std(ddof=1),
-                              "Count Non-Zero": float((_chl_num != 0).sum()),
-                          }
-                          _chl_result = _chl_num_ops.get(_chl_metric, "N/A")
-                          _chl_fmt = (
-                              f"{_chl_result:,.2f}"
-                              if isinstance(_chl_result, float) else str(_chl_result)
-                          )
-                          st.markdown(f"""
-          <div class="result-box">
-            <div style="font-size:.82rem;color:{MUTED};margin-bottom:6px">
-              <b>{_chl_metric}</b> of
-              <b style="color:{CYAN}">{_chl_selected_col}</b>
-              &nbsp;·&nbsp; {_chl_scope}
-            </div>
-            <div class="result-big">{_chl_fmt}</div>
-            <div style="font-size:.78rem;color:{MUTED};margin-top:8px">
-              Based on <b style="color:{CYAN}">{len(_chl_num):,}</b> numeric records
-            </div>
-          </div>""", unsafe_allow_html=True)
+                if not _chl_no_metric:
+                    if _chl_is_numeric:
+                        _chl_num = pd.to_numeric(_chl_col_data, errors="coerce").dropna()
+                        _chl_num_ops = {
+                            "Sum":            _chl_num.sum(),
+                            "Average":        _chl_num.mean(),
+                            "Min":            _chl_num.min(),
+                            "Max":            _chl_num.max(),
+                            "Count":          float(len(_chl_num)),
+                            "Median":         _chl_num.median(),
+                            "Std Dev":        _chl_num.std(ddof=1),
+                            "Count Non-Zero": float((_chl_num != 0).sum()),
+                        }
+                        _chl_result = _chl_num_ops.get(_chl_metric, "N/A")
+                        _chl_fmt = (
+                            f"{_chl_result:,.2f}"
+                            if isinstance(_chl_result, float) else str(_chl_result)
+                        )
+                        st.markdown(f"""
+        <div class="result-box">
+          <div style="font-size:.82rem;color:{MUTED};margin-bottom:6px">
+            <b>{_chl_metric}</b> of
+            <b style="color:{CYAN}">{_chl_selected_col}</b>
+            &nbsp;·&nbsp; {_chl_scope}
+          </div>
+          <div class="result-big">{_chl_fmt}</div>
+          <div style="font-size:.78rem;color:{MUTED};margin-top:8px">
+            Based on <b style="color:{CYAN}">{len(_chl_num):,}</b> numeric records
+          </div>
+        </div>""", unsafe_allow_html=True)
 
-                          if _chl_loc_sel == "All Locations" and "_Location" in CUST.columns:
-                              _chl_num_op_fn = {
-                                  "Sum":            lambda s: s.sum(),
-                                  "Average":        lambda s: s.mean(),
-                                  "Min":            lambda s: s.min(),
-                                  "Max":            lambda s: s.max(),
-                                  "Count":          lambda s: float(len(s)),
-                                  "Median":         lambda s: s.median(),
-                                  "Std Dev":        lambda s: s.std(ddof=1),
-                                  "Count Non-Zero": lambda s: float((s != 0).sum()),
-                              }
-                              _chl_grp_rows = []
-                              for _chl_gloc, _chl_gdf in CUST.groupby("_Location"):
-                                  _chl_gs = pd.to_numeric(
-                                      _chl_gdf.get(_chl_selected_col, pd.Series()),
-                                      errors="coerce",
-                                  ).dropna()
-                                  if not _chl_gs.empty:
-                                      _chl_grp_rows.append({
-                                          "Location":     _chl_gloc,
-                                          _chl_metric:    _chl_num_op_fn[_chl_metric](_chl_gs),
-                                          "Records Used": len(_chl_gs),
-                                      })
-                              if _chl_grp_rows:
-                                  _chl_grp_df = (
-                                      pd.DataFrame(_chl_grp_rows)
-                                      .sort_values(_chl_metric, ascending=False)
-                                      .reset_index(drop=True)
-                                  )
-                                  st.markdown(
-                                      f'<div style="font-size:.85rem;color:{MUTED};'
-                                      f'margin:14px 0 6px"><b>Per-Location Breakdown:</b></div>',
-                                      unsafe_allow_html=True,
-                                  )
-                                  st.dataframe(_chl_grp_df, use_container_width=True)
-                      else:
-                          if _chl_metric == "Count (non-null)":
-                              st.markdown(f"""
-          <div class="result-box">
-            <div style="font-size:.82rem;color:{MUTED};margin-bottom:6px">
-              <b>Count (non-null)</b> in
-              <b style="color:{CYAN}">{_chl_selected_col}</b>
-              &nbsp;·&nbsp; {_chl_scope}
-            </div>
-            <div class="result-big">{len(_chl_col_data):,}</div>
-          </div>""", unsafe_allow_html=True)
-                          elif _chl_metric == "Unique Count":
-                              st.markdown(f"""
-          <div class="result-box">
-            <div style="font-size:.82rem;color:{MUTED};margin-bottom:6px">
-              <b>Unique Count</b> in
-              <b style="color:{CYAN}">{_chl_selected_col}</b>
-              &nbsp;·&nbsp; {_chl_scope}
-            </div>
-            <div class="result-big">{_chl_col_data.nunique():,}</div>
-          </div>""", unsafe_allow_html=True)
-                          elif _chl_metric == "Value Counts":
-                              _chl_vc = (
-                                  _chl_col_data.astype(str)
-                                  .value_counts()
-                                  .reset_index()
-                              )
-                              _chl_vc.columns = [_chl_selected_col, "Count"]
-                              st.markdown(
-                                  f'<div style="font-size:.85rem;color:{MUTED};margin:8px 0 4px">'
-                                  f'<b>Value Counts — {_chl_selected_col}</b>'
-                                  f' · {_chl_scope}</div>',
-                                  unsafe_allow_html=True,
-                              )
-                              st.dataframe(
-                                  _chl_vc.head(int(_chl_max_rows)),
-                                  use_container_width=True,
-                              )
+                        if _chl_loc_sel == "All Locations" and "_Location" in CUST.columns:
+                            _chl_num_op_fn = {
+                                "Sum":            lambda s: s.sum(),
+                                "Average":        lambda s: s.mean(),
+                                "Min":            lambda s: s.min(),
+                                "Max":            lambda s: s.max(),
+                                "Count":          lambda s: float(len(s)),
+                                "Median":         lambda s: s.median(),
+                                "Std Dev":        lambda s: s.std(ddof=1),
+                                "Count Non-Zero": lambda s: float((s != 0).sum()),
+                            }
+                            _chl_grp_rows = []
+                            for _chl_gloc, _chl_gdf in CUST.groupby("_Location"):
+                                _chl_gs = pd.to_numeric(
+                                    _chl_gdf.get(_chl_selected_col, pd.Series()),
+                                    errors="coerce",
+                                ).dropna()
+                                if not _chl_gs.empty:
+                                    _chl_grp_rows.append({
+                                        "Location":     _chl_gloc,
+                                        _chl_metric:    _chl_num_op_fn[_chl_metric](_chl_gs),
+                                        "Records Used": len(_chl_gs),
+                                    })
+                            if _chl_grp_rows:
+                                _chl_grp_df = (
+                                    pd.DataFrame(_chl_grp_rows)
+                                    .sort_values(_chl_metric, ascending=False)
+                                    .reset_index(drop=True)
+                                )
+                                st.markdown(
+                                    f'<div style="font-size:.85rem;color:{MUTED};'
+                                    f'margin:14px 0 6px"><b>Per-Location Breakdown:</b></div>',
+                                    unsafe_allow_html=True,
+                                )
+                                st.dataframe(_chl_grp_df, use_container_width=True)
+                    else:
+                        if _chl_metric == "Count (non-null)":
+                            st.markdown(f"""
+        <div class="result-box">
+          <div style="font-size:.82rem;color:{MUTED};margin-bottom:6px">
+            <b>Count (non-null)</b> in
+            <b style="color:{CYAN}">{_chl_selected_col}</b>
+            &nbsp;·&nbsp; {_chl_scope}
+          </div>
+          <div class="result-big">{len(_chl_col_data):,}</div>
+        </div>""", unsafe_allow_html=True)
+                        elif _chl_metric == "Unique Count":
+                            st.markdown(f"""
+        <div class="result-box">
+          <div style="font-size:.82rem;color:{MUTED};margin-bottom:6px">
+            <b>Unique Count</b> in
+            <b style="color:{CYAN}">{_chl_selected_col}</b>
+            &nbsp;·&nbsp; {_chl_scope}
+          </div>
+          <div class="result-big">{_chl_col_data.nunique():,}</div>
+        </div>""", unsafe_allow_html=True)
+                        elif _chl_metric == "Value Counts":
+                            _chl_vc = (
+                                _chl_col_data.astype(str)
+                                .value_counts()
+                                .reset_index()
+                            )
+                            _chl_vc.columns = [_chl_selected_col, "Count"]
+                            st.markdown(
+                                f'<div style="font-size:.85rem;color:{MUTED};margin:8px 0 4px">'
+                                f'<b>Value Counts — {_chl_selected_col}</b>'
+                                f' · {_chl_scope}</div>',
+                                unsafe_allow_html=True,
+                            )
+                            st.dataframe(
+                                _chl_vc.head(int(_chl_max_rows)),
+                                use_container_width=True,
+                            )
 
-                  _chl_show_cols = [
-                      c for c in ["_Location", "_Sheet", _chl_selected_col]
-                      if c in _chl_df.columns
-                  ]
-                  _chl_display_df = (
-                      _chl_df[_chl_show_cols]
-                      .dropna(subset=[_chl_selected_col])
-                      .reset_index(drop=True)
-                  )
-                  st.markdown(
-                      f'<div style="font-size:.85rem;color:{MUTED};margin:12px 0 6px">'
-                      f'<b>Raw Data</b> — '
-                      f'<b style="color:{CYAN}">{_chl_selected_col}</b> '
-                      f'({min(int(_chl_max_rows), len(_chl_display_df))} of '
-                      f'{len(_chl_display_df)} rows · {_chl_scope})</div>',
-                      unsafe_allow_html=True,
-                  )
-                  st.dataframe(
-                      _chl_display_df.head(int(_chl_max_rows)),
-                      use_container_width=True,
-                  )
-                  st.download_button(
-                      "⬇ Download Column Data CSV",
-                      _chl_display_df.to_csv(index=False).encode("utf-8"),
-                      f"col_{'_'.join(_chl_selected_col[:25].split()).replace('|','_')}.csv",
-                      "text/csv",
-                      key="chl_dl",
-                  )
+                _chl_show_cols = [
+                    c for c in ["_Location", "_Sheet", _chl_selected_col]
+                    if c in _chl_df.columns
+                ]
+                _chl_display_df = (
+                    _chl_df[_chl_show_cols]
+                    .dropna(subset=[_chl_selected_col])
+                    .reset_index(drop=True)
+                )
+                st.markdown(
+                    f'<div style="font-size:.85rem;color:{MUTED};margin:12px 0 6px">'
+                    f'<b>Raw Data</b> — '
+                    f'<b style="color:{CYAN}">{_chl_selected_col}</b> '
+                    f'({min(int(_chl_max_rows), len(_chl_display_df))} of '
+                    f'{len(_chl_display_df)} rows · {_chl_scope})</div>',
+                    unsafe_allow_html=True,
+                )
+                st.dataframe(
+                    _chl_display_df.head(int(_chl_max_rows)),
+                    use_container_width=True,
+                )
+                st.download_button(
+                    "⬇ Download Column Data CSV",
+                    _chl_display_df.to_csv(index=False).encode("utf-8"),
+                    f"col_{'_'.join(_chl_selected_col[:25].split()).replace('|','_')}.csv",
+                    "text/csv",
+                    key="chl_dl",
+                )
 
 
-  
+
 
     # ══════════════════════════════════════════════════════════════════════════
     # FETCH ANY CELL VALUE — by VALUE (not by position)
