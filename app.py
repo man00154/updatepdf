@@ -1847,58 +1847,12 @@ Query: "how many customers per location"
 
 Query: "top 5 customers by revenue"
 → [{"id":"op1","type":"aggregate","label":"Top 5 Customers by Revenue","filter":null,"location":null,"files":null,"sheets":null,"operation":"top","field_hint":"total revenue","canonical_columns":["Revenue | Monthly"],"top_n":5,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
-
-Query: "find Rated/Subscribed/Metered customers in Bangalore"
-→ [{"id":"op1","type":"cell_lookup","label":"Customers with Rated/Subscribed/Metered billing model — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Billing Model | Power Subscription Model (Rated/Subscribed)","Billing Model | Power Usage Model (Bundled / Metered)"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":"billing model","return_columns":["Customer Name","Floor","Floor / Module","Billing Model | Power Subscription Model (Rated/Subscribed)","Billing Model | Power Usage Model (Bundled / Metered)"],"match_mode":"is_not_null"}]
-
-Query: "list all Rated customers in Bangalore"
-→ [{"id":"op1","type":"cell_lookup","label":"Rated customers — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Billing Model | Power Subscription Model (Rated/Subscribed)"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Rated","target_column_hint":"power subscription model","return_columns":["Customer Name","Floor","Floor / Module"],"match_mode":"exact"}]
-
-Query: "list all Subscribed customers in Bangalore"
-→ [{"id":"op1","type":"cell_lookup","label":"Subscribed customers — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Billing Model | Power Subscription Model (Rated/Subscribed)"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Subscribed","target_column_hint":"power subscription model","return_columns":["Customer Name","Floor","Floor / Module"],"match_mode":"exact"}]
-
-Query: "list all Metered customers in Bangalore"
-→ [{"id":"op1","type":"cell_lookup","label":"Metered customers — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Billing Model | Power Usage Model (Bundled / Metered)"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Metered","target_column_hint":"power usage model","return_columns":["Customer Name","Floor","Floor / Module"],"match_mode":"exact"}]
-
-Query: "list all Bundled customers in Bangalore"
-→ [{"id":"op1","type":"cell_lookup","label":"Bundled customers — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Billing Model | Power Usage Model (Bundled / Metered)"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Bundled","target_column_hint":"power usage model","return_columns":["Customer Name","Floor","Floor / Module"],"match_mode":"exact"}]
-
-Query: "show caged customers in Bangalore"
-→ [{"id":"op1","type":"cell_lookup","label":"Caged customers — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Space | Caged /Uncaged"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Caged","target_column_hint":"caged/uncaged","return_columns":["Customer Name","Floor","Floor / Module","Space | Subscription","Space | In Use"],"match_mode":"exact"}]
-
-Query: "show uncaged customers in Bangalore"
-→ [{"id":"op1","type":"cell_lookup","label":"Uncaged customers — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Space | Caged /Uncaged"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Uncaged","target_column_hint":"caged/uncaged","return_columns":["Customer Name","Floor","Floor / Module"],"match_mode":"exact"}]
-
-Query: "find customers on floor L3 in Bangalore"
-→ [{"id":"op1","type":"cell_lookup","label":"Customers on Floor L3 — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Floor"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"L3","target_column_hint":"floor","return_columns":["Customer Name","Floor / Module","Space | Subscription Mode","Power Capacity | Total Capacity Purchased"],"match_mode":"exact"}]
-
-Query: "list all customers in module DC-3 Bangalore"
-→ [{"id":"op1","type":"cell_lookup","label":"Customers in DC-3 — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Floor / Module"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"DC-3","target_column_hint":"floor / module","return_columns":["Customer Name","Floor","Billing Model | Power Subscription Model (Rated/Subscribed)","Power Capacity | Total Capacity Purchased"],"match_mode":"exact"}]
-
-Query: "show customers with RHS/SH = yes in Bangalore"
-→ [{"id":"op1","type":"cell_lookup","label":"RHS/SH customers — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["RHS/SH"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"yes","target_column_hint":"rhs/sh","return_columns":["Customer Name","Floor","Floor / Module"],"match_mode":"exact"}]
-
-Query: "find Rack subscription customers in Bangalore"
-→ [{"id":"op1","type":"cell_lookup","label":"Rack subscription customers — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Space | Subscription Mode"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Rack","target_column_hint":"subscription mode","return_columns":["Customer Name","Floor","Floor / Module","Space | Subscription","Space | In Use"],"match_mode":"exact"}]
-
-Query: "show disconnected customers in Bangalore"
-→ [{"id":"op1","type":"cell_lookup","label":"Disconnected customers — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Disconnection details"],"operation":null,"field_hint":null,"canonical_columns":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":["Customer Name","Floor","Floor / Module","Billing Model | Power Subscription Model (Rated/Subscribed)","Power Capacity | Total Capacity Purchased"],"match_mode":"is_not_null"}]
-
-Query: "find customers with power capacity in use > 0 in Bangalore"
-→ [{"id":"op1","type":"cell_lookup","label":"Customers with active power usage — Bangalore","filter":{"column":"Power Capacity | Capacity in Use","operator":">","value":0},"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Power Capacity | Capacity in Use"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":"capacity in use","return_columns":["Customer Name","Power Capacity | Total Capacity Purchased","Power Capacity | Capacity in Use","Power Capacity | Usage in KW"],"match_mode":null}]
-
-Query: "list customers with reserved capacity in Bangalore"
-→ [{"id":"op1","type":"cell_lookup","label":"Customers with reserved capacity — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Power Capacity | Reserved Capacity        if any"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":"reserved capacity","return_columns":["Customer Name","Power Capacity | Reserved Capacity        if any","Power Capacity | Total Capacity Purchased"],"match_mode":"is_not_null"}]
-
-Query: "show customers with seating space in Bangalore"
-→ [{"id":"op1","type":"cell_lookup","label":"Customers with seating space — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Seating Space | Subscription"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":"seating space subscription","return_columns":["Customer Name","Seating Space | Subscription","Seating Space | In Use","Seating Space | Billed"],"match_mode":"is_not_null"}]
-
-Query: "find customers expiring in 2026 in Bangalore"
-→ [{"id":"op1","type":"cell_lookup","label":"Customers expiring in 2026 — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Contract Information | Current Expiry Date"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"2026","target_column_hint":"current expiry date","return_columns":["Customer Name","Contract Information | Contract Start Date","Contract Information | Current Expiry Date","Contract Information | Term of Contract (No of Years)"],"match_mode":"contains"}]
-
-Query: "show customers with cross connect in Bangalore"
-→ [{"id":"op1","type":"cell_lookup","label":"Cross connect customers — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":["Customer details"],"operation":null,"field_hint":null,"canonical_columns":["Contract Information | Cross connect"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":"cross connect","return_columns":["Customer Name","Floor","Floor / Module","Contract Information | Cross connect"],"match_mode":"is_not_null"}]
 """
+
+
+
+
+
 def _robust_to_numeric(series: pd.Series) -> pd.Series:
     """
     Precisely convert a Series to float64, handling:
@@ -2115,7 +2069,260 @@ _EXTENDED_OPS = {
 
 
 
-def execute_ai_operations(operations: list, df: pd.DataFrame) -> list:
+# ─────────────────────────────────────────────────────────────────────────────
+  # CANONICAL COLUMN REGISTRY  (v3 — maps all 38 canonical two-level names to
+  # real sub-header regex patterns as produced by _build_cols() from all 10
+  # Sify DC Excel files across all archetypes: CUSTOMER_DETAILS, AIROLI_BANNER,
+  # CAPACITY_GRID, FACILITY_GRID, SINGLE_LEVEL, CUSTOM_SUMMARY)
+  # ─────────────────────────────────────────────────────────────────────────────
+  _CANONICAL_REGISTRY: "dict[str, list[str]]" = {
+      # ── BILLING MODEL band ──────────────────────────────────────────────────
+      "Billing Model | Unnamed: 1_level_1": [
+          r"billing model.*power subscription",
+          r"power subscription model",
+          r"billing model.*subscription",
+          r"billing model.*model",
+          r"billing model",
+      ],
+      "Billing Model | Rated": [
+          r"billing model.*power subscription",
+          r"power subscription model",
+          r"billing model.*subscription",
+          r"billing model.*model",
+          r"billing model",
+      ],
+      "Billing Model | Subscribed": [
+          r"billing model.*power subscription",
+          r"power subscription model",
+          r"billing model.*subscription",
+          r"billing model.*model",
+          r"billing model",
+      ],
+      "Billing Model | Metered": [
+          r"power usage model",
+          r"billing model.*usage",
+          r"metered.*model",
+          r"usage model",
+      ],
+      # ── SPACE band ──────────────────────────────────────────────────────────
+      "Space | Seating Space": [
+          r"seating space.*subscription",
+          r"space.*seating.*subscription",
+          r"seating space",
+          r"seating.*subscription",
+      ],
+      "Space | Unnamed: 5_level_1": [
+          r"subscription mode",
+          r"space.*subscription.*mode",
+          r"space.*mode",
+      ],
+      "Space | Floor": [
+          r"space.*floor.*module",
+          r"space.*floor",
+          r"floor.*module",
+          r"floor",
+      ],
+      "Space | Caged/Uncaged": [
+          r"caged\s*/\s*uncaged",
+          r"caged.*uncaged",
+          r"space.*caged",
+          r"caged",
+      ],
+      # ── POWER CAPACITY band ─────────────────────────────────────────────────
+      "Power Capacity | Contracted": [
+          r"power capacity.*total capacity purchased",
+          r"total capacity purchased",
+          r"power capacity.*contracted",
+          r"contracted.*capacity",
+          r"total.*purchased",
+      ],
+      "Power Capacity | Consumed": [
+          r"power capacity.*capacity in use",
+          r"capacity in use",
+          r"power capacity.*consumed",
+          r"power.*consumed",
+          r"in use.*kw",
+      ],
+      "Power Capacity | Available": [
+          r"power capacity.*capacity to be given",
+          r"capacity to be given",
+          r"power capacity.*available",
+          r"power.*available",
+          r"to be given",
+      ],
+      "Power Capacity | Unnamed: 3_level_1": [
+          r"power capacity.*subscription.*kw",
+          r"power capacity.*kw.*kva",
+          r"power capacity.*subscription",
+          r"subscription.*kw",
+      ],
+      "Power Capacity | Rated Load": [
+          r"power capacity.*rated.*load",
+          r"power capacity.*subscription.*model.*value",
+          r"rated.*load",
+          r"subscription.*model.*value",
+          r"rated.*capacity",
+      ],
+      "Power Capacity | Actual Load": [
+          r"power capacity.*actual.*load",
+          r"actual.*load.*kw",
+          r"power capacity.*usage.*kw",
+          r"actual.*usage",
+          r"actual load",
+      ],
+      "Power Capacity | KW-HR/Month": [
+          r"power capacity.*no.*of.*units.*kw.*hr",
+          r"no.*of.*units.*kw.*hr",
+          r"kw.*hr.*month",
+          r"units.*kw.*hr",
+          r"kw-hr.*month",
+      ],
+      "Power Capacity | Unit Rate": [
+          r"power capacity.*unit rate.*per.*kw",
+          r"unit rate.*per.*kw",
+          r"per unit rate.*mrc",
+          r"per.*kw.*hr",
+          r"unit rate",
+      ],
+      "Power Capacity | No. of Units": [
+          r"power capacity.*no\.?\s*of\s*units",
+          r"no\.?\s*of\s*units.*kw",
+          r"number.*of.*units",
+          r"no.*units",
+      ],
+      "Power Capacity | Raw Power (Genset)": [
+          r"power capacity.*raw power.*genset",
+          r"raw power.*genset.*transformer",
+          r"raw power.*genset",
+          r"genset.*kw",
+          r"generator.*kw",
+      ],
+      "Power Capacity | Raw Power (Transformer)": [
+          r"power capacity.*raw power.*transformer",
+          r"raw power.*transformer",
+          r"transformer.*kw",
+          r"utility.*sanction.*load.*kva",
+          r"utility.*sanction",
+      ],
+      "Power Capacity | Raw Power (Demand)": [
+          r"power capacity.*raw power.*demand",
+          r"raw power.*demand",
+          r"contract.*demand",
+          r"utility.*demand",
+          r"sanction.*demand",
+      ],
+      # ── ACTUAL PUE ──────────────────────────────────────────────────────────
+      "Actual PUE | Power Usage": [
+          r"actual pue.*power usage",
+          r"actual pue",
+          r"pue.*power",
+          r"\bpue\b",
+      ],
+      # ── RATED TO CONSUMED ───────────────────────────────────────────────────
+      "Rated to Consumed | Ratio": [
+          r"rated to consumed.*ratio",
+          r"rated.*consumed.*ratio",
+          r"rated to consumed",
+          r"rated.*consumed",
+      ],
+      "Rated to Consumed | Unnamed: X_level_1": [
+          r"rated to consumed",
+          r"rated.*consumed",
+      ],
+      # ── GENSET HR/MO ────────────────────────────────────────────────────────
+      "Genset Hr/Mo | Seating Space": [
+          r"genset hr.*mo.*seating",
+          r"genset hr.*seating",
+          r"genset hr.*mo",
+          r"genset hr",
+          r"genset.*hour.*month",
+      ],
+      "Genset Hr/Mo | Unnamed: X_level_1": [
+          r"genset hr.*mo",
+          r"genset hr",
+          r"genset.*hour.*month",
+      ],
+      # ── REVENUE band ────────────────────────────────────────────────────────
+      "Revenue | Monthly": [
+          r"revenue.*total revenue",
+          r"total revenue",
+          r"revenue.*monthly",
+          r"monthly.*revenue",
+          r"revenue.*mrc",
+      ],
+      "Additional Charges | MRC": [
+          r"additional.*charges.*mrc",
+          r"additional capacity charges",
+          r"additional.*capacity.*mrc",
+          r"additional charges",
+          r"additional.*mrc",
+      ],
+      "Multiplier | Unnamed: X_level_1": [
+          r"multiplier",
+          r"revenue.*multiplier",
+      ],
+      # ── CAPACITY band (Rabale T1/T2 CAPACITY_GRID) ──────────────────────────
+      "Capacity | Total Purchased": [
+          r"capacity.*maximum usable",
+          r"maximum usable capacity",
+          r"capacity.*total.*purchased",
+          r"total.*purchased.*capacity",
+          r"max.*usable.*capacity",
+      ],
+      "Capacity | In Use": [
+          r"capacity.*current utilization",
+          r"current utilization",
+          r"capacity.*in use",
+          r"utilization.*kw",
+      ],
+      "Capacity | Reserved": [
+          r"capacity.*committed",
+          r"committed.*confirmed",
+          r"capacity.*reserved",
+          r"reserved.*capacity",
+          r"committed",
+      ],
+      "Capacity | Surplus": [
+          r"capacity.*surplus",
+          r"surplus.*balance",
+          r"surplus",
+          r"capacity.*balance.*positive",
+      ],
+      "Capacity | Leakage": [
+          r"capacity.*leakage",
+          r"leakage.*balance",
+          r"leakage",
+          r"capacity.*balance.*negative",
+      ],
+      # ── IDENTITY / LAYOUT columns (all archetypes) ──────────────────────────
+      "Customer Name | Unnamed: X_level_1": [
+          r"customer.*name.*customer",
+          r"customer name",
+          r"client name",
+          r"customer.*name",
+      ],
+      "Floor | Unnamed: X_level_1": [
+          r"floor.*module",
+          r"\bfloor\b",
+      ],
+      "Module | Unnamed: X_level_1": [
+          r"floor.*module",
+          r"\bmodule\b",
+          r"\bfloor\b",
+      ],
+      "Description | Unnamed: X_level_1": [
+          r"\bdescription\b",
+          r"facility.*description",
+      ],
+      "Remarks | Unnamed: X_level_1": [
+          r"remarks.*if.*any",
+          r"\bremarks\b",
+          r"remark",
+      ],
+  }
+
+
+  def execute_ai_operations(operations: list, df: pd.DataFrame) -> list:
       results = []
 
       for op in operations:
@@ -2167,45 +2374,75 @@ def execute_ai_operations(operations: list, df: pd.DataFrame) -> list:
               continue
 
           # ── CANONICAL COLUMN RESOLUTION ────────────────────────────────────────
-          def _resolve_canonical_column(df_: pd.DataFrame, canonical: str) -> "str | None":
-              """
-              Resolve a canonical two-level name 'Parent | Sub' to an actual column
-              in df_ using fuzzy matching. Returns the real column name or None.
-              """
-              if canonical in df_.columns:
-                  return canonical
-              if " | " in canonical:
-                  parent_raw, sub_raw = canonical.split(" | ", 1)
-                  parent = parent_raw.strip().lower()
-                  sub    = sub_raw.strip().lower()
-                  # Try matching by both parent and sub tokens
-                  for c in df_.columns:
-                      cl = c.lower()
-                      if parent in cl:
-                          if sub in cl or sub.startswith("unnamed"):
-                              return c
-                  # Try parent-only match if sub is an 'unnamed' artifact
-                  if sub.startswith("unnamed"):
-                      for c in df_.columns:
-                          if parent in c.lower():
-                              return c
-                  # Try sub-only match with parent tokens
-                  parent_words = [w for w in re.split(r"\W+", parent) if len(w) > 2]
-                  sub_words    = [w for w in re.split(r"\W+", sub)    if len(w) > 2]
-                  for c in df_.columns:
-                      cl = c.lower()
-                      p_match = any(w in cl for w in parent_words)
-                      s_match = any(w in cl for w in sub_words) if sub_words else True
-                      if p_match and s_match:
-                          return c
-              else:
-                  # Single-level — fuzzy match
-                  kw = canonical.strip().lower()
-                  words = [w for w in re.split(r"\W+", kw) if len(w) > 2]
-                  for c in df_.columns:
-                      if any(w in c.lower() for w in words):
-                          return c
-              return None
+            def _resolve_canonical_column(df_: pd.DataFrame, canonical: str) -> "str | None":
+                """
+                Resolve a canonical two-level name 'Parent | Sub' to an actual DataFrame
+                column. Resolution order:
+                  1. Exact match (column already named canonically)
+                  2. _CANONICAL_REGISTRY regex patterns (precise per-archetype mapping)
+                  3. Fuzzy parent+sub token matching (robust fallback)
+                Never fabricates — returns None if nothing matches.
+                """
+                # 1. Exact column name match
+                if canonical in df_.columns:
+                    return canonical
+
+                # 2. Registry-driven regex matching (ordered by specificity)
+                patterns = _CANONICAL_REGISTRY.get(canonical, [])
+                for pat in patterns:
+                    for c in df_.columns:
+                        try:
+                            if re.search(pat, c, re.I):
+                                return c
+                        except re.error:
+                            pass
+
+                # 3. Fuzzy fallback using parent / sub token overlap
+                if " | " in canonical:
+                    parent_raw, sub_raw = canonical.split(" | ", 1)
+                    parent = parent_raw.strip().lower()
+                    sub    = sub_raw.strip().lower()
+                    is_unnamed_sub = (sub.startswith("unnamed") or
+                                      sub.startswith("x_level") or
+                                      "level_1" in sub)
+
+                    # 3a. Parent contains AND (sub contains OR sub is unnamed artifact)
+                    for c in df_.columns:
+                        cl = c.lower()
+                        if parent in cl:
+                            if is_unnamed_sub or sub in cl:
+                                return c
+
+                    # 3b. Parent-only when sub is an Unnamed artifact
+                    if is_unnamed_sub:
+                        for c in df_.columns:
+                            if parent in c.lower():
+                                return c
+
+                    # 3c. Token overlap — any parent word AND any meaningful sub word
+                    parent_words = [w for w in re.split(r"\W+", parent) if len(w) > 2]
+                    sub_words    = [w for w in re.split(r"\W+", sub) if len(w) > 2
+                                    and w not in ("unnamed", "level", "level1")]
+                    for c in df_.columns:
+                        cl = c.lower()
+                        p_match = any(w in cl for w in parent_words)
+                        s_match = any(w in cl for w in sub_words) if sub_words else True
+                        if p_match and s_match:
+                            return c
+
+                    # 3d. Sub-word-only last resort for strong multi-word sub-headers
+                    if sub_words and len(sub_words) >= 2:
+                        for c in df_.columns:
+                            if sum(1 for w in sub_words if w in c.lower()) >= 2:
+                                return c
+                else:
+                    # Single-level canonical — keyword token match
+                    kw    = canonical.strip().lower()
+                    words = [w for w in re.split(r"\W+", kw) if len(w) > 2]
+                    for c in df_.columns:
+                        if any(w in c.lower() for w in words):
+                            return c
+                return None
 
           # ── COLUMN_FETCH ──────────────────────────────────────────────────────
           if op_type == "column_fetch":
