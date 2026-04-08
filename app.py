@@ -1516,6 +1516,9 @@ Always include the unit in the label string (e.g., "Total Power Purchased (KW)")
 
 ## EXAMPLES
 
+Query: "show customer name"
+→ show only particular customer details in last it will not show all customers list as particular customer details- no of rows for example if input is wipro so results should show matching records of wipro only and in last it does not show like sheet having 📋 Wipro Customer Details  — 159 row(s).
+
 Query: "sum of power purchased"
 → [{"id":"op1","type":"aggregate","label":"Total Power Purchased (KW/KVA)","filter":null,"location":null,"operation":"sum","field_hint":"total capacity purchased","top_n":null,"group_by_location":false}]
 
