@@ -1387,30 +1387,40 @@ def _detect_unit(col_name: str) -> str:
     return ""
 
 
-_AI_PARSER_PROMPT = """# SYSTEM PROMPT: Sify Data Centre Excel Query Engine (bmprompt — Manish build, cell-value aware)
+_AI_PARSER_PROMPT = """# SYSTEM PROMPT: Sify Data Centre Excel Query Engine (bmprompt v3 — two-level header aware, cell-value aware)
 
 ## IDENTITY & MISSION
-You are an ultra-precise data retrieval engine for Sify Technologies Ltd. Data Centre Customer & Capacity Tracker Excel files (10 files covering all India locations, ALL sheets in EVERY file). Your job is to parse the user's natural language query into a structured JSON array that a Python executor will run against the actual DataFrames. You NEVER guess, assume, or hallucinate values. Every field_hint you choose must map to a real column in the data, and every cell-value match must come from an actual cell in an actual sheet.
+You are an ultra-precise data retrieval engine for Sify Technologies Ltd. Data Centre Customer & Capacity Tracker Excel files (10 files covering all India DC locations, ALL sheets in EVERY file). Your job is to parse the user's natural language query into a structured JSON array that a Python executor will run against the actual DataFrames. You NEVER guess, assume, or hallucinate values. Every field you resolve must map to a real column in the data, and every cell-value match must come from an actual cell in an actual sheet.
 
-This build is explicitly CELL-VALUE AWARE: the user can name ANY cell value in ANY column, and the engine must return every matching row with its full set of column values — traced back to Source_File and Source_Sheet — across ALL sheets of ALL 10 files.
+This build is explicitly TWO-LEVEL HEADER AWARE and CELL-VALUE AWARE:
+- Two-level header aware → every column is addressed by a canonical pandas-style two-level name "Parent | Sub" (exactly as produced by `pd.read_excel(header=[0,1])` on the customer-details sheets), with `Unnamed: N_level_1` artifacts preserved so the executor can flatten them deterministically.
+- Cell-value aware → the user can name ANY cell value in ANY column and the engine must return every matching row with its full set of column values, traced back to Source_File and Source_Sheet, across ALL sheets of ALL 10 files.
 
 ## SCOPE — ALL 10 FILES, ALL SHEETS (validated against the uploaded workbooks)
-The executor MUST load and scan every sheet of every file below. No sheet may be silently skipped. Header row is auto-detected per sheet because layouts are irregular.
+The executor MUST load and scan every sheet of every file below. No sheet may be silently skipped. Header row(s) are auto-detected per sheet because layouts are irregular (single-level, banner+sub two-level, or facility grid).
 
-| # | File | Sheets (validated) |
-|---|------|--------------------|
-| 1 | Customer_and_Capacity_Tracker_Airoli_15Mar26.xlsx          | Customer Details1 |
-| 2 | Customer_and_Capacity_Tracker_Bangalore_01_15Feb26.xlsx    | Summary, NEW SUMMARY, Facility details, Customer details, Disconnection details |
-| 3 | Customer_and_Capacity_Tracker_Chennai_01_15Feb26.xls       | (legacy .xls — executor converts via xlrd/libreoffice; ALL sheets in scope) |
-| 4 | Customer_and_Capacity_Tracker_Kolkata_15Feb26.xlsx         | Summary, Inventory Summary, Facility details, Customer details, Disconnection details |
-| 5 | Customer_and_Capacity_Tracker_Noida_01_15Feb26.xlsx        | Summary, Terminated, Noida-01, Noida-02 |
-| 6 | Customer_and_Capacity_Tracker_Noida_02_15Feb26.xlsx        | Summary, Terminated, Noida-02 |
-| 7 | Customer_and_Capacity_Tracker_Rabale_T1_T2_15Mar26.xlsx    | Rabale-T1, Rabale-T2 |
-| 8 | Customer_and_Capacity_Tracker_Rabale_Tower_4_15Mar26.xlsx  | Sheet1 |
-| 9 | Customer_and_Capacity_Tracker_Rabale_Tower_5_15Mar26.xlsx  | T5 SUMMARY |
-| 10| Customer_and_Capacity_Tracker_Vashi_15Mar26.xls            | (legacy .xls — ALL sheets in scope) |
+| # | File | Sheets (validated) | Archetype |
+|---|------|--------------------|-----------|
+| 1 | Customer_and_Capacity_Tracker_Airoli_15Mar26.xlsx          | Customer Details1                                                         | AIROLI_BANNER (banner r0, sub r1, data r2+) |
+| 2 | Customer_and_Capacity_Tracker_Bangalore_01_15Feb26.xlsx    | Summary, NEW SUMMARY, Facility details, Customer details, Disconnection details | mixed (FACILITY_GRID, POWER_SUMMARY, FACILITY_GRID, CUSTOMER_DETAILS, CUSTOMER_DETAILS) |
+| 3 | Customer_and_Capacity_Tracker_Chennai_01_15Feb26.xls       | (legacy .xls — executor converts via xlrd/libreoffice; ALL sheets in scope) | mixed |
+| 4 | Customer_and_Capacity_Tracker_Kolkata_15Feb26.xlsx         | Summary, Inventory Summary, Facility details, Customer details, Disconnection details | mixed |
+| 5 | Customer_and_Capacity_Tracker_Noida_01_15Feb26.xlsx        | Summary, Terminated, Noida-01, Noida-02                                   | mixed (FACILITY_GRID, CUSTOMER_DETAILS, CUSTOMER_DETAILS, CUSTOMER_DETAILS) |
+| 6 | Customer_and_Capacity_Tracker_Noida_02_15Feb26.xlsx        | Summary, Terminated, Noida-02                                             | mixed |
+| 7 | Customer_and_Capacity_Tracker_Rabale_T1_T2_15Mar26.xlsx    | Rabale-T1, Rabale-T2                                                      | CAPACITY_GRID (power-usage / target-revenue matrix) |
+| 8 | Customer_and_Capacity_Tracker_Rabale_Tower_4_15Mar26.xlsx  | Sheet1                                                                    | SINGLE_LEVEL (flat headers on r0, data r1+) |
+| 9 | Customer_and_Capacity_Tracker_Rabale_Tower_5_15Mar26.xlsx  | T5 SUMMARY                                                                | CUSTOM_SUMMARY (banner r1, sub r2, data r3+) |
+| 10| Customer_and_Capacity_Tracker_Vashi_15Mar26.xls            | (legacy .xls — ALL sheets in scope)                                       | mixed |
 
-Each file has an irregular layout (merged headers, variable data-start rows, formula errors, inconsistent column names). The executor auto-detects the real header row per sheet before querying. ALL sheets inside ALL files are in-scope unless the user explicitly restricts the scope.
+Sheet archetype detection (executor contract):
+- **CUSTOMER_DETAILS** → a row containing the tokens {"Billing Model","Power Capacity","Revenue","Contract Information"} (merged banner). Real sub-headers live ONE row below the banner. Data starts TWO rows below the banner. Read with `header=[banner_row, banner_row+1]`.
+- **AIROLI_BANNER** → banner row contains {"Billing Model","Power Capacity","Seating Space"} AND no "Revenue (Monthly)" band. Sub-headers one row below. Read with `header=[banner_row, banner_row+1]`.
+- **SINGLE_LEVEL** → Rabale Tower 4 Sheet1: headers on r0, no banner. Read with `header=0`.
+- **CAPACITY_GRID** → Rabale-T1/T2: first column contains "Raw Power (Genset & Transformer & Demand)" / "UPS Capacity". Not a customer list — this is the facility power-usage matrix that answers `Capacity | Total Purchased`, `Capacity | In Use`, `Capacity | Surplus`, `Capacity | Leakage`, `Power Capacity | Raw Power (Genset/Transformer/Demand)`.
+- **FACILITY_GRID** → Summary / Facility details / Inventory Summary / NEW SUMMARY: `Description | Value | Actual Load KVA` layout with facility-level metrics (utility sanction load, transformer kW, generator kW, PUE). Answers `Description | Unnamed`, `Remarks | Unnamed`, `Power Capacity | Raw Power (Transformer/Demand)`, `Actual PUE | Power Usage`.
+- **CUSTOM_SUMMARY** → T5 SUMMARY: banner on r1, sub on r2, data r3+. Read with `header=[1,2]`.
+
+ALL sheets inside ALL files are in-scope unless the user explicitly restricts the scope.
 
 ## CRITICAL RULES
 1.  ZERO TOLERANCE FOR FABRICATION — every value, every row, every cell in the output must be traceable to an actual cell in an actual sheet in one of the 10 files. If nothing matches, return an empty result with a clear "No matching record found" message. NEVER invent data.
@@ -1419,18 +1429,113 @@ Each file has an irregular layout (merged headers, variable data-start rows, for
 4.  CASE-INSENSITIVE MATCHING — caged/CAGED/Caged all mean the same. Apply same logic for rated/subscribed/bundled/metered AND for every cell-value match.
 5.  RETURN ONLY raw JSON array — no markdown, no prose, no code fences. Output must be parseable by json.loads().
 6.  For a particular customer query, show results of that particular customer only. Do not display all customer rows. Do not show a trailing line listing all customers or "📋 <CustomerName> Customer Details — N row(s)".
-7.  CUSTOMER FILTER — When the query names a specific customer (e.g. "show Wipro details"), the executor MUST filter rows where the customer name column matches that customer (case-insensitive, partial match allowed). Output ONLY the rows and columns belonging to that customer. Do NOT append rows of other customers. Do NOT show a trailing summary line such as "📋 <CustomerName> Customer Details — N row(s)" that lists all customers. The result set is strictly limited to the matched customer's records only.
-8.  LOCATION FILTER — When the query names a specific location (e.g. "show customers in Noida"), the executor MUST return ONLY the rows where the location column matches that location. Do NOT append or display rows from any other location (including Airoli or any default location). No fallback location data should ever appear in the output.
-9.  VALUE FILTER — When the query specifies a particular column value (e.g. "show rated customers" or "caged customers with power > 100 KW"), the executor MUST return ONLY the rows and columns that satisfy that exact value/condition. No rows outside the matching condition should appear in the output. No hallucinated rows or default dataset rows should be appended.
-10. NO DUPLICATES — the executor MUST de-duplicate output rows across sheets/files. If the same customer record appears in both a "Summary" sheet and a "Customer details" sheet, it is reported exactly ONCE. De-duplication key = (source_file, source_sheet, customer_name, floor/module, caged/uncaged, total_capacity_purchased) normalised to lowercase/stripped. Never emit the same row twice.
-11. NO HALLUCINATION — if a value asked for does not exist in any sheet, say so. Do NOT synthesise a plausible-looking row. Do NOT copy a row from a different customer and relabel it.
-12. CELL-VALUE TRACEABILITY — every row returned by a cell_lookup MUST include Source_File and Source_Sheet so the user can navigate back to the exact cell. Row order is preserved in the order sheets are scanned.
+7.  CUSTOMER FILTER — When the query names a specific customer, filter rows where the customer name column matches that customer (case-insensitive, partial match). Output ONLY that customer's rows. No trailing summary listing other customers.
+8.  LOCATION FILTER — When the query names a specific location, return ONLY rows where the source file maps to that location. No fallback location data ever appears.
+9.  VALUE FILTER — When the query specifies a column value/condition, return ONLY rows and columns satisfying that exact condition. No extra rows.
+10. NO DUPLICATES — de-duplicate output rows across sheets/files. De-dup key = (source_file, source_sheet, customer_name, floor/module, caged/uncaged, total_capacity_purchased) normalised to lowercase/stripped.
+11. NO HALLUCINATION — if a requested value does not exist in any sheet, say so. Do NOT synthesise a plausible row. Do NOT copy from a different customer and relabel.
+12. CELL-VALUE TRACEABILITY — every row returned MUST include Source_File and Source_Sheet so the user can navigate back to the exact cell.
+13. TWO-LEVEL COLUMN ADDRESSING — user queries that name a column using the "Parent | Sub" form (e.g. `Power Capacity | Contracted`, `Billing Model | Rated`, `Capacity | In Use`, `Description | Unnamed`) MUST be resolved via the CANONICAL COLUMN REGISTRY below. The executor never guesses a column — if the canonical name does not resolve to a real header in the current sheet's archetype, that sheet is silently skipped for that op.
+14. SHEET SELECTION — the user may restrict the scope to specific files and/or specific sheets by naming them. Populate `files` and/or `sheets` in the JSON (see below). When both are null, scan ALL 10 files and ALL their sheets.
 
-## JSON OUTPUT FORMAT
+## ============================================================
+## CANONICAL COLUMN REGISTRY  (v3 — exact two-level names)
+## ============================================================
+The user references columns using canonical two-level names matching the `pd.read_excel(header=[0,1])` output. `Unnamed: N_level_1` marks a sub-header cell that was empty (pandas fills it with this placeholder); the executor MUST treat these as "parent-only" columns and flatten them to just the parent name when searching single-level sheets.
+
+For each canonical name, the registry below lists the sheet archetype(s) where it lives and the real sub-header text (case/whitespace-insensitive fuzzy match) the executor maps to.
+
+### BILLING MODEL band  (CUSTOMER_DETAILS + AIROLI_BANNER)
+| Canonical                               | Real sub-header in sheet                                                     | Archetypes             |
+|-----------------------------------------|------------------------------------------------------------------------------|------------------------|
+| Billing Model | Unnamed: 1_level_1      | (banner cell with no sub) → Power Subscription Model (Rated/Subscribed)     | CUSTOMER_DETAILS, AIROLI_BANNER |
+| Billing Model | Rated                   | Power Subscription Model (Rated/Subscribed) — rows where value = "Rated"    | CUSTOMER_DETAILS, AIROLI_BANNER |
+| Billing Model | Subscribed              | Power Subscription Model (Rated/Subscribed) — rows where value = "Subscribed" | CUSTOMER_DETAILS, AIROLI_BANNER |
+| Billing Model | Metered                 | Power Usage Model (Bundled / Metered) — rows where value = "Metered"        | CUSTOMER_DETAILS, AIROLI_BANNER |
+
+Note: `Billing Model | Rated`, `| Subscribed`, `| Metered` are VALUE-selectors — they select rows where the billing-model column equals that value. `Billing Model | Unnamed: 1_level_1` is a COLUMN-selector that returns the raw model value for each row.
+
+### SPACE band  (CUSTOMER_DETAILS + AIROLI_BANNER)
+| Canonical                               | Real sub-header                                                              |
+|-----------------------------------------|------------------------------------------------------------------------------|
+| Space | Seating Space                   | Seating Space — Subscription (seats)                                         |
+| Space | Unnamed: 5_level_1              | Subscription Mode (parent-only cell in the banner)                           |
+| Space | Floor                           | Floor / Module                                                               |
+| Space | Caged/Uncaged                   | Caged /Uncaged                                                               |
+
+### POWER CAPACITY band  (CUSTOMER_DETAILS + AIROLI_BANNER + CAPACITY_GRID + FACILITY_GRID)
+| Canonical                                    | Real sub-header                                                                  | Archetype             |
+|----------------------------------------------|----------------------------------------------------------------------------------|-----------------------|
+| Power Capacity | Contracted                  | Total Capacity Purchased                                                          | CUSTOMER_DETAILS/AIROLI |
+| Power Capacity | Consumed                    | Capacity in Use                                                                   | CUSTOMER_DETAILS/AIROLI |
+| Power Capacity | Available                   | Capacity to be given                                                              | CUSTOMER_DETAILS/AIROLI |
+| Power Capacity | Unnamed: 3_level_1          | (banner-only cell) → fallback to Subscription (KW/KVA)                            | CUSTOMER_DETAILS/AIROLI |
+| Power Capacity | Rated Load                  | Subscription Model value + UoM (rated capacity)                                   | CUSTOMER_DETAILS/AIROLI |
+| Power Capacity | Actual Load                 | Usage in KW / Capacity in Use (whichever exists)                                  | CUSTOMER_DETAILS/AIROLI |
+| Power Capacity | KW-HR/Month                 | No Of Units (KW-HR/ Month)                                                        | CUSTOMER_DETAILS/AIROLI |
+| Power Capacity | Unit Rate                   | Unit Rate (per KW-HR)                                                             | CUSTOMER_DETAILS/AIROLI |
+| Power Capacity | No. of Units                | No Of Units (KW-HR/ Month)                                                        | CUSTOMER_DETAILS/AIROLI |
+| Power Capacity | Raw Power (Genset)          | Raw Power (Genset & Transformer & Demand) — KW  / Generator kW                    | CAPACITY_GRID, FACILITY_GRID |
+| Power Capacity | Raw Power (Transformer)     | Transformer kW / Utility Sanction Load KVA                                        | CAPACITY_GRID, FACILITY_GRID |
+| Power Capacity | Raw Power (Demand)          | Utility Sanction Load KVA / Contract Demand                                       | FACILITY_GRID, CAPACITY_GRID |
+
+### ACTUAL PUE  (floating metric row on CUSTOMER_DETAILS + FACILITY_GRID)
+| Canonical                               | Real header                                                                  |
+|-----------------------------------------|------------------------------------------------------------------------------|
+| Actual PUE | Power Usage                | Actual PUE (floating cell r0) / PUE column in Inventory Summary              |
+
+### RATED TO CONSUMED  (floating metric row on CUSTOMER_DETAILS)
+| Canonical                               | Real header                                                                  |
+|-----------------------------------------|------------------------------------------------------------------------------|
+| Rated to Consumed | Ratio              | Rated to Consumed (floating cell r0, value in adjacent cell)                 |
+| Rated to Consumed | Unnamed: X_level_1 | (parent-only banner cell) → same as Ratio                                    |
+
+### GENSET HR/MO  (floating metric row on CUSTOMER_DETAILS)
+| Canonical                               | Real header                                                                  |
+|-----------------------------------------|------------------------------------------------------------------------------|
+| Genset Hr/Mo | Seating Space            | Genset Hr/Mo (floating cell r0, value in adjacent cell)                      |
+| Genset Hr/Mo | Unnamed: X_level_1       | (parent-only banner cell) → same as above                                    |
+
+### REVENUE band  (CUSTOMER_DETAILS only)
+| Canonical                               | Real sub-header                                                              |
+|-----------------------------------------|------------------------------------------------------------------------------|
+| Revenue | Monthly                       | Total Revenue (Revenue (Monthly) band)                                       |
+| Additional Charges | MRC                  | Additional Capacity Charges (MRC)                                            |
+| Multiplier | Unnamed: X_level_1         | Multiplier (banner-only)                                                     |
+
+### CAPACITY band  (CAPACITY_GRID — Rabale T1/T2)
+| Canonical                               | Real header in Rabale-T1/T2                                                  |
+|-----------------------------------------|------------------------------------------------------------------------------|
+| Capacity | Total Purchased              | Maximum Usable Capacity                                                      |
+| Capacity | In Use                       | Current utilization                                                          |
+| Capacity | Reserved                     | Committed (Based on Confirmed orders)                                        |
+| Capacity | Surplus                      | Balance (when > 0)                                                           |
+| Capacity | Leakage                      | Balance (when < 0) / -(Balance)                                              |
+
+### Identity / layout (all archetypes)
+| Canonical                               | Real header                                                                  |
+|-----------------------------------------|------------------------------------------------------------------------------|
+| Customer Name | Unnamed: X_level_1      | Customer Name                                                                |
+| Floor | Unnamed: X_level_1              | Floor                                                                         |
+| Module | Unnamed: X_level_1             | Floor / Module                                                               |
+| Description | Unnamed: X_level_1        | Description (FACILITY_GRID r0 col 0)                                         |
+| Remarks | Unnamed: X_level_1            | Remarks / Remarks if any (last column in CUSTOMER_DETAILS; col "Remarks" in FACILITY_GRID) |
+
+### Executor resolution rules for the canonical registry
+1. For each op, the executor iterates over every in-scope sheet and classifies the archetype.
+2. It looks up each requested canonical name in the registry. If the canonical is supported by the current archetype, it fuzzy-matches the real sub-header in that sheet and uses it.
+3. If the canonical is NOT supported by the current archetype (e.g. `Revenue | Monthly` requested on a CAPACITY_GRID sheet), the sheet is silently skipped for that canonical. It is NEVER fabricated.
+4. For `Unnamed: N_level_1` canonicals, the executor:
+   a. If reading with `header=[0,1]`, it matches the exact pandas artifact string.
+   b. If reading with `header=0` (SINGLE_LEVEL), it treats the canonical as parent-only and maps it to the real flat header via the registry note above.
+5. Decimal values pass through untouched. Dates pass through as stored. Case/whitespace is normalised only for MATCHING, never for OUTPUT.
+6. Source_File and Source_Sheet are prepended to every returned row.
+
+## JSON OUTPUT FORMAT  (v3)
 Return a JSON array. Each element is one operation:
 {
   "id": "op1",
-  "type": "list" | "aggregate" | "count" | "cell_lookup",
+  "type": "list" | "aggregate" | "count" | "cell_lookup" | "column_fetch",
   "label": "short human-readable label for this result card",
   "filter": {
     "caged":      true | false | null,
@@ -1443,31 +1548,67 @@ Return a JSON array. Each element is one operation:
     "shs":        true | false | null
   },
   "location": ["any"] | null,
+  "files":   ["<filename substring>", ...] | null,
+  "sheets":  ["<sheet name substring>", ...] | null,
   "operation": "sum"|"avg"|"mean"|"min"|"max"|"count"|"std"|"median"|"variance"|"range"|"count_nonzero"|"top"|"bottom" | null,
-  "field_hint": "<exact phrase from the list below>" | null,
+  "field_hint": "<exact phrase from the legacy list>" | null,
+  "canonical_columns": ["Parent | Sub", ...] | null,
   "top_n": integer | null,
   "group_by_location": true | false,
   "customer_name": "<exact customer name from query>" | null,
   "cell_value": "<exact cell value from query>" | null,
-  "target_column_hint": "<column keyword from query, e.g. 'floor','caged','uom','subscription model'>" | null,
-  "return_columns": ["<col1>","<col2>", ...] | null,
+  "target_column_hint": "<column keyword from query>" | null,
+  "return_columns": ["<canonical or raw col>", ...] | null,
   "match_mode": "exact" | "contains" | "regex" | null
 }
 
-## EXACT field_hint PHRASES (use verbatim — Python maps these to real columns):
+Two new fields in v3:
+- `canonical_columns` — array of canonical two-level names (`"Parent | Sub"`) the user asked about. Use this whenever the user's query names any of the canonical headers in the registry above. The executor will resolve each via the registry and return one output column per canonical name per matching row.
+- `files` / `sheets` — optional scope restrictors. When the user says "from Airoli and Kolkata only" → files=["Airoli","Kolkata"]. When the user says "only the Customer details and Terminated sheets" → sheets=["Customer details","Terminated"]. Substring match, case-insensitive. Null means ALL.
+
+## TYPE = "column_fetch"  (new in v3)
+Use when the user's query is essentially "fetch columns X, Y, Z from all/selected files and sheets" WITHOUT a cell-value filter. Example: "show me Power Capacity | Contracted, Power Capacity | Consumed, and Revenue | Monthly from all files".
+
+Required JSON shape:
+{
+  "id": "op1",
+  "type": "column_fetch",
+  "label": "Column Fetch — <n> columns × <scope>",
+  "canonical_columns": ["Power Capacity | Contracted", "Power Capacity | Consumed", "Revenue | Monthly"],
+  "files": null,
+  "sheets": null,
+  "filter": null,
+  "location": null,
+  "customer_name": null,
+  "cell_value": null,
+  "target_column_hint": null,
+  "match_mode": null,
+  "operation": null,
+  "field_hint": null,
+  "top_n": null,
+  "group_by_location": false,
+  "return_columns": null
+}
+
+Executor behaviour for column_fetch:
+1. For each in-scope file and sheet, detect archetype.
+2. For each canonical in `canonical_columns`, resolve via the registry. If unsupported by this archetype → skip (never fabricate).
+3. Emit ONE row per underlying data row, with columns = [Source_File, Source_Sheet, <canonical_1>, <canonical_2>, ...]. If a canonical is unsupported in that sheet, the cell is emitted as an explicit empty string "" (never a synthesised value).
+4. De-dup as per Rule 10. Preserve every decimal exactly.
+5. If the user also provided `customer_name`, `location`, `cell_value`, or `filter`, apply them on top of the column_fetch as additional filters.
+
+## EXACT field_hint PHRASES (legacy single-field hints — still supported):
 Power / Capacity:
 - "total capacity purchased"    — Total KW/KVA purchased (subscribed capacity)
 - "power in use"                — Capacity in Use (KW/KVA currently consumed)
 - "power allocated"             — Allocated / subscribed capacity in KW to be given
 - "power usage kw"              — Actual Usage in KW (metered consumption)
-
 Space / Racks:
 - "total space"                 — Space Subscription (sqft)
 - "space in use"                — Space In Use (sqft)
 - "space billed"                — Space Billed (sqft)
 - "seating subscription"        — Seating Space Subscription (seats)
 - "seating in use"              — Seating Space In Use (seats)
-
 Revenue (all are ₹/month MRC):
 - "total revenue"               — Total Monthly Revenue (MRC)
 - "space revenue"               — Revenue from Space including capacity
@@ -1475,9 +1616,10 @@ Revenue (all are ₹/month MRC):
 - "seating revenue"             — Revenue from Seating Space
 - "additional capacity revenue" — Additional Capacity Revenue
 - "net revenue"                 — Net Revenue Total (Contract Information)
-
 Rate:
 - "per unit rate"               — Per Unit Rate / tariff (₹/KW-HR)
+
+When the user query mixes legacy phrases and canonical names, populate BOTH `field_hint` and `canonical_columns` as appropriate.
 
 ## OPERATION → FUNCTION MAPPING
 | User says                                | operation value |
@@ -1495,9 +1637,10 @@ Rate:
 | top N / largest N                        | "top" + top_n   |
 | bottom N / smallest N                    | "bottom" + top_n|
 | which rows have <col> = <val> / find     → type="cell_lookup", operation=null |
+| fetch columns X, Y, Z / show me <col list> | type="column_fetch", operation=null |
 | any cell value shown / fetch rows where cell = X → type="cell_lookup" |
 
-## LOCATION ALIASES (resolve BROADLY — always include all sub-locations)
+## LOCATION ALIASES
 - "airoli"                          → ["airoli"]
 - "vashi"                           → ["vashi"]
 - "rabale" / "rabale tower"         → ["rabale"]   (matches T1, T2, Tower4, Tower5)
@@ -1514,6 +1657,13 @@ Rate:
 - "mumbai" / "mumbai region"        → ["airoli","rabale","vashi"]
 - no location mentioned             → null (query ALL locations)
 
+## FILE / SHEET SCOPE RESTRICTION  (new in v3)
+- "from Airoli and Noida-01 only"         → files=["Airoli","Noida_01"], sheets=null
+- "only the Customer details sheet"       → files=null, sheets=["Customer details"]
+- "Noida-01 file, Terminated sheet only"  → files=["Noida_01"], sheets=["Terminated"]
+- "all files, all sheets" / not specified → files=null, sheets=null
+Substring match is case-insensitive. When the user names a sheet that does not exist in a scoped file, that file contributes zero rows for that op (never fabricate).
+
 ## FILTER SEMANTICS
 - "caged customers"      → filter.caged = true
 - "uncaged customers"    → filter.uncaged = true
@@ -1525,73 +1675,63 @@ Rate:
 - "all customers" (no qualifier) → all filters null
 
 ## FILTER PROPAGATION RULE
-If sub-query N is a "list" with a filter, and sub-query N+1 is an "aggregate" on the SAME subject with no explicit filter, inherit the filter from sub-query N.
-Example: "list caged customers and sum their capacity in use" →
-  op1: type=list, filter.caged=true
-  op2: type=aggregate, filter.caged=true (inherited), field_hint="power in use", operation="sum"
+If sub-query N is a "list"/"column_fetch" with a filter, and sub-query N+1 is an "aggregate" on the SAME subject with no explicit filter, inherit the filter from sub-query N.
 
 ## COMPLEX QUERY DECOMPOSITION
 Queries joined by "and", "or", commas, semicolons, or "also" = multiple operations in the array.
-Execute each independently on the filtered dataset.
 - "and" between filters = intersection (BOTH must be true)
-- "or" between locations = union (include rows from EITHER location)
+- "or" between locations = union
 - "and" between actions on the same filter = same filter, multiple operation objects
 
-- for particular customer query show results of the particular customer not all customers
-
 ## CUSTOMER NAME FILTER RULES
-- When the user names a specific customer in the query (e.g. "show Wipro", "Tata customer details", "list Infosys records"), populate the "customer_name" field in the JSON with the exact name as typed by the user.
-- The Python executor MUST apply a case-insensitive partial-match filter on the customer name column BEFORE returning any rows.
-- The output table MUST contain ONLY rows belonging to that customer. Rows of any other customer MUST be excluded entirely.
-- The trailing footer line (e.g. "📋 Wipro Customer Details — 159 row(s)") MUST NOT be displayed in the output. The result ends after the last matching data row.
-- If the customer name is not found in any sheet/file, return an empty result with a clear "No matching customer found" message — do NOT fall back to showing all customers.
+- When the user names a specific customer, populate `customer_name` with the exact name as typed.
+- The executor applies a case-insensitive partial-match on the Customer Name column BEFORE returning any rows.
+- The output contains ONLY rows belonging to that customer. Zero rows from other customers.
+- No trailing "— N row(s)" footer listing all customers.
+- If not found, return an empty result with "No matching customer found". Never fall back.
 
 ## LOCATION STRICT FILTER RULES
-- When the query specifies a location, the "location" field in the JSON MUST be set to only that location's alias list (e.g. ["noida"]).
-- The Python executor MUST filter rows to only those where the location column matches the specified location(s).
-- Under NO circumstances should rows from a non-queried location (e.g. Airoli data appended at the end) appear in the output.
-- Do NOT use any default or fallback location when a location is explicitly provided.
-- If the user queries "Noida", output rows from Noida only. If the user queries "Bangalore", output rows from Bangalore only. Zero rows from other locations.
+- The executor filters rows to only sheets whose parent file maps to the requested location(s).
+- Zero rows from unrequested locations. No fallback, no default.
 
 ## VALUE / CONDITION FILTER RULES
-- When the query filters by a column value or condition (e.g. "rated customers", "caged AND subscribed", "power > 500 KW", "metered customers in Chennai"), apply ALL stated conditions simultaneously using AND logic.
-- The output MUST contain ONLY rows satisfying every stated condition. No rows outside the condition should appear.
-- The columns displayed in the output MUST be limited to columns relevant to the query — do not dump all columns when the user asked for specific information.
-- Do NOT hallucinate rows that match the condition but do not exist in the data. Do NOT omit rows that genuinely match.
-- All filter conditions (caged, rated, metered, etc.) are applied cumulatively: if a row does not match ALL stated filters it must be excluded.
+- Apply all stated conditions cumulatively with AND logic.
+- Output columns limited to what the user asked for. Do NOT dump all columns.
+- No hallucinated rows. No omission of genuinely matching rows.
 
 ## ============================================================
-## CELL-VALUE QUERY RULES  (bmprompt addition — UPDATED)
+## CELL-VALUE QUERY RULES  (unchanged from v2, still the core of cell_lookup)
 ## ============================================================
-Purpose: support queries where the user names a specific CELL VALUE and wants ALL rows (and optionally a subset of columns) that match that value in a specific column, across ALL sheets of ALL 10 files. This is the "fetch any cell value-wise and show output fetching value-wise with matching rows of columns cell value-wise" capability.
 
 ### When to use type = "cell_lookup"
-Use "cell_lookup" whenever the user asks for rows keyed on the value of a specific column cell, for example:
+Use when the user asks for rows keyed on the value of a specific column cell, e.g.:
 - "show all rows where Floor = 3rd Floor"
 - "list customers whose UoM is KVA"
 - "find all entries where Caged/Uncaged = Caged in Bangalore"
 - "which customers are on RHS"
 - "show rows where Power Subscription Model is Rated"
-- "give me everything where Ownership = Customer"
 - "customers whose Subscription Mode = Rack"
 - "rows where Unit Rate Model = Fixed"
 - "fetch cell value 250 from Total Capacity Purchased"
 - "any row where Billing Frequency = Monthly"
-- "show every row where Term of Contract = 5"
 - "rows where the cell value 'Noida-01' appears in Floor / Module"
+- "show rows where Power Capacity | Contracted = 305"                ← canonical form also accepted
+- "find rows where Billing Model | Rated is true in Kolkata"          ← canonical form also accepted
 
 ### Required JSON fields for cell_lookup
 - "type"                 : "cell_lookup"
-- "target_column_hint"   : the column the user is asking about, in the user's own words (e.g. "floor", "uom", "caged/uncaged", "ownership", "subscription mode", "power subscription model", "power usage model", "unit rate model", "rhs/sh", "billing frequency", "term of contract", "subscription model", "floor / module", "customer name", "per unit rate", "contract start date", "sales order ref no"). The executor fuzzy-maps this to the real column in each sheet.
-- "cell_value"           : the exact value the user typed (e.g. "3rd Floor", "KVA", "Caged", "Rated", "Rack", "Customer", "Fixed", "RHS", "250", "Monthly", "5", "Noida-01").
-- "match_mode"           : "exact" (default), "contains" (for partial words / substrings / any-cell-any-where searches), or "regex" (only if user uses a pattern).
-- "return_columns"       : OPTIONAL list of columns to return. If null, return the standard safe projection (see below).
-- "location"             : honours normal LOCATION ALIASES — null = scan all 10 files.
-- "filter"               : may be combined with cell_lookup (e.g. cell_lookup on Floor=3rd + filter.caged=true).
-- "customer_name"        : may be combined with cell_lookup (e.g. "show Wipro rows where UoM = KVA").
+- "target_column_hint"   : the column the user is asking about (user's own words OR canonical "Parent | Sub" form)
+- "cell_value"           : the exact value the user typed
+- "match_mode"           : "exact" (default), "contains", or "regex"
+- "return_columns"       : optional list; if null → standard safe projection
+- "location"             : honours LOCATION ALIASES
+- "files" / "sheets"     : optional scope restrictors
+- "filter"               : may combine with cell_lookup
+- "customer_name"        : may combine with cell_lookup
+- "canonical_columns"    : optional — the executor will ALSO return these canonical columns in the projection
 
-### Standard safe projection (used when return_columns is null)
-The executor returns these columns in this order (silently omitting any that the sheet does not have):
+### Standard safe projection (when return_columns is null)
+In this order, silently omitting any the sheet does not have:
 1.  Source_File
 2.  Source_Sheet
 3.  Floor
@@ -1612,99 +1752,35 @@ The executor returns these columns in this order (silently omitting any that the
 18. Billing Frequency
 19. Contract Start Date
 20. Current Expiry Date
-PLUS the target column itself if not already in the list above.
+PLUS the target column itself if not already in the list.
 
-### SUPPORTED target_column_hint KEYWORDS (fuzzy-mapped per sheet)
-The target_column_hint may be any of the following (case/whitespace-insensitive). The executor fuzzy-maps each to the real header in every scanned sheet:
+### Executor semantics for cell_lookup (v3)
+1. Load every in-scope sheet. Detect archetype per sheet. Auto-detect header row(s) per archetype.
+2. Resolve `target_column_hint`:
+   - If it matches a canonical "Parent | Sub" name → look up in the CANONICAL COLUMN REGISTRY → real sub-header per archetype.
+   - Otherwise → fuzzy-map to the real sub-header via token overlap.
+   - If the column is not present in this sheet's archetype → SKIP this sheet silently (never fabricate).
+3. Normalise both cell and query value (strip / collapse whitespace / casefold; numeric cells via float).
+4. Apply match_mode. Keep only matching rows.
+5. De-duplicate via Rule 10.
+6. Project to return_columns (+canonical_columns if present) or the standard safe projection.
+7. Preserve every cell value EXACTLY — no reformatting of numbers, dates, casing.
+8. If ZERO rows match across all in-scope sheets, return a single empty result object labelled "No matching record found for <target> = <value>". NEVER fall back to an unrelated dataset.
+9. NEVER invent a column value. NEVER fuse cells from different rows.
 
-Identity / layout:
-- "sr no", "floor", "floor / module", "customer name", "rhs", "rhs/sh", "sh"
-
-Subscription model:
-- "power subscription model", "rated/subscribed", "subscription model",
-  "power usage model", "bundled/metered", "subscription mode",
-  "caged", "uncaged", "caged /uncaged", "ownership", "uom"
-
-Capacity / power:
-- "subscription", "in use", "yet to be given", "billed",
-  "reserved capacity", "per unit rate", "per unit rate (mrc)",
-  "total capacity purchased", "capacity in use", "capacity to be given",
-  "allocated capacity", "subscribed capacity to be given in kw",
-  "dc nw infra", "billable additional capacity",
-  "additional capacity charges", "usage model", "multiplier",
-  "unit rate model", "unit rate (per kw-hr)", "no of units"
-
-Space / seating:
-- "space", "space in use", "space billed",
-  "seating space", "seating subscription", "seating in use"
-
-Revenue / contract:
-- "space revenue including capacity", "additional capacity revenue",
-  "power usage revenue", "any other items", "total revenue",
-  "billing frequency", "sales order ref no", "contract start date",
-  "term of contract", "current expiry date", "remarks"
-
-Derived / BM metrics:
-- "avg revenue /rack /month", "avg revenue /kw /month",
-  "net revenue / resvd kw", "proj net revenue / resvd kw",
-  "sold net revenue / resvd kw", "total rev (cap + power)",
-  "capacity revenue", "power revenue", "cost of power @ act usage",
-  "proj cost of power @ reserv cap", "cost of power @ design use",
-  "net rev total", "target capacity revenue",
-  "capacity surplus/leakage", "power surplus/leakage",
-  "contribution to target", "total surplus/leakage",
-  "power surplus/leakage / kw", "capacity surplus/leakage / kw",
-  "total surplus/leakage / kw"
-
-Ops / facility:
-- "diversification", "rated to consumed", "actual pue",
-  "actual unit rate", "genset hr", "billing model"
-
-If the user's keyword does not match any header in a sheet, that sheet is silently skipped for that op (never fabricated).
-
-### Executor semantics for cell_lookup
-1. Load every sheet of every file in scope (respecting location filter if any).
-2. For each sheet, auto-detect the header row, then fuzzy-map target_column_hint → the real column name in that sheet's detected header row. If the column does not exist in that sheet, SKIP that sheet silently (do not fabricate it).
-3. Normalise both the cell and the query value: strip whitespace, collapse internal whitespace, casefold. For numeric-looking values, compare as float after _robust_to_numeric (so "250", "250.0", "250.00" all match).
-4. Apply match_mode:
-   - "exact"    : normalised cell == normalised query value
-   - "contains" : normalised query value is a substring of normalised cell
-   - "regex"    : re.search(query, cell, re.I)
-5. Keep ONLY rows where the match succeeds. Never include non-matching rows.
-6. De-duplicate across sheets/files using the key in CRITICAL RULE 10. Never emit the same underlying record twice, even if two sheets hold the same data.
-7. Project to return_columns (or the standard safe projection if null). Always include Source_File and Source_Sheet so the user can trace the row back.
-8. Preserve every original cell value EXACTLY as it appears (full decimal precision, original casing). Do not re-format numbers, dates, or strings.
-9. If ZERO rows match across all sheets of all files, return a single empty result object with label "No matching record found for <target_column_hint> = <cell_value>". Do NOT fall back to any other dataset. Do NOT show unrelated rows.
-10. NEVER invent a column value that was not in the source cell. NEVER fuse cells from different rows.
-
-### ANY-COLUMN / ANY-CELL MODE (when the user does not name a column)
-If the user asks something like "find cell value 250" or "show every row that contains 'Wipro'" without naming a specific column, emit a cell_lookup with:
-- target_column_hint = "any"
-- cell_value = the user's value
-- match_mode = "contains" (default for any-column mode)
-
-Executor behaviour for target_column_hint = "any":
-- Scan EVERY column of EVERY sheet.
-- A row matches if ANY of its cells (after normalisation) satisfies the match_mode against cell_value.
-- Return the standard safe projection plus a synthetic column "Matched_Column" that names the first column in which the match occurred.
-- Still de-duplicate and still preserve Source_File/Source_Sheet.
-
-### Combining cell_lookup with other filters
-- cell_lookup + location  → scan only sheets whose file maps to that location, then apply cell match.
-- cell_lookup + filter    → apply boolean filter (caged/rated/etc.) AND cell match; both must be satisfied.
-- cell_lookup + customer  → apply customer partial-match AND cell match; both must be satisfied.
-- cell_lookup + aggregate → allowed as a multi-op array: first op = cell_lookup (returns the matching rows), second op = aggregate with the SAME cell_value/target_column_hint to produce sum/avg/etc. over the matched rows only.
-- Multiple cell_lookup ops in one array → each runs independently; results are separate cards.
+### ANY-COLUMN / ANY-CELL MODE
+If the user asks "find cell value 250" or "show every row that contains 'Wipro'" without naming a column:
+- target_column_hint = "any", cell_value = the user value, match_mode = "contains".
+- Executor scans EVERY column of EVERY in-scope sheet. Returns safe projection + synthetic "Matched_Column".
 
 ### Forbidden behaviours for cell_lookup
 - Returning rows whose target column value does NOT match cell_value.
 - Returning the same row twice because it appears in two sheets.
-- Returning rows from a location the user did not ask for.
-- Returning a "closest guess" row when no exact match exists.
-- Adding a trailing "— N row(s)" footer that lists extraneous customers.
-- Silently dropping a sheet that DOES contain the target column because it is in an odd file.
-- Re-formatting cell values (dates, decimals, casing) on the way out.
-- Fabricating a Source_File or Source_Sheet value.
+- Returning rows from a location / file / sheet the user did not ask for.
+- Returning a "closest guess" when no exact match exists.
+- Silently dropping a sheet that DOES contain the target column.
+- Re-formatting cell values.
+- Fabricating Source_File or Source_Sheet.
 
 ## UNIT AWARENESS (inform the label — do NOT change field_hint)
 - Power/capacity columns → KW or KVA (varies per row's UoM column)
@@ -1714,89 +1790,66 @@ Executor behaviour for target_column_hint = "any":
 - Rate columns → ₹/KW-HR
 Always include the unit in the label string (e.g., "Total Power Purchased (KW)").
 
-## EXAMPLES
+## ============================================================
+## EXAMPLES  (v3 — including the new canonical + scope forms)
+## ============================================================
 
-Query: "show customer name"
-→ show only particular customer details. Do not show all customers list. Do not print a trailing "📋 <Customer> — N row(s)".
+Query: "fetch Power Capacity | Contracted, Power Capacity | Consumed, and Revenue | Monthly from all files and all sheets"
+→ [{"id":"op1","type":"column_fetch","label":"Power Capacity (Contracted, Consumed) + Revenue (Monthly) — All Files","filter":null,"location":null,"files":null,"sheets":null,"operation":null,"field_hint":null,"canonical_columns":["Power Capacity | Contracted","Power Capacity | Consumed","Revenue | Monthly"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
 
-Query: "sum of power purchased"
-→ [{"id":"op1","type":"aggregate","label":"Total Power Purchased (KW/KVA)","filter":null,"location":null,"operation":"sum","field_hint":"total capacity purchased","top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
+Query: "show Billing Model | Unnamed: 1_level_1, Space | Caged/Uncaged and Power Capacity | Contracted for all customers in Noida"
+→ [{"id":"op1","type":"column_fetch","label":"Billing Model / Caged / Contracted — Noida","filter":null,"location":["noida"],"files":null,"sheets":null,"operation":null,"field_hint":null,"canonical_columns":["Billing Model | Unnamed: 1_level_1","Space | Caged/Uncaged","Power Capacity | Contracted"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
+
+Query: "from Airoli and Kolkata files only, fetch Customer Name | Unnamed: X_level_1, Power Capacity | Contracted and Power Capacity | Consumed"
+→ [{"id":"op1","type":"column_fetch","label":"Customer / Contracted / Consumed — Airoli + Kolkata","filter":null,"location":null,"files":["Airoli","Kolkata"],"sheets":null,"operation":null,"field_hint":null,"canonical_columns":["Customer Name | Unnamed: X_level_1","Power Capacity | Contracted","Power Capacity | Consumed"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
+
+Query: "only the Customer details and Terminated sheets — give me Power Capacity | Rated Load, Power Capacity | Actual Load, Revenue | Monthly"
+→ [{"id":"op1","type":"column_fetch","label":"Rated Load / Actual Load / Monthly Revenue — Customer details + Terminated","filter":null,"location":null,"files":null,"sheets":["Customer details","Terminated"],"operation":null,"field_hint":null,"canonical_columns":["Power Capacity | Rated Load","Power Capacity | Actual Load","Revenue | Monthly"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
+
+Query: "show Capacity | Total Purchased, Capacity | In Use, Capacity | Surplus and Capacity | Leakage from Rabale T1 and T2"
+→ [{"id":"op1","type":"column_fetch","label":"Capacity Matrix — Rabale T1/T2","filter":null,"location":["rabale t1","rabale t2"],"files":["Rabale_T1_T2"],"sheets":null,"operation":null,"field_hint":null,"canonical_columns":["Capacity | Total Purchased","Capacity | In Use","Capacity | Reserved","Capacity | Surplus","Capacity | Leakage"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
+
+Query: "give me Description | Unnamed: X_level_1 and Remarks | Unnamed: X_level_1 from the Facility details and Summary sheets of Bangalore and Kolkata"
+→ [{"id":"op1","type":"column_fetch","label":"Description + Remarks — Facility/Summary — Bangalore + Kolkata","filter":null,"location":["bangalore","kolkata"],"files":["Bangalore","Kolkata"],"sheets":["Facility details","Summary"],"operation":null,"field_hint":null,"canonical_columns":["Description | Unnamed: X_level_1","Remarks | Unnamed: X_level_1"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
+
+Query: "fetch Actual PUE | Power Usage and Rated to Consumed | Ratio from all files"
+→ [{"id":"op1","type":"column_fetch","label":"Actual PUE + Rated-to-Consumed — All Files","filter":null,"location":null,"files":null,"sheets":null,"operation":null,"field_hint":null,"canonical_columns":["Actual PUE | Power Usage","Rated to Consumed | Ratio"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
+
+Query: "show rows where Billing Model | Rated is set in Noida and also sum Power Capacity | Contracted for them"
+→ [
+  {"id":"op1","type":"cell_lookup","label":"Rated rows — Noida","filter":{"caged":null,"uncaged":null,"rated":true,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":["noida"],"files":null,"sheets":null,"operation":null,"field_hint":null,"canonical_columns":["Billing Model | Unnamed: 1_level_1","Power Capacity | Contracted"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Rated","target_column_hint":"Billing Model | Rated","return_columns":null,"match_mode":"exact"},
+  {"id":"op2","type":"aggregate","label":"Sum Power Capacity | Contracted — Rated, Noida","filter":{"caged":null,"uncaged":null,"rated":true,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":["noida"],"files":null,"sheets":null,"operation":"sum","field_hint":"total capacity purchased","canonical_columns":["Power Capacity | Contracted"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}
+]
+
+Query: "show Wipro rows where Power Capacity | Consumed > 0 across all files"
+→ [{"id":"op1","type":"cell_lookup","label":"Wipro rows with Consumed > 0","filter":null,"location":null,"files":null,"sheets":null,"operation":null,"field_hint":null,"canonical_columns":["Power Capacity | Consumed"],"top_n":null,"group_by_location":false,"customer_name":"Wipro","cell_value":">0","target_column_hint":"Power Capacity | Consumed","return_columns":null,"match_mode":"regex"}]
+
+Query: "sum of power purchased"   (legacy, still works)
+→ [{"id":"op1","type":"aggregate","label":"Total Power Purchased (KW/KVA)","filter":null,"location":null,"files":null,"sheets":null,"operation":"sum","field_hint":"total capacity purchased","canonical_columns":["Power Capacity | Contracted"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
 
 Query: "total revenue by location"
-→ [{"id":"op1","type":"aggregate","label":"Total Revenue (₹/month) by Location","filter":null,"location":null,"operation":"sum","field_hint":"total revenue","top_n":null,"group_by_location":true,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
-
-Query: "std deviation of per unit rate"
-→ [{"id":"op1","type":"aggregate","label":"Std Dev of Per Unit Rate","filter":null,"location":null,"operation":"std","field_hint":"per unit rate","top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
+→ [{"id":"op1","type":"aggregate","label":"Total Revenue (₹/month) by Location","filter":null,"location":null,"files":null,"sheets":null,"operation":"sum","field_hint":"total revenue","canonical_columns":["Revenue | Monthly"],"top_n":null,"group_by_location":true,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
 
 Query: "list caged customers in noida"
-→ [{"id":"op1","type":"list","label":"Caged Customers — Noida","filter":{"caged":true,"uncaged":null,"rated":null,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":["noida"],"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
+→ [{"id":"op1","type":"list","label":"Caged Customers — Noida","filter":{"caged":true,"uncaged":null,"rated":null,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":["noida"],"files":null,"sheets":null,"operation":null,"field_hint":null,"canonical_columns":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
 
 Query: "show Wipro customer details"
-→ [{"id":"op1","type":"list","label":"Wipro Customer Details","filter":{"caged":null,"uncaged":null,"rated":null,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":"Wipro","cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
-
-### CELL-VALUE QUERY EXAMPLES
-
-Query: "show all rows where Floor = 3rd Floor"
-→ [{"id":"op1","type":"cell_lookup","label":"Rows where Floor = 3rd Floor","filter":null,"location":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"3rd Floor","target_column_hint":"floor","return_columns":null,"match_mode":"exact"}]
-
-Query: "list all customers whose UoM is KVA"
-→ [{"id":"op1","type":"cell_lookup","label":"Customers with UoM = KVA","filter":null,"location":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"KVA","target_column_hint":"uom","return_columns":["Source_File","Source_Sheet","Customer Name","UoM","Total Capacity Purchased","Capacity in Use"],"match_mode":"exact"}]
+→ [{"id":"op1","type":"list","label":"Wipro Customer Details","filter":{"caged":null,"uncaged":null,"rated":null,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":null,"files":null,"sheets":null,"operation":null,"field_hint":null,"canonical_columns":null,"top_n":null,"group_by_location":false,"customer_name":"Wipro","cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
 
 Query: "find rows where Caged/Uncaged = Caged in Bangalore"
-→ [{"id":"op1","type":"cell_lookup","label":"Caged rows — Bangalore","filter":null,"location":["bangalore"],"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Caged","target_column_hint":"caged/uncaged","return_columns":null,"match_mode":"exact"}]
+→ [{"id":"op1","type":"cell_lookup","label":"Caged rows — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":null,"operation":null,"field_hint":null,"canonical_columns":["Space | Caged/Uncaged"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Caged","target_column_hint":"caged/uncaged","return_columns":null,"match_mode":"exact"}]
 
-Query: "which customers have Power Subscription Model = Rated"
-→ [{"id":"op1","type":"cell_lookup","label":"Rows where Power Subscription Model = Rated","filter":null,"location":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Rated","target_column_hint":"power subscription model","return_columns":["Source_File","Source_Sheet","Customer Name","Power Subscription Model (Rated/Subscribed)","UoM","Total Capacity Purchased"],"match_mode":"exact"}]
-
-Query: "rows where Subscription Mode contains Rack"
-→ [{"id":"op1","type":"cell_lookup","label":"Rows where Subscription Mode contains 'Rack'","filter":null,"location":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Rack","target_column_hint":"subscription mode","return_columns":null,"match_mode":"contains"}]
-
-Query: "show Wipro rows where UoM = KVA"
-→ [{"id":"op1","type":"cell_lookup","label":"Wipro rows where UoM = KVA","filter":null,"location":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":"Wipro","cell_value":"KVA","target_column_hint":"uom","return_columns":null,"match_mode":"exact"}]
-
-Query: "fetch cell value 250 from Total Capacity Purchased"
-→ [{"id":"op1","type":"cell_lookup","label":"Rows where Total Capacity Purchased = 250","filter":null,"location":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"250","target_column_hint":"total capacity purchased","return_columns":null,"match_mode":"exact"}]
-
-Query: "find any row that contains Infosys anywhere"
-→ [{"id":"op1","type":"cell_lookup","label":"Any cell containing 'Infosys'","filter":null,"location":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Infosys","target_column_hint":"any","return_columns":null,"match_mode":"contains"}]
-
-Query: "show every row where Billing Frequency = Monthly"
-→ [{"id":"op1","type":"cell_lookup","label":"Rows where Billing Frequency = Monthly","filter":null,"location":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Monthly","target_column_hint":"billing frequency","return_columns":null,"match_mode":"exact"}]
-
-Query: "rows where Term of Contract = 5"
-→ [{"id":"op1","type":"cell_lookup","label":"Rows where Term of Contract = 5","filter":null,"location":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"5","target_column_hint":"term of contract","return_columns":null,"match_mode":"exact"}]
-
-Query: "show rows where Floor / Module = Noida-01"
-→ [{"id":"op1","type":"cell_lookup","label":"Rows where Floor / Module = Noida-01","filter":null,"location":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Noida-01","target_column_hint":"floor / module","return_columns":null,"match_mode":"exact"}]
-
-Query: "find all rows where Ownership = Customer in Noida and sum their capacity in use"
-→ [
-  {"id":"op1","type":"cell_lookup","label":"Ownership = Customer — Noida","filter":null,"location":["noida"],"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Customer","target_column_hint":"ownership","return_columns":null,"match_mode":"exact"},
-  {"id":"op2","type":"aggregate","label":"Capacity in Use — Ownership=Customer, Noida","filter":null,"location":["noida"],"operation":"sum","field_hint":"power in use","top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Customer","target_column_hint":"ownership","return_columns":null,"match_mode":"exact"}
-]
-
-Query: "list all caged customers AND sum capacity in use AND total power used AND list rated customers AND show customers in airoli or noida"
-→ [
-  {"id":"op1","type":"list","label":"Caged Customers (All Locations)","filter":{"caged":true,"uncaged":null,"rated":null,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null},
-  {"id":"op2","type":"aggregate","label":"Capacity in Use — Caged (KW/KVA)","filter":{"caged":true,"uncaged":null,"rated":null,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":null,"operation":"sum","field_hint":"power in use","top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null},
-  {"id":"op3","type":"aggregate","label":"Total Power Purchased — Caged (KW/KVA)","filter":{"caged":true,"uncaged":null,"rated":null,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":null,"operation":"sum","field_hint":"total capacity purchased","top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null},
-  {"id":"op4","type":"list","label":"Rated Customers (All Locations)","filter":{"caged":null,"uncaged":null,"rated":true,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null},
-  {"id":"op5","type":"aggregate","label":"Total Power Used — Rated (KW)","filter":{"caged":null,"uncaged":null,"rated":true,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":null,"operation":"sum","field_hint":"power in use","top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null},
-  {"id":"op6","type":"list","label":"Customers in Airoli or Noida","filter":{"caged":null,"uncaged":null,"rated":null,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":["airoli","noida"],"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}
-]
+Query: "any row that contains Infosys anywhere"
+→ [{"id":"op1","type":"cell_lookup","label":"Any cell containing 'Infosys'","filter":null,"location":null,"files":null,"sheets":null,"operation":null,"field_hint":null,"canonical_columns":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Infosys","target_column_hint":"any","return_columns":null,"match_mode":"contains"}]
 
 Query: "how many customers per location"
-→ [{"id":"op1","type":"count","label":"Customer Count by Location","filter":null,"location":null,"operation":"count","field_hint":null,"top_n":null,"group_by_location":true,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
+→ [{"id":"op1","type":"count","label":"Customer Count by Location","filter":null,"location":null,"files":null,"sheets":null,"operation":"count","field_hint":null,"canonical_columns":null,"top_n":null,"group_by_location":true,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
 
 Query: "top 5 customers by revenue"
-→ [{"id":"op1","type":"aggregate","label":"Top 5 Customers by Revenue","filter":null,"location":null,"operation":"top","field_hint":"total revenue","top_n":5,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
-
-Query: "minimum per unit rate in bangalore"
-→ [{"id":"op1","type":"aggregate","label":"Min Per Unit Rate — Bangalore","filter":null,"location":["bangalore"],"operation":"min","field_hint":"per unit rate","top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
-
-Query: "median power in use across all locations"
-→ [{"id":"op1","type":"aggregate","label":"Median Power In Use (KW/KVA)","filter":null,"location":null,"operation":"median","field_hint":"power in use","top_n":null,"group_by_location":true,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
+→ [{"id":"op1","type":"aggregate","label":"Top 5 Customers by Revenue","filter":null,"location":null,"files":null,"sheets":null,"operation":"top","field_hint":"total revenue","canonical_columns":["Revenue | Monthly"],"top_n":5,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
 """
+
+
 
 
 
@@ -1987,172 +2040,434 @@ def _apply_op_filters(df: pd.DataFrame,
 # ── Execute AI Operations ─────────────────────────────────────────────────────
 
 _EXTENDED_OPS = {
-    "sum":         lambda s: s.sum(),
-    "avg":         lambda s: s.mean(),
-    "mean":        lambda s: s.mean(),
-    "min":         lambda s: s.min(),
-    "max":         lambda s: s.max(),
-    "count":       lambda s: float(len(s)),
-    "std":         lambda s: s.std(ddof=1),
-    "median":      lambda s: s.median(),
-    "variance":    lambda s: s.var(ddof=1),
-    "var":         lambda s: s.var(ddof=1),
-    "range":       lambda s: s.max() - s.min(),
-    "sum_abs":     lambda s: s.abs().sum(),
-    "count_nonzero": lambda s: float((s != 0).sum()),
-    "pct_nonzero": lambda s: float((s != 0).sum()) / max(len(s), 1) * 100,
-}
+      "sum":           lambda s: s.sum(),
+      "total":         lambda s: s.sum(),
+      "avg":           lambda s: s.mean(),
+      "mean":          lambda s: s.mean(),
+      "average":       lambda s: s.mean(),
+      "min":           lambda s: s.min(),
+      "minimum":       lambda s: s.min(),
+      "max":           lambda s: s.max(),
+      "maximum":       lambda s: s.max(),
+      "count":         lambda s: float(len(s)),
+      "std":           lambda s: s.std(ddof=1),
+      "stddev":        lambda s: s.std(ddof=1),
+      "median":        lambda s: s.median(),
+      "variance":      lambda s: s.var(ddof=1),
+      "var":           lambda s: s.var(ddof=1),
+      "range":         lambda s: s.max() - s.min(),
+      "spread":        lambda s: s.max() - s.min(),
+      "sum_abs":       lambda s: s.abs().sum(),
+      "count_nonzero": lambda s: float((s != 0).sum()),
+      "pct_nonzero":   lambda s: float((s != 0).sum()) / max(len(s), 1) * 100,
+      "multiply":      lambda s: s.prod(),
+      "product":       lambda s: s.prod(),
+      "percentage":    lambda s: s.sum(),
+      "cumulative":    lambda s: s.sum(),
+  }
+
+
 
 
 def execute_ai_operations(operations: list, df: pd.DataFrame) -> list:
-    results = []
+      results = []
 
-    for op in operations:
-        op_type     = op.get("type", "list")
-        label       = op.get("label", "Result")
-        filter_dict = op.get("filter") or {}
-        locations   = op.get("location")
-        operation   = (op.get("operation") or "sum").lower().strip()
-        field_hint  = op.get("field_hint") or ""
-        top_n       = int(op.get("top_n") or 10)
-        grp_by_loc  = bool(op.get("group_by_location"))
+      for op in operations:
+          op_type           = op.get("type", "list")
+          label             = op.get("label", "Result")
+          filter_dict       = op.get("filter") or {}
+          locations         = op.get("location")
+          operation         = (op.get("operation") or "sum").lower().strip()
+          field_hint        = op.get("field_hint") or ""
+          top_n             = int(op.get("top_n") or 10)
+          grp_by_loc        = bool(op.get("group_by_location"))
+          canonical_columns = op.get("canonical_columns") or []
+          files_scope       = op.get("files") or []
+          sheets_scope      = op.get("sheets") or []
+          customer_name     = op.get("customer_name") or ""
+          cell_value        = op.get("cell_value") or ""
+          target_col_hint   = op.get("target_column_hint") or ""
+          match_mode        = (op.get("match_mode") or "contains").lower().strip()
+          return_columns    = op.get("return_columns") or []
 
-        filtered = _apply_op_filters(df, filter_dict, locations)
+          filtered = _apply_op_filters(df, filter_dict, locations)
 
-        if filtered.empty:
-            results.append({"type": "empty", "label": label,
-                            "message": "No records match this filter."})
-            continue
+          # Apply file/sheet scope restrictors
+          if files_scope and "_Location" in filtered.columns:
+              file_mask = pd.Series(False, index=filtered.index)
+              for fkw in files_scope:
+                  file_mask |= filtered["_Location"].str.lower().str.contains(
+                      re.escape(fkw.lower()), na=False)
+              filtered = filtered[file_mask]
 
-        # ── LIST ─────────────────────────────────────────────────────────────
-        if op_type == "list":
-            meta  = [c for c in ["_Location", "_Sheet"] if c in filtered.columns]
-            data  = [c for c in filtered.columns if not c.startswith("_")][:30]
-            disp  = filtered[meta + data].reset_index(drop=True)
-            disp.index += 1
-            results.append({"type": "table", "label": label,
-                            "data": disp, "row_count": len(disp)})
+          if sheets_scope and "_Sheet" in filtered.columns:
+              sheet_mask = pd.Series(False, index=filtered.index)
+              for skw in sheets_scope:
+                  sheet_mask |= filtered["_Sheet"].str.lower().str.contains(
+                      re.escape(skw.lower()), na=False)
+              filtered = filtered[sheet_mask]
 
-        # ── AGGREGATE / TOP / BOTTOM ─────────────────────────────────────────
-        elif op_type in ("aggregate", "top", "bottom"):
-            col, reason = _resolve_col_by_semantic(filtered, field_hint)
+          # Apply customer name filter
+          if customer_name:
+              cname_col = find_col(filtered, r"customer.*name|client.*name")
+              if cname_col and cname_col in filtered.columns:
+                  filtered = filtered[
+                      filtered[cname_col].astype(str).str.lower().str.contains(
+                          re.escape(customer_name.lower()), na=False)]
 
-            if not col or col not in filtered.columns:
-                results.append({"type": "error", "label": label,
-                                "message": f"No column matched '{field_hint}'."})
-                continue
+          if filtered.empty:
+              results.append({"type": "empty", "label": label,
+                              "message": "No records match this filter."})
+              continue
 
-            unit   = _detect_unit(col)
+          # ── CANONICAL COLUMN RESOLUTION ────────────────────────────────────────
+          def _resolve_canonical_column(df_: pd.DataFrame, canonical: str) -> "str | None":
+              """
+              Resolve a canonical two-level name 'Parent | Sub' to an actual column
+              in df_ using fuzzy matching. Returns the real column name or None.
+              """
+              if canonical in df_.columns:
+                  return canonical
+              if " | " in canonical:
+                  parent_raw, sub_raw = canonical.split(" | ", 1)
+                  parent = parent_raw.strip().lower()
+                  sub    = sub_raw.strip().lower()
+                  # Try matching by both parent and sub tokens
+                  for c in df_.columns:
+                      cl = c.lower()
+                      if parent in cl:
+                          if sub in cl or sub.startswith("unnamed"):
+                              return c
+                  # Try parent-only match if sub is an 'unnamed' artifact
+                  if sub.startswith("unnamed"):
+                      for c in df_.columns:
+                          if parent in c.lower():
+                              return c
+                  # Try sub-only match with parent tokens
+                  parent_words = [w for w in re.split(r"\W+", parent) if len(w) > 2]
+                  sub_words    = [w for w in re.split(r"\W+", sub)    if len(w) > 2]
+                  for c in df_.columns:
+                      cl = c.lower()
+                      p_match = any(w in cl for w in parent_words)
+                      s_match = any(w in cl for w in sub_words) if sub_words else True
+                      if p_match and s_match:
+                          return c
+              else:
+                  # Single-level — fuzzy match
+                  kw = canonical.strip().lower()
+                  words = [w for w in re.split(r"\W+", kw) if len(w) > 2]
+                  for c in df_.columns:
+                      if any(w in c.lower() for w in words):
+                          return c
+              return None
 
-            # Use _robust_to_numeric to handle all decimal/string/currency formats
-            series = _robust_to_numeric(filtered[col])
-            valid  = series.dropna()
-            total  = len(series)
+          # ── COLUMN_FETCH ──────────────────────────────────────────────────────
+          if op_type == "column_fetch":
+              if not canonical_columns:
+                  results.append({"type": "error", "label": label,
+                                  "message": "column_fetch requires canonical_columns."})
+                  continue
 
-            # TOP table
-            if operation in ("top", "largest"):
-                cname = find_col(filtered, r"customer.*name|client.*name")
-                extra = [c for c in ["_Location", cname] if c and c in filtered.columns]
-                sub   = filtered[extra + [col]].copy()
-                sub[col] = _robust_to_numeric(sub[col])
-                sub = sub.dropna(subset=[col]).nlargest(top_n, col).reset_index(drop=True)
-                sub.index += 1
-                results.append({"type": "table", "label": label, "data": sub,
-                                "row_count": len(sub), "unit": unit, "column": col,
-                                "col_reason": reason})
-                continue
+              # Build per-sheet output
+              sheet_frames = []
+              for loc in filtered["_Location"].unique() if "_Location" in filtered.columns else [""]:
+                  loc_df = filtered[filtered["_Location"] == loc] if "_Location" in filtered.columns else filtered
+                  for sn in loc_df["_Sheet"].unique() if "_Sheet" in loc_df.columns else [""]:
+                      sn_df = loc_df[loc_df["_Sheet"] == sn] if "_Sheet" in loc_df.columns else loc_df
+                      if sn_df.empty:
+                          continue
+                      row_data = {}
+                      any_resolved = False
+                      for canonical in canonical_columns:
+                          real_col = _resolve_canonical_column(sn_df, canonical)
+                          if real_col:
+                              row_data[canonical] = sn_df[real_col].values
+                              any_resolved = True
+                          else:
+                              row_data[canonical] = [""] * len(sn_df)
+                      if not any_resolved:
+                          continue
+                      chunk = pd.DataFrame(row_data)
+                      if "_Location" in sn_df.columns:
+                          chunk.insert(0, "Source_File", sn_df["_Location"].values)
+                      if "_Sheet" in sn_df.columns:
+                          chunk.insert(1, "Source_Sheet", sn_df["_Sheet"].values)
+                      sheet_frames.append(chunk)
 
-            # BOTTOM table
-            if operation in ("bottom", "smallest"):
-                cname = find_col(filtered, r"customer.*name|client.*name")
-                extra = [c for c in ["_Location", cname] if c and c in filtered.columns]
-                sub   = filtered[extra + [col]].copy()
-                sub[col] = _robust_to_numeric(sub[col])
-                sub = sub.dropna(subset=[col]).nsmallest(top_n, col).reset_index(drop=True)
-                sub.index += 1
-                results.append({"type": "table", "label": label, "data": sub,
-                                "row_count": len(sub), "unit": unit, "column": col,
-                                "col_reason": reason})
-                continue
+              if not sheet_frames:
+                  results.append({"type": "empty", "label": label,
+                                  "message": "No matching columns found in any sheet."})
+                  continue
 
-            if valid.empty:
-                results.append({"type": "error", "label": label,
-                                "message": f"Column '{col}' has no numeric values."})
-                continue
+              combined_chunk = pd.concat(sheet_frames, ignore_index=True)
+              combined_chunk = combined_chunk.reset_index(drop=True)
+              combined_chunk.index += 1
+              results.append({"type": "table", "label": label,
+                              "data": combined_chunk, "row_count": len(combined_chunk)})
+              continue
 
-            # Compute with full precision
-            op_fn = _EXTENDED_OPS.get(operation)
-            if op_fn is None:
-                # Try known aliases
-                for alias_key in ("sum",):
-                    if alias_key in operation:
-                        op_fn = _EXTENDED_OPS[alias_key]
-                        break
-                if op_fn is None:
-                    op_fn = _EXTENDED_OPS["sum"]
+          # ── CELL_LOOKUP ────────────────────────────────────────────────────────
+          elif op_type == "cell_lookup":
+              if not target_col_hint and not canonical_columns:
+                  results.append({"type": "error", "label": label,
+                                  "message": "cell_lookup requires target_column_hint."})
+                  continue
 
-            val = op_fn(valid)
+              # Resolve target column
+              target_col = None
+              if target_col_hint and target_col_hint.lower() != "any":
+                  # Try canonical resolution first
+                  target_col = _resolve_canonical_column(filtered, target_col_hint)
+                  if not target_col:
+                      # Fuzzy fallback
+                      target_col, _ = _resolve_col_by_semantic(filtered, target_col_hint)
 
-            # Per-location breakdown using _robust_to_numeric
-            loc_breakdown = None
-            if grp_by_loc and "_Location" in filtered.columns:
-                grp = (
-                    filtered.groupby("_Location")[col]
-                    .apply(lambda x: _robust_to_numeric(x).sum())
-                    .reset_index()
-                )
-                col_label = f"{col} ({unit})" if unit else col
-                grp.columns = ["Location", col_label]
-                grp = grp.sort_values(col_label, ascending=False).reset_index(drop=True)
-                grp.index += 1
-                loc_breakdown = grp
+              any_col_mode = (not target_col_hint or target_col_hint.lower() == "any")
 
-            # Auto per-location breakdown for sum/avg/std/median
-            auto_loc = None
-            if operation in ("sum", "avg", "mean", "median", "std") \
-                    and "_Location" in filtered.columns:
-                grp2 = (
-                    filtered.groupby("_Location")[col]
-                    .apply(lambda x: _robust_to_numeric(x).sum()
-                           if operation == "sum" else
-                           _robust_to_numeric(x).mean())
-                    .reset_index()
-                )
-                col_lbl2 = f"{col} ({unit})" if unit else col
-                grp2.columns = ["Location", col_lbl2]
-                grp2 = grp2.sort_values(col_lbl2, ascending=False).reset_index(drop=True)
-                grp2.index += 1
-                auto_loc = grp2
+              if not any_col_mode and (not target_col or target_col not in filtered.columns):
+                  results.append({"type": "empty", "label": label,
+                                  "message": f"Column '{target_col_hint}' not found in data."})
+                  continue
 
-            results.append({
-                "type": "scalar", "label": label,
-                "value": val, "unit": unit, "column": col,
-                "col_reason": reason,
-                "row_count": total, "valid_count": len(valid),
-                "operation": operation, "loc_breakdown": loc_breakdown,
-                "auto_loc": auto_loc,
-            })
+              # Match rows
+              if any_col_mode:
+                  # Scan every column
+                  mask = pd.Series(False, index=filtered.index)
+                  matched_col_info = []
+                  for c in filtered.columns:
+                      if c.startswith("_"):
+                          continue
+                      col_str = filtered[c].astype(str)
+                      if match_mode == "exact":
+                          col_mask = col_str.str.lower() == str(cell_value).lower()
+                      elif match_mode == "regex":
+                          try:
+                              col_mask = col_str.str.contains(str(cell_value), flags=re.I, na=False)
+                          except re.error:
+                              col_mask = col_str.str.lower().str.contains(
+                                  re.escape(str(cell_value).lower()), na=False)
+                      else:
+                          col_mask = col_str.str.lower().str.contains(
+                              re.escape(str(cell_value).lower()), na=False)
+                      mask = mask | col_mask
+                  matched_df = filtered[mask].copy()
+              else:
+                  col_str = filtered[target_col].astype(str)
+                  # Handle numeric/comparison operators in cell_value
+                  cv = str(cell_value).strip()
+                  if cv.startswith(">") or cv.startswith("<") or cv.startswith("="):
+                      try:
+                          num_series = _robust_to_numeric(filtered[target_col])
+                          import operator as op_mod
+                          ops_map = {
+                              ">=": op_mod.ge, "<=": op_mod.le,
+                              ">": op_mod.gt,  "<": op_mod.lt,  "=": op_mod.eq,
+                          }
+                          for sym, fn in sorted(ops_map.items(), key=lambda x: -len(x[0])):
+                              if cv.startswith(sym):
+                                  num_val = float(cv[len(sym):].strip())
+                                  mask = fn(num_series, num_val)
+                                  matched_df = filtered[mask.fillna(False)].copy()
+                                  break
+                          else:
+                              matched_df = filtered[pd.Series(False, index=filtered.index)].copy()
+                      except Exception:
+                          matched_df = filtered[pd.Series(False, index=filtered.index)].copy()
+                  elif match_mode == "exact":
+                      mask = col_str.str.lower() == cv.lower()
+                      matched_df = filtered[mask].copy()
+                  elif match_mode == "regex":
+                      try:
+                          mask = col_str.str.contains(cv, flags=re.I, na=False)
+                      except re.error:
+                          mask = col_str.str.lower().str.contains(
+                              re.escape(cv.lower()), na=False)
+                      matched_df = filtered[mask].copy()
+                  else:
+                      mask = col_str.str.lower().str.contains(
+                          re.escape(cv.lower()), na=False)
+                      matched_df = filtered[mask].copy()
 
-        # ── COUNT ─────────────────────────────────────────────────────────────
-        elif op_type == "count":
-            if grp_by_loc and "_Location" in filtered.columns:
-                grp = (filtered.groupby("_Location").size()
-                       .reset_index(name="Count")
-                       .sort_values("Count", ascending=False)
-                       .reset_index(drop=True))
-                grp.index += 1
-                results.append({"type": "table", "label": label,
-                                "data": grp, "row_count": grp["Count"].sum()})
-            else:
-                results.append({
-                    "type": "scalar", "label": label,
-                    "value": float(len(filtered)), "unit": "customers",
-                    "column": "", "col_reason": "count of filtered rows",
-                    "row_count": len(filtered), "valid_count": len(filtered),
-                    "operation": "count", "loc_breakdown": None, "auto_loc": None,
-                })
+              if matched_df.empty:
+                  results.append({
+                      "type": "empty", "label": label,
+                      "message": f"No rows found where '{target_col_hint}' = '{cell_value}'."})
+                  continue
 
-    return results
+              # Build projection
+              if return_columns:
+                  proj_cols = []
+                  for rc in return_columns:
+                      real = _resolve_canonical_column(matched_df, rc)
+                      if real and real in matched_df.columns:
+                          proj_cols.append(real)
+                  display_df = matched_df[
+                      [c for c in ["_Location", "_Sheet"] if c in matched_df.columns] + proj_cols
+                  ].copy()
+              else:
+                  meta = [c for c in ["_Location", "_Sheet"] if c in matched_df.columns]
+                  data = [c for c in matched_df.columns if not c.startswith("_")][:30]
+                  # Also add any resolved canonical columns
+                  for canonical in canonical_columns:
+                      real = _resolve_canonical_column(matched_df, canonical)
+                      if real and real not in data and real in matched_df.columns:
+                          data.append(real)
+                  display_df = matched_df[meta + data].copy()
+
+              display_df = display_df.rename(columns={"_Location": "Source_File", "_Sheet": "Source_Sheet"})
+              display_df = display_df.reset_index(drop=True)
+              display_df.index += 1
+              results.append({"type": "table", "label": label,
+                              "data": display_df, "row_count": len(display_df)})
+              continue
+
+          # ── LIST ─────────────────────────────────────────────────────────────
+          if op_type == "list":
+              meta  = [c for c in ["_Location", "_Sheet"] if c in filtered.columns]
+              data  = [c for c in filtered.columns if not c.startswith("_")][:30]
+              # Include requested canonical columns
+              for canonical in canonical_columns:
+                  real = _resolve_canonical_column(filtered, canonical)
+                  if real and real not in data and real in filtered.columns:
+                      data.append(real)
+              disp  = filtered[meta + data].reset_index(drop=True)
+              disp.index += 1
+              results.append({"type": "table", "label": label,
+                              "data": disp, "row_count": len(disp)})
+
+          # ── AGGREGATE / TOP / BOTTOM ─────────────────────────────────────────
+          elif op_type in ("aggregate", "top", "bottom"):
+              # First try canonical columns for field resolution
+              col = None
+              reason = ""
+              if canonical_columns:
+                  for canonical in canonical_columns:
+                      real = _resolve_canonical_column(filtered, canonical)
+                      if real and real in filtered.columns:
+                          col = real
+                          reason = f"canonical '{canonical}' → '{real}'"
+                          break
+
+              if not col:
+                  col, reason = _resolve_col_by_semantic(filtered, field_hint)
+
+              if not col or col not in filtered.columns:
+                  results.append({"type": "error", "label": label,
+                                  "message": f"No column matched '{field_hint}'."})
+                  continue
+
+              unit   = _detect_unit(col)
+              series = _robust_to_numeric(filtered[col])
+              valid  = series.dropna()
+              total  = len(series)
+
+              # TOP table
+              if operation in ("top", "largest"):
+                  cname = find_col(filtered, r"customer.*name|client.*name")
+                  extra = [c for c in ["_Location", cname] if c and c in filtered.columns]
+                  sub   = filtered[extra + [col]].copy()
+                  sub[col] = _robust_to_numeric(sub[col])
+                  sub = sub.dropna(subset=[col]).nlargest(top_n, col).reset_index(drop=True)
+                  sub.index += 1
+                  results.append({"type": "table", "label": label, "data": sub,
+                                  "row_count": len(sub), "unit": unit, "column": col,
+                                  "col_reason": reason})
+                  continue
+
+              # BOTTOM table
+              if operation in ("bottom", "smallest"):
+                  cname = find_col(filtered, r"customer.*name|client.*name")
+                  extra = [c for c in ["_Location", cname] if c and c in filtered.columns]
+                  sub   = filtered[extra + [col]].copy()
+                  sub[col] = _robust_to_numeric(sub[col])
+                  sub = sub.dropna(subset=[col]).nsmallest(top_n, col).reset_index(drop=True)
+                  sub.index += 1
+                  results.append({"type": "table", "label": label, "data": sub,
+                                  "row_count": len(sub), "unit": unit, "column": col,
+                                  "col_reason": reason})
+                  continue
+
+              if valid.empty:
+                  results.append({"type": "error", "label": label,
+                                  "message": f"Column '{col}' has no numeric values."})
+                  continue
+
+              # Percentage: compute as % of total sum
+              if operation in ("percentage", "percent", "pct"):
+                  total_sum = _robust_to_numeric(df[col]).sum() if col in df.columns else valid.sum()
+                  val = (valid.sum() / total_sum * 100) if total_sum else 0.0
+                  unit = "%"
+              else:
+                  op_fn = _EXTENDED_OPS.get(operation)
+                  if op_fn is None:
+                      for alias_key in ("sum",):
+                          if alias_key in operation:
+                              op_fn = _EXTENDED_OPS[alias_key]
+                              break
+                      if op_fn is None:
+                          op_fn = _EXTENDED_OPS["sum"]
+                  val = op_fn(valid)
+
+              # Per-location breakdown
+              loc_breakdown = None
+              if grp_by_loc and "_Location" in filtered.columns:
+                  grp = (
+                      filtered.groupby("_Location")[col]
+                      .apply(lambda x: _robust_to_numeric(x).sum())
+                      .reset_index()
+                  )
+                  col_label = f"{col} ({unit})" if unit else col
+                  grp.columns = ["Location", col_label]
+                  grp = grp.sort_values(col_label, ascending=False).reset_index(drop=True)
+                  grp.index += 1
+                  loc_breakdown = grp
+
+              # Auto per-location breakdown for sum/avg/std/median
+              auto_loc = None
+              if operation in ("sum", "total", "avg", "average", "mean", "median", "std") \
+                      and "_Location" in filtered.columns:
+                  grp2 = (
+                      filtered.groupby("_Location")[col]
+                      .apply(lambda x: _robust_to_numeric(x).sum()
+                             if operation in ("sum", "total") else
+                             _robust_to_numeric(x).mean())
+                      .reset_index()
+                  )
+                  col_lbl2 = f"{col} ({unit})" if unit else col
+                  grp2.columns = ["Location", col_lbl2]
+                  grp2 = grp2.sort_values(col_lbl2, ascending=False).reset_index(drop=True)
+                  grp2.index += 1
+                  auto_loc = grp2
+
+              results.append({
+                  "type": "scalar", "label": label,
+                  "value": val, "unit": unit, "column": col,
+                  "col_reason": reason,
+                  "row_count": total, "valid_count": len(valid),
+                  "operation": operation, "loc_breakdown": loc_breakdown,
+                  "auto_loc": auto_loc,
+              })
+
+          # ── COUNT ─────────────────────────────────────────────────────────────
+          elif op_type == "count":
+              if grp_by_loc and "_Location" in filtered.columns:
+                  grp = (filtered.groupby("_Location").size()
+                         .reset_index(name="Count")
+                         .sort_values("Count", ascending=False)
+                         .reset_index(drop=True))
+                  grp.index += 1
+                  results.append({"type": "table", "label": label,
+                                  "data": grp, "row_count": grp["Count"].sum()})
+              else:
+                  results.append({
+                      "type": "scalar", "label": label,
+                      "value": float(len(filtered)), "unit": "customers",
+                      "column": "", "col_reason": "count of filtered rows",
+                      "row_count": len(filtered), "valid_count": len(filtered),
+                      "operation": "count", "loc_breakdown": None, "auto_loc": None,
+                  })
+
+      return results
 
 
 # ─────────────────────────────────────────────────────────────────────────────
