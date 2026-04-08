@@ -2105,12 +2105,20 @@ with T[0]:
                                          f"Uncaged: {n_uncaged}", CYAN), unsafe_allow_html=True)
 
         if own_c:
-            rhs_c = _cnt_val(own_c, "RHS")
-            shs_c = _cnt_val(own_c, "SHS")
-            if rhs_c is not None or shs_c is not None:
+            own_vals = CUST[own_c].astype(str).str.strip().str.upper()
+            n_sify     = int(own_vals.str.contains(r"SIFY", na=False).sum())
+            n_customer = int(own_vals.str.contains(r"CUSTOMER|CUST(?!OM)", na=False).sum())
+            if n_sify > 0 or n_customer > 0:
                 bm_cols[1].markdown(
-                    kpi_html(f"{rhs_c or 0}", own_c,
-                             f"SHS: {shs_c or 0}", LBLUE), unsafe_allow_html=True)
+                    kpi_html(f"Sify: {n_sify}", "Space | Ownership",
+                             f"Customer: {n_customer}", LBLUE), unsafe_allow_html=True)
+            else:
+                rhs_c_cnt = _cnt_val(own_c, "RHS")
+                shs_c_cnt = _cnt_val(own_c, "SHS")
+                if rhs_c_cnt is not None or shs_c_cnt is not None:
+                    bm_cols[1].markdown(
+                        kpi_html(f"RHS: {rhs_c_cnt or 0}", "Space | Ownership",
+                                 f"SHS: {shs_c_cnt or 0}", LBLUE), unsafe_allow_html=True)
 
         if pw_sub_c:
             rated = _cnt_val(pw_sub_c, "RATED")
@@ -2132,13 +2140,22 @@ with T[0]:
         sp_cols = st.columns(5)
 
         if sub_mode_c:
-            rack_m = _cnt_val(sub_mode_c, "RACK")
-            u_m    = _cnt_val(sub_mode_c, "U SPACE")
-            sqft_m = _cnt_val(sub_mode_c, "SQFT SPACE")
-            sp_cols[0].markdown(
-                kpi_html(f"{rack_m or 0}", sub_mode_c,
-                         f"U Space: {u_m or 0} | SqFt: {sqft_m or 0}", CYAN),
-                unsafe_allow_html=True)
+            sub_vals_upper = CUST[sub_mode_c].astype(str).str.strip().str.upper()
+            n_seats = int(sub_vals_upper.str.contains(r"SEAT|NO.*SEAT", na=False).sum())
+            n_space = int(sub_vals_upper.str.contains(r"SPACE", na=False).sum())
+            if n_seats > 0 or n_space > 0:
+                sp_cols[0].markdown(
+                    kpi_html(f"Seats: {n_seats}", "Sitting Space | Subscription Model",
+                             f"Space: {n_space}", CYAN),
+                    unsafe_allow_html=True)
+            else:
+                rack_m = _cnt_val(sub_mode_c, "RACK")
+                u_m    = _cnt_val(sub_mode_c, "U SPACE")
+                sqft_m = _cnt_val(sub_mode_c, "SQFT SPACE")
+                sp_cols[0].markdown(
+                    kpi_html(f"{rack_m or 0}", sub_mode_c,
+                             f"U Space: {u_m or 0} | SqFt: {sqft_m or 0}", CYAN),
+                    unsafe_allow_html=True)
 
         if space_sub_c:
             v = _n(space_sub_c)
@@ -2344,10 +2361,17 @@ with T[0]:
             t_cap = _n(cap_c) or 0
             t_use = _n(use_c) or 0
             util_pct = min((t_use / t_cap * 100) if t_cap > 0 else 0, 100)
-            rack_pct = util_pct
-            if rack_c:
-                t_rack = _n(rack_c) or 0
-                rack_pct = min((t_use / t_rack * 100) if t_rack > 0 else util_pct, 100)
+
+            # Space/Rack Utilisation: space_in_use / space_subscription
+            t_space_sub  = _n(space_sub_c)  or 0
+            t_space_use  = _n(space_inuse_c) or 0
+            if t_space_sub > 0:
+                rack_pct = min((t_space_use / t_space_sub * 100), 100)
+            elif rack_c:
+                t_rack_sub = _n(rack_c) or 0
+                rack_pct = min((t_space_use / t_rack_sub * 100) if t_rack_sub > 0 else util_pct, 100)
+            else:
+                rack_pct = util_pct
 
             def _gauge(val, label, bar_color):
                 fig = go.Figure(go.Indicator(
@@ -2370,9 +2394,13 @@ with T[0]:
                 fig.update_layout(**_base_layout(), height=270)
                 return fig
 
+            space_util_label = (
+                "Space/Rack Utilisation (%)<br>(Space In Use / Space Subscription)"
+                if t_space_sub > 0 else "Space/Rack Utilisation (%)"
+            )
             g1.plotly_chart(_gauge(util_pct, "Capacity Utilisation (%)", LBLUE),
                             use_container_width=True)
-            g2.plotly_chart(_gauge(rack_pct, "Space/Rack Utilisation (%)", GREEN),
+            g2.plotly_chart(_gauge(rack_pct, space_util_label, GREEN),
                             use_container_width=True)
 
         if cap_c and use_c and "_Location" in CUST.columns:
