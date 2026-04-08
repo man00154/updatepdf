@@ -4819,6 +4819,12 @@ with T[4]:
         st.markdown("<br>", unsafe_allow_html=True)
         _chl_run = st.button("🔎 Lookup", key="chl_run", use_container_width=True)
 
+    _chl_val_filter = st.text_input(
+        "🔑 Value Filter — enter any value to filter rows in the selected column (optional, partial match)",
+        placeholder="e.g.  Colt  |  100  |  Caged  |  Bangalore  |  MRC",
+        key="chl_val_filter",
+    )
+
     if _chl_run:
         if _chl_selected_col == "— pick a column —":
             st.warning("Please search for and select a column header to look up.")
@@ -4830,6 +4836,13 @@ with T[4]:
                 _chl_df = _chl_df[_chl_df["_Location"] == _chl_loc_sel]
             if _chl_sheet_sel != "All Sheets" and "_Sheet" in _chl_df.columns:
                 _chl_df = _chl_df[_chl_df["_Sheet"] == _chl_sheet_sel]
+            if _chl_val_filter.strip() and _chl_selected_col in _chl_df.columns:
+                _chl_mask = (
+                    _chl_df[_chl_selected_col]
+                    .astype(str)
+                    .str.contains(re.escape(_chl_val_filter.strip()), case=False, na=False)
+                )
+                _chl_df = _chl_df[_chl_mask]
 
             if _chl_selected_col not in _chl_df.columns:
                 st.error(
