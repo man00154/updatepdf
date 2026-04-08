@@ -1415,7 +1415,7 @@ Return a JSON array. Each element is one operation:
     "rhs":        true | false | null,
     "shs":        true | false | null
   },
-  "location": ["airoli","noida"] | null,
+  "location": ["airoli","noida","rabale","banglore,"vashi","chennai"] | null,
   "operation": "sum"|"avg"|"mean"|"min"|"max"|"count"|"std"|"median"|"variance"|"range"|"count_nonzero"|"top"|"bottom" | null,
   "field_hint": "<exact phrase from the list below>" | null,
   "top_n": integer | null,
@@ -1502,6 +1502,8 @@ Execute each independently on the filtered dataset.
 - "and" between filters = intersection (BOTH must be true)
 - "or" between locations = union (include rows from EITHER location)
 - "and" between actions on the same filter = same filter, multiple operation objects
+
+- for particular customer query shhow results of the particular customer not all customers
 
 ## UNIT AWARENESS (inform the label — do NOT change field_hint)
 - Power/capacity columns → KW or KVA (varies per row's UoM column)
