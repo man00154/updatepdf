@@ -2055,12 +2055,13 @@ with T[0]:
 
         def _n(col):
             if col and col in CUST.columns:
-                return pd.to_numeric(CUST[col], errors="coerce").sum()
+                return _robust_to_numeric(CUST[col]).sum()
             return None
 
         def _avg(col):
             if col and col in CUST.columns:
-                return pd.to_numeric(CUST[col], errors="coerce").mean()
+                s = _robust_to_numeric(CUST[col]).dropna()
+                return s.mean() if not s.empty else None
             return None
 
         def _cnt_val(col, val):
@@ -3962,26 +3963,6 @@ with T[4]:
                                 f'for {_sk_cust_disp}</div></div>',
                                 unsafe_allow_html=True,
                             )
-
-                # ── Combined all-location metrics overview ────────────────
-                _sk_all_metrics = _sk_build_per_loc_metrics(_sk_rows)
-                _sk_all_profile = _sk_build_per_loc_profile(_sk_rows)
-                if not _sk_all_metrics.empty or not _sk_all_profile.empty:
-                    st.markdown(
-                        '<div style="font-size:.8rem;font-weight:700;color:{CYAN};'
-                        'text-transform:uppercase;letter-spacing:.05em;margin:16px 0 4px">'
-                        '📊 Combined Overview — All Locations</div>'.format(CYAN=CYAN),
-                        unsafe_allow_html=True,
-                    )
-                    _sk_oc1, _sk_oc2 = st.columns([1, 2])
-                    with _sk_oc1:
-                        if not _sk_all_profile.empty:
-                            _p = _sk_all_profile.copy(); _p.index = [""] * len(_p)
-                            st.dataframe(_p, use_container_width=True, hide_index=True)
-                    with _sk_oc2:
-                        if not _sk_all_metrics.empty:
-                            _m = _sk_all_metrics.copy(); _m.index = [""] * len(_m)
-                            st.dataframe(_m, use_container_width=True, hide_index=True)
 
                 # ── Overall download ──────────────────────────────────────
                 _sk_dl_meta  = [c for c in ["_Location","_Sheet"] if c in _sk_rows.columns]
