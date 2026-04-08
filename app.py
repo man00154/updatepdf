@@ -2040,717 +2040,717 @@ def _apply_op_filters(df: pd.DataFrame,
 # ── Execute AI Operations ─────────────────────────────────────────────────────
 
 _EXTENDED_OPS = {
-      "sum":           lambda s: s.sum(),
-      "total":         lambda s: s.sum(),
-      "avg":           lambda s: s.mean(),
-      "mean":          lambda s: s.mean(),
-      "average":       lambda s: s.mean(),
-      "min":           lambda s: s.min(),
-      "minimum":       lambda s: s.min(),
-      "max":           lambda s: s.max(),
-      "maximum":       lambda s: s.max(),
-      "count":         lambda s: float(len(s)),
-      "std":           lambda s: s.std(ddof=1),
-      "stddev":        lambda s: s.std(ddof=1),
-      "median":        lambda s: s.median(),
-      "variance":      lambda s: s.var(ddof=1),
-      "var":           lambda s: s.var(ddof=1),
-      "range":         lambda s: s.max() - s.min(),
-      "spread":        lambda s: s.max() - s.min(),
-      "sum_abs":       lambda s: s.abs().sum(),
-      "count_nonzero": lambda s: float((s != 0).sum()),
-      "pct_nonzero":   lambda s: float((s != 0).sum()) / max(len(s), 1) * 100,
-      "multiply":      lambda s: s.prod(),
-      "product":       lambda s: s.prod(),
-      "percentage":    lambda s: s.sum(),
-      "cumulative":    lambda s: s.sum(),
-  }
+    "sum":           lambda s: s.sum(),
+    "total":         lambda s: s.sum(),
+    "avg":           lambda s: s.mean(),
+    "mean":          lambda s: s.mean(),
+    "average":       lambda s: s.mean(),
+    "min":           lambda s: s.min(),
+    "minimum":       lambda s: s.min(),
+    "max":           lambda s: s.max(),
+    "maximum":       lambda s: s.max(),
+    "count":         lambda s: float(len(s)),
+    "std":           lambda s: s.std(ddof=1),
+    "stddev":        lambda s: s.std(ddof=1),
+    "median":        lambda s: s.median(),
+    "variance":      lambda s: s.var(ddof=1),
+    "var":           lambda s: s.var(ddof=1),
+    "range":         lambda s: s.max() - s.min(),
+    "spread":        lambda s: s.max() - s.min(),
+    "sum_abs":       lambda s: s.abs().sum(),
+    "count_nonzero": lambda s: float((s != 0).sum()),
+    "pct_nonzero":   lambda s: float((s != 0).sum()) / max(len(s), 1) * 100,
+    "multiply":      lambda s: s.prod(),
+    "product":       lambda s: s.prod(),
+    "percentage":    lambda s: s.sum(),
+    "cumulative":    lambda s: s.sum(),
+}
 
 
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-  # CANONICAL COLUMN REGISTRY  (v3 — maps all 38 canonical two-level names to
-  # real sub-header regex patterns as produced by _build_cols() from all 10
-  # Sify DC Excel files across all archetypes: CUSTOMER_DETAILS, AIROLI_BANNER,
-  # CAPACITY_GRID, FACILITY_GRID, SINGLE_LEVEL, CUSTOM_SUMMARY)
-  # ─────────────────────────────────────────────────────────────────────────────
-  _CANONICAL_REGISTRY: "dict[str, list[str]]" = {
-      # ── BILLING MODEL band ──────────────────────────────────────────────────
-      "Billing Model | Unnamed: 1_level_1": [
-          r"billing model.*power subscription",
-          r"power subscription model",
-          r"billing model.*subscription",
-          r"billing model.*model",
-          r"billing model",
-      ],
-      "Billing Model | Rated": [
-          r"billing model.*power subscription",
-          r"power subscription model",
-          r"billing model.*subscription",
-          r"billing model.*model",
-          r"billing model",
-      ],
-      "Billing Model | Subscribed": [
-          r"billing model.*power subscription",
-          r"power subscription model",
-          r"billing model.*subscription",
-          r"billing model.*model",
-          r"billing model",
-      ],
-      "Billing Model | Metered": [
-          r"power usage model",
-          r"billing model.*usage",
-          r"metered.*model",
-          r"usage model",
-      ],
-      # ── SPACE band ──────────────────────────────────────────────────────────
-      "Space | Seating Space": [
-          r"seating space.*subscription",
-          r"space.*seating.*subscription",
-          r"seating space",
-          r"seating.*subscription",
-      ],
-      "Space | Unnamed: 5_level_1": [
-          r"subscription mode",
-          r"space.*subscription.*mode",
-          r"space.*mode",
-      ],
-      "Space | Floor": [
-          r"space.*floor.*module",
-          r"space.*floor",
-          r"floor.*module",
-          r"floor",
-      ],
-      "Space | Caged/Uncaged": [
-          r"caged\s*/\s*uncaged",
-          r"caged.*uncaged",
-          r"space.*caged",
-          r"caged",
-      ],
-      # ── POWER CAPACITY band ─────────────────────────────────────────────────
-      "Power Capacity | Contracted": [
-          r"power capacity.*total capacity purchased",
-          r"total capacity purchased",
-          r"power capacity.*contracted",
-          r"contracted.*capacity",
-          r"total.*purchased",
-      ],
-      "Power Capacity | Consumed": [
-          r"power capacity.*capacity in use",
-          r"capacity in use",
-          r"power capacity.*consumed",
-          r"power.*consumed",
-          r"in use.*kw",
-      ],
-      "Power Capacity | Available": [
-          r"power capacity.*capacity to be given",
-          r"capacity to be given",
-          r"power capacity.*available",
-          r"power.*available",
-          r"to be given",
-      ],
-      "Power Capacity | Unnamed: 3_level_1": [
-          r"power capacity.*subscription.*kw",
-          r"power capacity.*kw.*kva",
-          r"power capacity.*subscription",
-          r"subscription.*kw",
-      ],
-      "Power Capacity | Rated Load": [
-          r"power capacity.*rated.*load",
-          r"power capacity.*subscription.*model.*value",
-          r"rated.*load",
-          r"subscription.*model.*value",
-          r"rated.*capacity",
-      ],
-      "Power Capacity | Actual Load": [
-          r"power capacity.*actual.*load",
-          r"actual.*load.*kw",
-          r"power capacity.*usage.*kw",
-          r"actual.*usage",
-          r"actual load",
-      ],
-      "Power Capacity | KW-HR/Month": [
-          r"power capacity.*no.*of.*units.*kw.*hr",
-          r"no.*of.*units.*kw.*hr",
-          r"kw.*hr.*month",
-          r"units.*kw.*hr",
-          r"kw-hr.*month",
-      ],
-      "Power Capacity | Unit Rate": [
-          r"power capacity.*unit rate.*per.*kw",
-          r"unit rate.*per.*kw",
-          r"per unit rate.*mrc",
-          r"per.*kw.*hr",
-          r"unit rate",
-      ],
-      "Power Capacity | No. of Units": [
-          r"power capacity.*no\.?\s*of\s*units",
-          r"no\.?\s*of\s*units.*kw",
-          r"number.*of.*units",
-          r"no.*units",
-      ],
-      "Power Capacity | Raw Power (Genset)": [
-          r"power capacity.*raw power.*genset",
-          r"raw power.*genset.*transformer",
-          r"raw power.*genset",
-          r"genset.*kw",
-          r"generator.*kw",
-      ],
-      "Power Capacity | Raw Power (Transformer)": [
-          r"power capacity.*raw power.*transformer",
-          r"raw power.*transformer",
-          r"transformer.*kw",
-          r"utility.*sanction.*load.*kva",
-          r"utility.*sanction",
-      ],
-      "Power Capacity | Raw Power (Demand)": [
-          r"power capacity.*raw power.*demand",
-          r"raw power.*demand",
-          r"contract.*demand",
-          r"utility.*demand",
-          r"sanction.*demand",
-      ],
-      # ── ACTUAL PUE ──────────────────────────────────────────────────────────
-      "Actual PUE | Power Usage": [
-          r"actual pue.*power usage",
-          r"actual pue",
-          r"pue.*power",
-          r"\bpue\b",
-      ],
-      # ── RATED TO CONSUMED ───────────────────────────────────────────────────
-      "Rated to Consumed | Ratio": [
-          r"rated to consumed.*ratio",
-          r"rated.*consumed.*ratio",
-          r"rated to consumed",
-          r"rated.*consumed",
-      ],
-      "Rated to Consumed | Unnamed: X_level_1": [
-          r"rated to consumed",
-          r"rated.*consumed",
-      ],
-      # ── GENSET HR/MO ────────────────────────────────────────────────────────
-      "Genset Hr/Mo | Seating Space": [
-          r"genset hr.*mo.*seating",
-          r"genset hr.*seating",
-          r"genset hr.*mo",
-          r"genset hr",
-          r"genset.*hour.*month",
-      ],
-      "Genset Hr/Mo | Unnamed: X_level_1": [
-          r"genset hr.*mo",
-          r"genset hr",
-          r"genset.*hour.*month",
-      ],
-      # ── REVENUE band ────────────────────────────────────────────────────────
-      "Revenue | Monthly": [
-          r"revenue.*total revenue",
-          r"total revenue",
-          r"revenue.*monthly",
-          r"monthly.*revenue",
-          r"revenue.*mrc",
-      ],
-      "Additional Charges | MRC": [
-          r"additional.*charges.*mrc",
-          r"additional capacity charges",
-          r"additional.*capacity.*mrc",
-          r"additional charges",
-          r"additional.*mrc",
-      ],
-      "Multiplier | Unnamed: X_level_1": [
-          r"multiplier",
-          r"revenue.*multiplier",
-      ],
-      # ── CAPACITY band (Rabale T1/T2 CAPACITY_GRID) ──────────────────────────
-      "Capacity | Total Purchased": [
-          r"capacity.*maximum usable",
-          r"maximum usable capacity",
-          r"capacity.*total.*purchased",
-          r"total.*purchased.*capacity",
-          r"max.*usable.*capacity",
-      ],
-      "Capacity | In Use": [
-          r"capacity.*current utilization",
-          r"current utilization",
-          r"capacity.*in use",
-          r"utilization.*kw",
-      ],
-      "Capacity | Reserved": [
-          r"capacity.*committed",
-          r"committed.*confirmed",
-          r"capacity.*reserved",
-          r"reserved.*capacity",
-          r"committed",
-      ],
-      "Capacity | Surplus": [
-          r"capacity.*surplus",
-          r"surplus.*balance",
-          r"surplus",
-          r"capacity.*balance.*positive",
-      ],
-      "Capacity | Leakage": [
-          r"capacity.*leakage",
-          r"leakage.*balance",
-          r"leakage",
-          r"capacity.*balance.*negative",
-      ],
-      # ── IDENTITY / LAYOUT columns (all archetypes) ──────────────────────────
-      "Customer Name | Unnamed: X_level_1": [
-          r"customer.*name.*customer",
-          r"customer name",
-          r"client name",
-          r"customer.*name",
-      ],
-      "Floor | Unnamed: X_level_1": [
-          r"floor.*module",
-          r"\bfloor\b",
-      ],
-      "Module | Unnamed: X_level_1": [
-          r"floor.*module",
-          r"\bmodule\b",
-          r"\bfloor\b",
-      ],
-      "Description | Unnamed: X_level_1": [
-          r"\bdescription\b",
-          r"facility.*description",
-      ],
-      "Remarks | Unnamed: X_level_1": [
-          r"remarks.*if.*any",
-          r"\bremarks\b",
-          r"remark",
-      ],
-  }
+# CANONICAL COLUMN REGISTRY  (v3 — maps all 38 canonical two-level names to
+# real sub-header regex patterns as produced by _build_cols() from all 10
+# Sify DC Excel files across all archetypes: CUSTOMER_DETAILS, AIROLI_BANNER,
+# CAPACITY_GRID, FACILITY_GRID, SINGLE_LEVEL, CUSTOM_SUMMARY)
+# ─────────────────────────────────────────────────────────────────────────────
+_CANONICAL_REGISTRY: "dict[str, list[str]]" = {
+    # ── BILLING MODEL band ──────────────────────────────────────────────────
+    "Billing Model | Unnamed: 1_level_1": [
+        r"billing model.*power subscription",
+        r"power subscription model",
+        r"billing model.*subscription",
+        r"billing model.*model",
+        r"billing model",
+    ],
+    "Billing Model | Rated": [
+        r"billing model.*power subscription",
+        r"power subscription model",
+        r"billing model.*subscription",
+        r"billing model.*model",
+        r"billing model",
+    ],
+    "Billing Model | Subscribed": [
+        r"billing model.*power subscription",
+        r"power subscription model",
+        r"billing model.*subscription",
+        r"billing model.*model",
+        r"billing model",
+    ],
+    "Billing Model | Metered": [
+        r"power usage model",
+        r"billing model.*usage",
+        r"metered.*model",
+        r"usage model",
+    ],
+    # ── SPACE band ──────────────────────────────────────────────────────────
+    "Space | Seating Space": [
+        r"seating space.*subscription",
+        r"space.*seating.*subscription",
+        r"seating space",
+        r"seating.*subscription",
+    ],
+    "Space | Unnamed: 5_level_1": [
+        r"subscription mode",
+        r"space.*subscription.*mode",
+        r"space.*mode",
+    ],
+    "Space | Floor": [
+        r"space.*floor.*module",
+        r"space.*floor",
+        r"floor.*module",
+        r"floor",
+    ],
+    "Space | Caged/Uncaged": [
+        r"caged\s*/\s*uncaged",
+        r"caged.*uncaged",
+        r"space.*caged",
+        r"caged",
+    ],
+    # ── POWER CAPACITY band ─────────────────────────────────────────────────
+    "Power Capacity | Contracted": [
+        r"power capacity.*total capacity purchased",
+        r"total capacity purchased",
+        r"power capacity.*contracted",
+        r"contracted.*capacity",
+        r"total.*purchased",
+    ],
+    "Power Capacity | Consumed": [
+        r"power capacity.*capacity in use",
+        r"capacity in use",
+        r"power capacity.*consumed",
+        r"power.*consumed",
+        r"in use.*kw",
+    ],
+    "Power Capacity | Available": [
+        r"power capacity.*capacity to be given",
+        r"capacity to be given",
+        r"power capacity.*available",
+        r"power.*available",
+        r"to be given",
+    ],
+    "Power Capacity | Unnamed: 3_level_1": [
+        r"power capacity.*subscription.*kw",
+        r"power capacity.*kw.*kva",
+        r"power capacity.*subscription",
+        r"subscription.*kw",
+    ],
+    "Power Capacity | Rated Load": [
+        r"power capacity.*rated.*load",
+        r"power capacity.*subscription.*model.*value",
+        r"rated.*load",
+        r"subscription.*model.*value",
+        r"rated.*capacity",
+    ],
+    "Power Capacity | Actual Load": [
+        r"power capacity.*actual.*load",
+        r"actual.*load.*kw",
+        r"power capacity.*usage.*kw",
+        r"actual.*usage",
+        r"actual load",
+    ],
+    "Power Capacity | KW-HR/Month": [
+        r"power capacity.*no.*of.*units.*kw.*hr",
+        r"no.*of.*units.*kw.*hr",
+        r"kw.*hr.*month",
+        r"units.*kw.*hr",
+        r"kw-hr.*month",
+    ],
+    "Power Capacity | Unit Rate": [
+        r"power capacity.*unit rate.*per.*kw",
+        r"unit rate.*per.*kw",
+        r"per unit rate.*mrc",
+        r"per.*kw.*hr",
+        r"unit rate",
+    ],
+    "Power Capacity | No. of Units": [
+        r"power capacity.*no\.?\s*of\s*units",
+        r"no\.?\s*of\s*units.*kw",
+        r"number.*of.*units",
+        r"no.*units",
+    ],
+    "Power Capacity | Raw Power (Genset)": [
+        r"power capacity.*raw power.*genset",
+        r"raw power.*genset.*transformer",
+        r"raw power.*genset",
+        r"genset.*kw",
+        r"generator.*kw",
+    ],
+    "Power Capacity | Raw Power (Transformer)": [
+        r"power capacity.*raw power.*transformer",
+        r"raw power.*transformer",
+        r"transformer.*kw",
+        r"utility.*sanction.*load.*kva",
+        r"utility.*sanction",
+    ],
+    "Power Capacity | Raw Power (Demand)": [
+        r"power capacity.*raw power.*demand",
+        r"raw power.*demand",
+        r"contract.*demand",
+        r"utility.*demand",
+        r"sanction.*demand",
+    ],
+    # ── ACTUAL PUE ──────────────────────────────────────────────────────────
+    "Actual PUE | Power Usage": [
+        r"actual pue.*power usage",
+        r"actual pue",
+        r"pue.*power",
+        r"\bpue\b",
+    ],
+    # ── RATED TO CONSUMED ───────────────────────────────────────────────────
+    "Rated to Consumed | Ratio": [
+        r"rated to consumed.*ratio",
+        r"rated.*consumed.*ratio",
+        r"rated to consumed",
+        r"rated.*consumed",
+    ],
+    "Rated to Consumed | Unnamed: X_level_1": [
+        r"rated to consumed",
+        r"rated.*consumed",
+    ],
+    # ── GENSET HR/MO ────────────────────────────────────────────────────────
+    "Genset Hr/Mo | Seating Space": [
+        r"genset hr.*mo.*seating",
+        r"genset hr.*seating",
+        r"genset hr.*mo",
+        r"genset hr",
+        r"genset.*hour.*month",
+    ],
+    "Genset Hr/Mo | Unnamed: X_level_1": [
+        r"genset hr.*mo",
+        r"genset hr",
+        r"genset.*hour.*month",
+    ],
+    # ── REVENUE band ────────────────────────────────────────────────────────
+    "Revenue | Monthly": [
+        r"revenue.*total revenue",
+        r"total revenue",
+        r"revenue.*monthly",
+        r"monthly.*revenue",
+        r"revenue.*mrc",
+    ],
+    "Additional Charges | MRC": [
+        r"additional.*charges.*mrc",
+        r"additional capacity charges",
+        r"additional.*capacity.*mrc",
+        r"additional charges",
+        r"additional.*mrc",
+    ],
+    "Multiplier | Unnamed: X_level_1": [
+        r"multiplier",
+        r"revenue.*multiplier",
+    ],
+    # ── CAPACITY band (Rabale T1/T2 CAPACITY_GRID) ──────────────────────────
+    "Capacity | Total Purchased": [
+        r"capacity.*maximum usable",
+        r"maximum usable capacity",
+        r"capacity.*total.*purchased",
+        r"total.*purchased.*capacity",
+        r"max.*usable.*capacity",
+    ],
+    "Capacity | In Use": [
+        r"capacity.*current utilization",
+        r"current utilization",
+        r"capacity.*in use",
+        r"utilization.*kw",
+    ],
+    "Capacity | Reserved": [
+        r"capacity.*committed",
+        r"committed.*confirmed",
+        r"capacity.*reserved",
+        r"reserved.*capacity",
+        r"committed",
+    ],
+    "Capacity | Surplus": [
+        r"capacity.*surplus",
+        r"surplus.*balance",
+        r"surplus",
+        r"capacity.*balance.*positive",
+    ],
+    "Capacity | Leakage": [
+        r"capacity.*leakage",
+        r"leakage.*balance",
+        r"leakage",
+        r"capacity.*balance.*negative",
+    ],
+    # ── IDENTITY / LAYOUT columns (all archetypes) ──────────────────────────
+    "Customer Name | Unnamed: X_level_1": [
+        r"customer.*name.*customer",
+        r"customer name",
+        r"client name",
+        r"customer.*name",
+    ],
+    "Floor | Unnamed: X_level_1": [
+        r"floor.*module",
+        r"\bfloor\b",
+    ],
+    "Module | Unnamed: X_level_1": [
+        r"floor.*module",
+        r"\bmodule\b",
+        r"\bfloor\b",
+    ],
+    "Description | Unnamed: X_level_1": [
+        r"\bdescription\b",
+        r"facility.*description",
+    ],
+    "Remarks | Unnamed: X_level_1": [
+        r"remarks.*if.*any",
+        r"\bremarks\b",
+        r"remark",
+    ],
+}
 
 
-  def execute_ai_operations(operations: list, df: pd.DataFrame) -> list:
-      results = []
+def execute_ai_operations(operations: list, df: pd.DataFrame) -> list:
+    results = []
 
-      for op in operations:
-          op_type           = op.get("type", "list")
-          label             = op.get("label", "Result")
-          filter_dict       = op.get("filter") or {}
-          locations         = op.get("location")
-          operation         = (op.get("operation") or "sum").lower().strip()
-          field_hint        = op.get("field_hint") or ""
-          top_n             = int(op.get("top_n") or 10)
-          grp_by_loc        = bool(op.get("group_by_location"))
-          canonical_columns = op.get("canonical_columns") or []
-          files_scope       = op.get("files") or []
-          sheets_scope      = op.get("sheets") or []
-          customer_name     = op.get("customer_name") or ""
-          cell_value        = op.get("cell_value") or ""
-          target_col_hint   = op.get("target_column_hint") or ""
-          match_mode        = (op.get("match_mode") or "contains").lower().strip()
-          return_columns    = op.get("return_columns") or []
+    for op in operations:
+        op_type           = op.get("type", "list")
+        label             = op.get("label", "Result")
+        filter_dict       = op.get("filter") or {}
+        locations         = op.get("location")
+        operation         = (op.get("operation") or "sum").lower().strip()
+        field_hint        = op.get("field_hint") or ""
+        top_n             = int(op.get("top_n") or 10)
+        grp_by_loc        = bool(op.get("group_by_location"))
+        canonical_columns = op.get("canonical_columns") or []
+        files_scope       = op.get("files") or []
+        sheets_scope      = op.get("sheets") or []
+        customer_name     = op.get("customer_name") or ""
+        cell_value        = op.get("cell_value") or ""
+        target_col_hint   = op.get("target_column_hint") or ""
+        match_mode        = (op.get("match_mode") or "contains").lower().strip()
+        return_columns    = op.get("return_columns") or []
 
-          filtered = _apply_op_filters(df, filter_dict, locations)
+        filtered = _apply_op_filters(df, filter_dict, locations)
 
-          # Apply file/sheet scope restrictors
-          if files_scope and "_Location" in filtered.columns:
-              file_mask = pd.Series(False, index=filtered.index)
-              for fkw in files_scope:
-                  file_mask |= filtered["_Location"].str.lower().str.contains(
-                      re.escape(fkw.lower()), na=False)
-              filtered = filtered[file_mask]
+        # Apply file/sheet scope restrictors
+        if files_scope and "_Location" in filtered.columns:
+            file_mask = pd.Series(False, index=filtered.index)
+            for fkw in files_scope:
+                file_mask |= filtered["_Location"].str.lower().str.contains(
+                    re.escape(fkw.lower()), na=False)
+            filtered = filtered[file_mask]
 
-          if sheets_scope and "_Sheet" in filtered.columns:
-              sheet_mask = pd.Series(False, index=filtered.index)
-              for skw in sheets_scope:
-                  sheet_mask |= filtered["_Sheet"].str.lower().str.contains(
-                      re.escape(skw.lower()), na=False)
-              filtered = filtered[sheet_mask]
+        if sheets_scope and "_Sheet" in filtered.columns:
+            sheet_mask = pd.Series(False, index=filtered.index)
+            for skw in sheets_scope:
+                sheet_mask |= filtered["_Sheet"].str.lower().str.contains(
+                    re.escape(skw.lower()), na=False)
+            filtered = filtered[sheet_mask]
 
-          # Apply customer name filter
-          if customer_name:
-              cname_col = find_col(filtered, r"customer.*name|client.*name")
-              if cname_col and cname_col in filtered.columns:
-                  filtered = filtered[
-                      filtered[cname_col].astype(str).str.lower().str.contains(
-                          re.escape(customer_name.lower()), na=False)]
+        # Apply customer name filter
+        if customer_name:
+            cname_col = find_col(filtered, r"customer.*name|client.*name")
+            if cname_col and cname_col in filtered.columns:
+                filtered = filtered[
+                    filtered[cname_col].astype(str).str.lower().str.contains(
+                        re.escape(customer_name.lower()), na=False)]
 
-          if filtered.empty:
-              results.append({"type": "empty", "label": label,
-                              "message": "No records match this filter."})
-              continue
+        if filtered.empty:
+            results.append({"type": "empty", "label": label,
+                            "message": "No records match this filter."})
+            continue
 
-          # ── CANONICAL COLUMN RESOLUTION ────────────────────────────────────────
-            def _resolve_canonical_column(df_: pd.DataFrame, canonical: str) -> "str | None":
-                """
-                Resolve a canonical two-level name 'Parent | Sub' to an actual DataFrame
-                column. Resolution order:
-                  1. Exact match (column already named canonically)
-                  2. _CANONICAL_REGISTRY regex patterns (precise per-archetype mapping)
-                  3. Fuzzy parent+sub token matching (robust fallback)
-                Never fabricates — returns None if nothing matches.
-                """
-                # 1. Exact column name match
-                if canonical in df_.columns:
-                    return canonical
+        # ── CANONICAL COLUMN RESOLUTION ────────────────────────────────────────
+          def _resolve_canonical_column(df_: pd.DataFrame, canonical: str) -> "str | None":
+              """
+              Resolve a canonical two-level name 'Parent | Sub' to an actual DataFrame
+              column. Resolution order:
+                1. Exact match (column already named canonically)
+                2. _CANONICAL_REGISTRY regex patterns (precise per-archetype mapping)
+                3. Fuzzy parent+sub token matching (robust fallback)
+              Never fabricates — returns None if nothing matches.
+              """
+              # 1. Exact column name match
+              if canonical in df_.columns:
+                  return canonical
 
-                # 2. Registry-driven regex matching (ordered by specificity)
-                patterns = _CANONICAL_REGISTRY.get(canonical, [])
-                for pat in patterns:
-                    for c in df_.columns:
-                        try:
-                            if re.search(pat, c, re.I):
-                                return c
-                        except re.error:
-                            pass
-
-                # 3. Fuzzy fallback using parent / sub token overlap
-                if " | " in canonical:
-                    parent_raw, sub_raw = canonical.split(" | ", 1)
-                    parent = parent_raw.strip().lower()
-                    sub    = sub_raw.strip().lower()
-                    is_unnamed_sub = (sub.startswith("unnamed") or
-                                      sub.startswith("x_level") or
-                                      "level_1" in sub)
-
-                    # 3a. Parent contains AND (sub contains OR sub is unnamed artifact)
-                    for c in df_.columns:
-                        cl = c.lower()
-                        if parent in cl:
-                            if is_unnamed_sub or sub in cl:
-                                return c
-
-                    # 3b. Parent-only when sub is an Unnamed artifact
-                    if is_unnamed_sub:
-                        for c in df_.columns:
-                            if parent in c.lower():
-                                return c
-
-                    # 3c. Token overlap — any parent word AND any meaningful sub word
-                    parent_words = [w for w in re.split(r"\W+", parent) if len(w) > 2]
-                    sub_words    = [w for w in re.split(r"\W+", sub) if len(w) > 2
-                                    and w not in ("unnamed", "level", "level1")]
-                    for c in df_.columns:
-                        cl = c.lower()
-                        p_match = any(w in cl for w in parent_words)
-                        s_match = any(w in cl for w in sub_words) if sub_words else True
-                        if p_match and s_match:
-                            return c
-
-                    # 3d. Sub-word-only last resort for strong multi-word sub-headers
-                    if sub_words and len(sub_words) >= 2:
-                        for c in df_.columns:
-                            if sum(1 for w in sub_words if w in c.lower()) >= 2:
-                                return c
-                else:
-                    # Single-level canonical — keyword token match
-                    kw    = canonical.strip().lower()
-                    words = [w for w in re.split(r"\W+", kw) if len(w) > 2]
-                    for c in df_.columns:
-                        if any(w in c.lower() for w in words):
-                            return c
-                return None
-
-          # ── COLUMN_FETCH ──────────────────────────────────────────────────────
-          if op_type == "column_fetch":
-              if not canonical_columns:
-                  results.append({"type": "error", "label": label,
-                                  "message": "column_fetch requires canonical_columns."})
-                  continue
-
-              # Build per-sheet output
-              sheet_frames = []
-              for loc in filtered["_Location"].unique() if "_Location" in filtered.columns else [""]:
-                  loc_df = filtered[filtered["_Location"] == loc] if "_Location" in filtered.columns else filtered
-                  for sn in loc_df["_Sheet"].unique() if "_Sheet" in loc_df.columns else [""]:
-                      sn_df = loc_df[loc_df["_Sheet"] == sn] if "_Sheet" in loc_df.columns else loc_df
-                      if sn_df.empty:
-                          continue
-                      row_data = {}
-                      any_resolved = False
-                      for canonical in canonical_columns:
-                          real_col = _resolve_canonical_column(sn_df, canonical)
-                          if real_col:
-                              row_data[canonical] = sn_df[real_col].values
-                              any_resolved = True
-                          else:
-                              row_data[canonical] = [""] * len(sn_df)
-                      if not any_resolved:
-                          continue
-                      chunk = pd.DataFrame(row_data)
-                      if "_Location" in sn_df.columns:
-                          chunk.insert(0, "Source_File", sn_df["_Location"].values)
-                      if "_Sheet" in sn_df.columns:
-                          chunk.insert(1, "Source_Sheet", sn_df["_Sheet"].values)
-                      sheet_frames.append(chunk)
-
-              if not sheet_frames:
-                  results.append({"type": "empty", "label": label,
-                                  "message": "No matching columns found in any sheet."})
-                  continue
-
-              combined_chunk = pd.concat(sheet_frames, ignore_index=True)
-              combined_chunk = combined_chunk.reset_index(drop=True)
-              combined_chunk.index += 1
-              results.append({"type": "table", "label": label,
-                              "data": combined_chunk, "row_count": len(combined_chunk)})
-              continue
-
-          # ── CELL_LOOKUP ────────────────────────────────────────────────────────
-          elif op_type == "cell_lookup":
-              if not target_col_hint and not canonical_columns:
-                  results.append({"type": "error", "label": label,
-                                  "message": "cell_lookup requires target_column_hint."})
-                  continue
-
-              # Resolve target column
-              target_col = None
-              if target_col_hint and target_col_hint.lower() != "any":
-                  # Try canonical resolution first
-                  target_col = _resolve_canonical_column(filtered, target_col_hint)
-                  if not target_col:
-                      # Fuzzy fallback
-                      target_col, _ = _resolve_col_by_semantic(filtered, target_col_hint)
-
-              any_col_mode = (not target_col_hint or target_col_hint.lower() == "any")
-
-              if not any_col_mode and (not target_col or target_col not in filtered.columns):
-                  results.append({"type": "empty", "label": label,
-                                  "message": f"Column '{target_col_hint}' not found in data."})
-                  continue
-
-              # Match rows
-              if any_col_mode:
-                  # Scan every column
-                  mask = pd.Series(False, index=filtered.index)
-                  matched_col_info = []
-                  for c in filtered.columns:
-                      if c.startswith("_"):
-                          continue
-                      col_str = filtered[c].astype(str)
-                      if match_mode == "exact":
-                          col_mask = col_str.str.lower() == str(cell_value).lower()
-                      elif match_mode == "regex":
-                          try:
-                              col_mask = col_str.str.contains(str(cell_value), flags=re.I, na=False)
-                          except re.error:
-                              col_mask = col_str.str.lower().str.contains(
-                                  re.escape(str(cell_value).lower()), na=False)
-                      else:
-                          col_mask = col_str.str.lower().str.contains(
-                              re.escape(str(cell_value).lower()), na=False)
-                      mask = mask | col_mask
-                  matched_df = filtered[mask].copy()
-              else:
-                  col_str = filtered[target_col].astype(str)
-                  # Handle numeric/comparison operators in cell_value
-                  cv = str(cell_value).strip()
-                  if cv.startswith(">") or cv.startswith("<") or cv.startswith("="):
+              # 2. Registry-driven regex matching (ordered by specificity)
+              patterns = _CANONICAL_REGISTRY.get(canonical, [])
+              for pat in patterns:
+                  for c in df_.columns:
                       try:
-                          num_series = _robust_to_numeric(filtered[target_col])
-                          import operator as op_mod
-                          ops_map = {
-                              ">=": op_mod.ge, "<=": op_mod.le,
-                              ">": op_mod.gt,  "<": op_mod.lt,  "=": op_mod.eq,
-                          }
-                          for sym, fn in sorted(ops_map.items(), key=lambda x: -len(x[0])):
-                              if cv.startswith(sym):
-                                  num_val = float(cv[len(sym):].strip())
-                                  mask = fn(num_series, num_val)
-                                  matched_df = filtered[mask.fillna(False)].copy()
-                                  break
-                          else:
-                              matched_df = filtered[pd.Series(False, index=filtered.index)].copy()
-                      except Exception:
-                          matched_df = filtered[pd.Series(False, index=filtered.index)].copy()
-                  elif match_mode == "exact":
-                      mask = col_str.str.lower() == cv.lower()
-                      matched_df = filtered[mask].copy()
-                  elif match_mode == "regex":
-                      try:
-                          mask = col_str.str.contains(cv, flags=re.I, na=False)
+                          if re.search(pat, c, re.I):
+                              return c
                       except re.error:
-                          mask = col_str.str.lower().str.contains(
-                              re.escape(cv.lower()), na=False)
-                      matched_df = filtered[mask].copy()
-                  else:
-                      mask = col_str.str.lower().str.contains(
-                          re.escape(cv.lower()), na=False)
-                      matched_df = filtered[mask].copy()
+                          pass
 
-              if matched_df.empty:
-                  results.append({
-                      "type": "empty", "label": label,
-                      "message": f"No rows found where '{target_col_hint}' = '{cell_value}'."})
-                  continue
+              # 3. Fuzzy fallback using parent / sub token overlap
+              if " | " in canonical:
+                  parent_raw, sub_raw = canonical.split(" | ", 1)
+                  parent = parent_raw.strip().lower()
+                  sub    = sub_raw.strip().lower()
+                  is_unnamed_sub = (sub.startswith("unnamed") or
+                                    sub.startswith("x_level") or
+                                    "level_1" in sub)
 
-              # Build projection
-              if return_columns:
-                  proj_cols = []
-                  for rc in return_columns:
-                      real = _resolve_canonical_column(matched_df, rc)
-                      if real and real in matched_df.columns:
-                          proj_cols.append(real)
-                  display_df = matched_df[
-                      [c for c in ["_Location", "_Sheet"] if c in matched_df.columns] + proj_cols
-                  ].copy()
+                  # 3a. Parent contains AND (sub contains OR sub is unnamed artifact)
+                  for c in df_.columns:
+                      cl = c.lower()
+                      if parent in cl:
+                          if is_unnamed_sub or sub in cl:
+                              return c
+
+                  # 3b. Parent-only when sub is an Unnamed artifact
+                  if is_unnamed_sub:
+                      for c in df_.columns:
+                          if parent in c.lower():
+                              return c
+
+                  # 3c. Token overlap — any parent word AND any meaningful sub word
+                  parent_words = [w for w in re.split(r"\W+", parent) if len(w) > 2]
+                  sub_words    = [w for w in re.split(r"\W+", sub) if len(w) > 2
+                                  and w not in ("unnamed", "level", "level1")]
+                  for c in df_.columns:
+                      cl = c.lower()
+                      p_match = any(w in cl for w in parent_words)
+                      s_match = any(w in cl for w in sub_words) if sub_words else True
+                      if p_match and s_match:
+                          return c
+
+                  # 3d. Sub-word-only last resort for strong multi-word sub-headers
+                  if sub_words and len(sub_words) >= 2:
+                      for c in df_.columns:
+                          if sum(1 for w in sub_words if w in c.lower()) >= 2:
+                              return c
               else:
-                  meta = [c for c in ["_Location", "_Sheet"] if c in matched_df.columns]
-                  data = [c for c in matched_df.columns if not c.startswith("_")][:30]
-                  # Also add any resolved canonical columns
-                  for canonical in canonical_columns:
-                      real = _resolve_canonical_column(matched_df, canonical)
-                      if real and real not in data and real in matched_df.columns:
-                          data.append(real)
-                  display_df = matched_df[meta + data].copy()
+                  # Single-level canonical — keyword token match
+                  kw    = canonical.strip().lower()
+                  words = [w for w in re.split(r"\W+", kw) if len(w) > 2]
+                  for c in df_.columns:
+                      if any(w in c.lower() for w in words):
+                          return c
+              return None
 
-              display_df = display_df.rename(columns={"_Location": "Source_File", "_Sheet": "Source_Sheet"})
-              display_df = display_df.reset_index(drop=True)
-              display_df.index += 1
-              results.append({"type": "table", "label": label,
-                              "data": display_df, "row_count": len(display_df)})
-              continue
+        # ── COLUMN_FETCH ──────────────────────────────────────────────────────
+        if op_type == "column_fetch":
+            if not canonical_columns:
+                results.append({"type": "error", "label": label,
+                                "message": "column_fetch requires canonical_columns."})
+                continue
 
-          # ── LIST ─────────────────────────────────────────────────────────────
-          if op_type == "list":
-              meta  = [c for c in ["_Location", "_Sheet"] if c in filtered.columns]
-              data  = [c for c in filtered.columns if not c.startswith("_")][:30]
-              # Include requested canonical columns
-              for canonical in canonical_columns:
-                  real = _resolve_canonical_column(filtered, canonical)
-                  if real and real not in data and real in filtered.columns:
-                      data.append(real)
-              disp  = filtered[meta + data].reset_index(drop=True)
-              disp.index += 1
-              results.append({"type": "table", "label": label,
-                              "data": disp, "row_count": len(disp)})
+            # Build per-sheet output
+            sheet_frames = []
+            for loc in filtered["_Location"].unique() if "_Location" in filtered.columns else [""]:
+                loc_df = filtered[filtered["_Location"] == loc] if "_Location" in filtered.columns else filtered
+                for sn in loc_df["_Sheet"].unique() if "_Sheet" in loc_df.columns else [""]:
+                    sn_df = loc_df[loc_df["_Sheet"] == sn] if "_Sheet" in loc_df.columns else loc_df
+                    if sn_df.empty:
+                        continue
+                    row_data = {}
+                    any_resolved = False
+                    for canonical in canonical_columns:
+                        real_col = _resolve_canonical_column(sn_df, canonical)
+                        if real_col:
+                            row_data[canonical] = sn_df[real_col].values
+                            any_resolved = True
+                        else:
+                            row_data[canonical] = [""] * len(sn_df)
+                    if not any_resolved:
+                        continue
+                    chunk = pd.DataFrame(row_data)
+                    if "_Location" in sn_df.columns:
+                        chunk.insert(0, "Source_File", sn_df["_Location"].values)
+                    if "_Sheet" in sn_df.columns:
+                        chunk.insert(1, "Source_Sheet", sn_df["_Sheet"].values)
+                    sheet_frames.append(chunk)
 
-          # ── AGGREGATE / TOP / BOTTOM ─────────────────────────────────────────
-          elif op_type in ("aggregate", "top", "bottom"):
-              # First try canonical columns for field resolution
-              col = None
-              reason = ""
-              if canonical_columns:
-                  for canonical in canonical_columns:
-                      real = _resolve_canonical_column(filtered, canonical)
-                      if real and real in filtered.columns:
-                          col = real
-                          reason = f"canonical '{canonical}' → '{real}'"
-                          break
+            if not sheet_frames:
+                results.append({"type": "empty", "label": label,
+                                "message": "No matching columns found in any sheet."})
+                continue
 
-              if not col:
-                  col, reason = _resolve_col_by_semantic(filtered, field_hint)
+            combined_chunk = pd.concat(sheet_frames, ignore_index=True)
+            combined_chunk = combined_chunk.reset_index(drop=True)
+            combined_chunk.index += 1
+            results.append({"type": "table", "label": label,
+                            "data": combined_chunk, "row_count": len(combined_chunk)})
+            continue
 
-              if not col or col not in filtered.columns:
-                  results.append({"type": "error", "label": label,
-                                  "message": f"No column matched '{field_hint}'."})
-                  continue
+        # ── CELL_LOOKUP ────────────────────────────────────────────────────────
+        elif op_type == "cell_lookup":
+            if not target_col_hint and not canonical_columns:
+                results.append({"type": "error", "label": label,
+                                "message": "cell_lookup requires target_column_hint."})
+                continue
 
-              unit   = _detect_unit(col)
-              series = _robust_to_numeric(filtered[col])
-              valid  = series.dropna()
-              total  = len(series)
+            # Resolve target column
+            target_col = None
+            if target_col_hint and target_col_hint.lower() != "any":
+                # Try canonical resolution first
+                target_col = _resolve_canonical_column(filtered, target_col_hint)
+                if not target_col:
+                    # Fuzzy fallback
+                    target_col, _ = _resolve_col_by_semantic(filtered, target_col_hint)
 
-              # TOP table
-              if operation in ("top", "largest"):
-                  cname = find_col(filtered, r"customer.*name|client.*name")
-                  extra = [c for c in ["_Location", cname] if c and c in filtered.columns]
-                  sub   = filtered[extra + [col]].copy()
-                  sub[col] = _robust_to_numeric(sub[col])
-                  sub = sub.dropna(subset=[col]).nlargest(top_n, col).reset_index(drop=True)
-                  sub.index += 1
-                  results.append({"type": "table", "label": label, "data": sub,
-                                  "row_count": len(sub), "unit": unit, "column": col,
-                                  "col_reason": reason})
-                  continue
+            any_col_mode = (not target_col_hint or target_col_hint.lower() == "any")
 
-              # BOTTOM table
-              if operation in ("bottom", "smallest"):
-                  cname = find_col(filtered, r"customer.*name|client.*name")
-                  extra = [c for c in ["_Location", cname] if c and c in filtered.columns]
-                  sub   = filtered[extra + [col]].copy()
-                  sub[col] = _robust_to_numeric(sub[col])
-                  sub = sub.dropna(subset=[col]).nsmallest(top_n, col).reset_index(drop=True)
-                  sub.index += 1
-                  results.append({"type": "table", "label": label, "data": sub,
-                                  "row_count": len(sub), "unit": unit, "column": col,
-                                  "col_reason": reason})
-                  continue
+            if not any_col_mode and (not target_col or target_col not in filtered.columns):
+                results.append({"type": "empty", "label": label,
+                                "message": f"Column '{target_col_hint}' not found in data."})
+                continue
 
-              if valid.empty:
-                  results.append({"type": "error", "label": label,
-                                  "message": f"Column '{col}' has no numeric values."})
-                  continue
+            # Match rows
+            if any_col_mode:
+                # Scan every column
+                mask = pd.Series(False, index=filtered.index)
+                matched_col_info = []
+                for c in filtered.columns:
+                    if c.startswith("_"):
+                        continue
+                    col_str = filtered[c].astype(str)
+                    if match_mode == "exact":
+                        col_mask = col_str.str.lower() == str(cell_value).lower()
+                    elif match_mode == "regex":
+                        try:
+                            col_mask = col_str.str.contains(str(cell_value), flags=re.I, na=False)
+                        except re.error:
+                            col_mask = col_str.str.lower().str.contains(
+                                re.escape(str(cell_value).lower()), na=False)
+                    else:
+                        col_mask = col_str.str.lower().str.contains(
+                            re.escape(str(cell_value).lower()), na=False)
+                    mask = mask | col_mask
+                matched_df = filtered[mask].copy()
+            else:
+                col_str = filtered[target_col].astype(str)
+                # Handle numeric/comparison operators in cell_value
+                cv = str(cell_value).strip()
+                if cv.startswith(">") or cv.startswith("<") or cv.startswith("="):
+                    try:
+                        num_series = _robust_to_numeric(filtered[target_col])
+                        import operator as op_mod
+                        ops_map = {
+                            ">=": op_mod.ge, "<=": op_mod.le,
+                            ">": op_mod.gt,  "<": op_mod.lt,  "=": op_mod.eq,
+                        }
+                        for sym, fn in sorted(ops_map.items(), key=lambda x: -len(x[0])):
+                            if cv.startswith(sym):
+                                num_val = float(cv[len(sym):].strip())
+                                mask = fn(num_series, num_val)
+                                matched_df = filtered[mask.fillna(False)].copy()
+                                break
+                        else:
+                            matched_df = filtered[pd.Series(False, index=filtered.index)].copy()
+                    except Exception:
+                        matched_df = filtered[pd.Series(False, index=filtered.index)].copy()
+                elif match_mode == "exact":
+                    mask = col_str.str.lower() == cv.lower()
+                    matched_df = filtered[mask].copy()
+                elif match_mode == "regex":
+                    try:
+                        mask = col_str.str.contains(cv, flags=re.I, na=False)
+                    except re.error:
+                        mask = col_str.str.lower().str.contains(
+                            re.escape(cv.lower()), na=False)
+                    matched_df = filtered[mask].copy()
+                else:
+                    mask = col_str.str.lower().str.contains(
+                        re.escape(cv.lower()), na=False)
+                    matched_df = filtered[mask].copy()
 
-              # Percentage: compute as % of total sum
-              if operation in ("percentage", "percent", "pct"):
-                  total_sum = _robust_to_numeric(df[col]).sum() if col in df.columns else valid.sum()
-                  val = (valid.sum() / total_sum * 100) if total_sum else 0.0
-                  unit = "%"
-              else:
-                  op_fn = _EXTENDED_OPS.get(operation)
-                  if op_fn is None:
-                      for alias_key in ("sum",):
-                          if alias_key in operation:
-                              op_fn = _EXTENDED_OPS[alias_key]
-                              break
-                      if op_fn is None:
-                          op_fn = _EXTENDED_OPS["sum"]
-                  val = op_fn(valid)
+            if matched_df.empty:
+                results.append({
+                    "type": "empty", "label": label,
+                    "message": f"No rows found where '{target_col_hint}' = '{cell_value}'."})
+                continue
 
-              # Per-location breakdown
-              loc_breakdown = None
-              if grp_by_loc and "_Location" in filtered.columns:
-                  grp = (
-                      filtered.groupby("_Location")[col]
-                      .apply(lambda x: _robust_to_numeric(x).sum())
-                      .reset_index()
-                  )
-                  col_label = f"{col} ({unit})" if unit else col
-                  grp.columns = ["Location", col_label]
-                  grp = grp.sort_values(col_label, ascending=False).reset_index(drop=True)
-                  grp.index += 1
-                  loc_breakdown = grp
+            # Build projection
+            if return_columns:
+                proj_cols = []
+                for rc in return_columns:
+                    real = _resolve_canonical_column(matched_df, rc)
+                    if real and real in matched_df.columns:
+                        proj_cols.append(real)
+                display_df = matched_df[
+                    [c for c in ["_Location", "_Sheet"] if c in matched_df.columns] + proj_cols
+                ].copy()
+            else:
+                meta = [c for c in ["_Location", "_Sheet"] if c in matched_df.columns]
+                data = [c for c in matched_df.columns if not c.startswith("_")][:30]
+                # Also add any resolved canonical columns
+                for canonical in canonical_columns:
+                    real = _resolve_canonical_column(matched_df, canonical)
+                    if real and real not in data and real in matched_df.columns:
+                        data.append(real)
+                display_df = matched_df[meta + data].copy()
 
-              # Auto per-location breakdown for sum/avg/std/median
-              auto_loc = None
-              if operation in ("sum", "total", "avg", "average", "mean", "median", "std") \
-                      and "_Location" in filtered.columns:
-                  grp2 = (
-                      filtered.groupby("_Location")[col]
-                      .apply(lambda x: _robust_to_numeric(x).sum()
-                             if operation in ("sum", "total") else
-                             _robust_to_numeric(x).mean())
-                      .reset_index()
-                  )
-                  col_lbl2 = f"{col} ({unit})" if unit else col
-                  grp2.columns = ["Location", col_lbl2]
-                  grp2 = grp2.sort_values(col_lbl2, ascending=False).reset_index(drop=True)
-                  grp2.index += 1
-                  auto_loc = grp2
+            display_df = display_df.rename(columns={"_Location": "Source_File", "_Sheet": "Source_Sheet"})
+            display_df = display_df.reset_index(drop=True)
+            display_df.index += 1
+            results.append({"type": "table", "label": label,
+                            "data": display_df, "row_count": len(display_df)})
+            continue
 
-              results.append({
-                  "type": "scalar", "label": label,
-                  "value": val, "unit": unit, "column": col,
-                  "col_reason": reason,
-                  "row_count": total, "valid_count": len(valid),
-                  "operation": operation, "loc_breakdown": loc_breakdown,
-                  "auto_loc": auto_loc,
-              })
+        # ── LIST ─────────────────────────────────────────────────────────────
+        if op_type == "list":
+            meta  = [c for c in ["_Location", "_Sheet"] if c in filtered.columns]
+            data  = [c for c in filtered.columns if not c.startswith("_")][:30]
+            # Include requested canonical columns
+            for canonical in canonical_columns:
+                real = _resolve_canonical_column(filtered, canonical)
+                if real and real not in data and real in filtered.columns:
+                    data.append(real)
+            disp  = filtered[meta + data].reset_index(drop=True)
+            disp.index += 1
+            results.append({"type": "table", "label": label,
+                            "data": disp, "row_count": len(disp)})
 
-          # ── COUNT ─────────────────────────────────────────────────────────────
-          elif op_type == "count":
-              if grp_by_loc and "_Location" in filtered.columns:
-                  grp = (filtered.groupby("_Location").size()
-                         .reset_index(name="Count")
-                         .sort_values("Count", ascending=False)
-                         .reset_index(drop=True))
-                  grp.index += 1
-                  results.append({"type": "table", "label": label,
-                                  "data": grp, "row_count": grp["Count"].sum()})
-              else:
-                  results.append({
-                      "type": "scalar", "label": label,
-                      "value": float(len(filtered)), "unit": "customers",
-                      "column": "", "col_reason": "count of filtered rows",
-                      "row_count": len(filtered), "valid_count": len(filtered),
-                      "operation": "count", "loc_breakdown": None, "auto_loc": None,
-                  })
+        # ── AGGREGATE / TOP / BOTTOM ─────────────────────────────────────────
+        elif op_type in ("aggregate", "top", "bottom"):
+            # First try canonical columns for field resolution
+            col = None
+            reason = ""
+            if canonical_columns:
+                for canonical in canonical_columns:
+                    real = _resolve_canonical_column(filtered, canonical)
+                    if real and real in filtered.columns:
+                        col = real
+                        reason = f"canonical '{canonical}' → '{real}'"
+                        break
 
-      return results
+            if not col:
+                col, reason = _resolve_col_by_semantic(filtered, field_hint)
+
+            if not col or col not in filtered.columns:
+                results.append({"type": "error", "label": label,
+                                "message": f"No column matched '{field_hint}'."})
+                continue
+
+            unit   = _detect_unit(col)
+            series = _robust_to_numeric(filtered[col])
+            valid  = series.dropna()
+            total  = len(series)
+
+            # TOP table
+            if operation in ("top", "largest"):
+                cname = find_col(filtered, r"customer.*name|client.*name")
+                extra = [c for c in ["_Location", cname] if c and c in filtered.columns]
+                sub   = filtered[extra + [col]].copy()
+                sub[col] = _robust_to_numeric(sub[col])
+                sub = sub.dropna(subset=[col]).nlargest(top_n, col).reset_index(drop=True)
+                sub.index += 1
+                results.append({"type": "table", "label": label, "data": sub,
+                                "row_count": len(sub), "unit": unit, "column": col,
+                                "col_reason": reason})
+                continue
+
+            # BOTTOM table
+            if operation in ("bottom", "smallest"):
+                cname = find_col(filtered, r"customer.*name|client.*name")
+                extra = [c for c in ["_Location", cname] if c and c in filtered.columns]
+                sub   = filtered[extra + [col]].copy()
+                sub[col] = _robust_to_numeric(sub[col])
+                sub = sub.dropna(subset=[col]).nsmallest(top_n, col).reset_index(drop=True)
+                sub.index += 1
+                results.append({"type": "table", "label": label, "data": sub,
+                                "row_count": len(sub), "unit": unit, "column": col,
+                                "col_reason": reason})
+                continue
+
+            if valid.empty:
+                results.append({"type": "error", "label": label,
+                                "message": f"Column '{col}' has no numeric values."})
+                continue
+
+            # Percentage: compute as % of total sum
+            if operation in ("percentage", "percent", "pct"):
+                total_sum = _robust_to_numeric(df[col]).sum() if col in df.columns else valid.sum()
+                val = (valid.sum() / total_sum * 100) if total_sum else 0.0
+                unit = "%"
+            else:
+                op_fn = _EXTENDED_OPS.get(operation)
+                if op_fn is None:
+                    for alias_key in ("sum",):
+                        if alias_key in operation:
+                            op_fn = _EXTENDED_OPS[alias_key]
+                            break
+                    if op_fn is None:
+                        op_fn = _EXTENDED_OPS["sum"]
+                val = op_fn(valid)
+
+            # Per-location breakdown
+            loc_breakdown = None
+            if grp_by_loc and "_Location" in filtered.columns:
+                grp = (
+                    filtered.groupby("_Location")[col]
+                    .apply(lambda x: _robust_to_numeric(x).sum())
+                    .reset_index()
+                )
+                col_label = f"{col} ({unit})" if unit else col
+                grp.columns = ["Location", col_label]
+                grp = grp.sort_values(col_label, ascending=False).reset_index(drop=True)
+                grp.index += 1
+                loc_breakdown = grp
+
+            # Auto per-location breakdown for sum/avg/std/median
+            auto_loc = None
+            if operation in ("sum", "total", "avg", "average", "mean", "median", "std") \
+                    and "_Location" in filtered.columns:
+                grp2 = (
+                    filtered.groupby("_Location")[col]
+                    .apply(lambda x: _robust_to_numeric(x).sum()
+                           if operation in ("sum", "total") else
+                           _robust_to_numeric(x).mean())
+                    .reset_index()
+                )
+                col_lbl2 = f"{col} ({unit})" if unit else col
+                grp2.columns = ["Location", col_lbl2]
+                grp2 = grp2.sort_values(col_lbl2, ascending=False).reset_index(drop=True)
+                grp2.index += 1
+                auto_loc = grp2
+
+            results.append({
+                "type": "scalar", "label": label,
+                "value": val, "unit": unit, "column": col,
+                "col_reason": reason,
+                "row_count": total, "valid_count": len(valid),
+                "operation": operation, "loc_breakdown": loc_breakdown,
+                "auto_loc": auto_loc,
+            })
+
+        # ── COUNT ─────────────────────────────────────────────────────────────
+        elif op_type == "count":
+            if grp_by_loc and "_Location" in filtered.columns:
+                grp = (filtered.groupby("_Location").size()
+                       .reset_index(name="Count")
+                       .sort_values("Count", ascending=False)
+                       .reset_index(drop=True))
+                grp.index += 1
+                results.append({"type": "table", "label": label,
+                                "data": grp, "row_count": grp["Count"].sum()})
+            else:
+                results.append({
+                    "type": "scalar", "label": label,
+                    "value": float(len(filtered)), "unit": "customers",
+                    "column": "", "col_reason": "count of filtered rows",
+                    "row_count": len(filtered), "valid_count": len(filtered),
+                    "operation": "count", "loc_breakdown": None, "auto_loc": None,
+                })
+
+    return results
 
 
 # ─────────────────────────────────────────────────────────────────────────────
