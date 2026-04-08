@@ -3331,6 +3331,102 @@ def _sq_build_customer_profile(rows: "pd.DataFrame",
     }
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# SHAKTISHIV — ENHANCED CUSTOMER LOOKUP HELPERS (additive only, T[4])
+# Fixes multi-column customer name detection (DEMARC | Customer Name vs
+# Customer Name) so Airoli, Bangalore, Kolkata, Noida etc. are all found.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# All column name patterns that can hold a customer/client name across all DCs
+_SK_CUST_COL_PATS = [
+    r"DEMARC.*Customer Name",
+    r"^Customer Name$",
+    r"^Customer Name\b",
+    r"customer.*name",
+    r"client.*name",
+]
+
+
+def _sk_all_customer_cols(df: "pd.DataFrame") -> list:
+    """Return every column in df whose name matches any customer-name pattern."""
+    hits = []
+    for pat in _SK_CUST_COL_PATS:
+        for col in df.columns:
+            if re.search(pat, col, re.I) and col not in hits:
+                hits.append(col)
+    return hits
+
+
+def _sk_find_customers_all(search: str, df: "pd.DataFrame") -> "pd.DataFrame":
+    """
+    Case-insensitive substring search across ALL customer-name columns in df.
+    Combines results so rows from Airoli (DEMARC | Customer Name), Bangalore,
+    Kolkata, Noida (Customer Name) are all returned together.
+    Deduplicates by original index.
+    """
+    if not search.strip() or df.empty:
+        return pd.DataFrame()
+    term  = search.strip().lower()
+    cols  = _sk_all_customer_cols(df)
+    if not cols:
+        return pd.DataFrame()
+    combined_idx: set = set()
+    for col in cols:
+        mask = df[col].astype(str).str.lower().str.contains(
+            re.escape(term), na=False
+        )
+        combined_idx.update(df.index[mask].tolist())
+    if not combined_idx:
+        return pd.DataFrame()
+    return df.loc[sorted(combined_idx)].copy().reset_index(drop=True)
+
+
+def _sk_canonical_name(rows: "pd.DataFrame", fallback: str) -> str:
+    """Return the most common canonical customer name from the matched rows."""
+    cols = _sk_all_customer_cols(rows)
+    for col in cols:
+        if col in rows.columns:
+            vals = rows[col].dropna().astype(str).str.strip().unique()
+            vals = [v for v in vals if v and v.lower() not in ("none","nan","")]
+            if vals:
+                return vals[0]
+    return fallback
+
+
+def _sk_build_per_loc_metrics(gdf: "pd.DataFrame") -> "pd.DataFrame":
+    """Build a metrics table for a single location/sheet group of rows."""
+    rows_ = []
+    seen_ : set = set()
+    for pat, label in _SQ_CUST_DATA_PATS:
+        col = find_col(gdf, pat)
+        if not col or col in seen_ or col.startswith("_"):
+            continue
+        seen_.add(col)
+        s = _robust_to_numeric(gdf[col]).dropna()
+        if s.empty:
+            continue
+        v    = float(s.sum())
+        unit = _detect_unit(col)
+        disp = (f"₹ {v:,.2f}" if unit == "₹"
+                else f"{_fmt_decimal(v)} {unit}".strip())
+        rows_.append({"Metric": label, "Value": disp})
+    return pd.DataFrame(rows_) if rows_ else pd.DataFrame()
+
+
+def _sk_build_per_loc_profile(gdf: "pd.DataFrame") -> "pd.DataFrame":
+    """Build a profile card for a single location/sheet group of rows."""
+    rows_ = []
+    for pat, label in _SQ_CUST_PROFILE_PATS:
+        col = find_col(gdf, pat)
+        if not col or col.startswith("_"):
+            continue
+        vals = gdf[col].dropna().astype(str).str.strip().unique().tolist()
+        vals = [v for v in vals if v and v.lower() not in ("none","nan","")]
+        if vals:
+            rows_.append({"Field": label, "Value": ", ".join(vals[:4])})
+    return pd.DataFrame(rows_) if rows_ else pd.DataFrame()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # TAB 4 – SMART QUERY
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3654,8 +3750,14 @@ with T[4]:
         </div>""", unsafe_allow_html=True)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # STANDALONE CUSTOMER LOOKUP  (additive sub-section of Smart Query tab)
-    # Completely independent of the AI query block above.
+    # SHAKTISHIV — ENHANCED CUSTOMER LOOKUP
+    # Replaces namahshivay's lookup with:
+    #   • own location + sheet filters (independent of sidebar sq_locs)
+    #   • _sk_find_customers_all  — searches ALL customer-name columns
+    #     (fixes: rows from Bangalore, Kolkata, Noida were missed because
+    #      they use "Customer Name" not "DEMARC | Customer Name")
+    #   • per-location / per-sheet cards for every matched group
+    #   • "not found" summary for locations where customer is absent
     # ══════════════════════════════════════════════════════════════════════════
     st.markdown(f"<hr style='border-color:{BORD};margin:32px 0 20px'>",
                 unsafe_allow_html=True)
@@ -3665,370 +3767,341 @@ with T[4]:
     )
     st.markdown(
         f'<div style="font-size:.85rem;color:{MUTED};margin-bottom:16px">'
-        f'Directly look up any customer across all DC locations. '
-        f'Type part of the customer name (e.g. <b style="color:{CYAN}">Oracle</b>, '
-        f'<b style="color:{CYAN}">Wipro</b>, <b style="color:{CYAN}">Cisco</b>). '
-        f'Optionally specify a metric to highlight (e.g. <i>power capacity purchased</i>, '
-        f'<i>total revenue</i>, <i>space in use</i>).</div>',
+        f'Search any customer by name across <b>all 10 DC Excel files and all sheets</b>. '
+        f'Works even when the same customer appears in multiple locations. '
+        f'Type part of the name — partial match, case-insensitive '
+        f'(e.g. <b style="color:{CYAN}">Wipro</b> finds WIPRO LIMITED, Wipro Nabard, etc.). '
+        f'Use the filters below to narrow to a specific file or sheet.</div>',
         unsafe_allow_html=True,
     )
 
-    _cl_c1, _cl_c2, _cl_c3 = st.columns([2, 2, 1])
-    with _cl_c1:
-        _cl_cust_input = st.text_input(
+    # ── Own Location + Sheet filter (independent of sidebar) ──────────────────
+    _sk_all_locs = (
+        sorted(pool_base["_Location"].dropna().unique().tolist())
+        if "_Location" in pool_base.columns else []
+    )
+    # Build full location→sheets map for dynamic sheet filter
+    _sk_loc_sheet_map: dict = {}
+    if "_Location" in pool_base.columns and "_Sheet" in pool_base.columns:
+        for _sk_l in _sk_all_locs:
+            _sk_loc_sheet_map[_sk_l] = sorted(
+                pool_base.loc[pool_base["_Location"] == _sk_l, "_Sheet"]
+                .dropna().unique().tolist()
+            )
+
+    _sk_fr1, _sk_fr2 = st.columns([3, 2])
+    with _sk_fr1:
+        _sk_sel_locs = st.multiselect(
+            "🏢 Filter by DC Location (leave empty = ALL)",
+            options=_sk_all_locs,
+            default=[],
+            key="sk_sel_locs",
+        )
+    with _sk_fr2:
+        _sk_sheet_options = []
+        if _sk_sel_locs:
+            for _l in _sk_sel_locs:
+                _sk_sheet_options += _sk_loc_sheet_map.get(_l, [])
+            _sk_sheet_options = sorted(set(_sk_sheet_options))
+        else:
+            for _l in _sk_all_locs:
+                _sk_sheet_options += _sk_loc_sheet_map.get(_l, [])
+            _sk_sheet_options = sorted(set(_sk_sheet_options))
+        _sk_sel_sheets = st.multiselect(
+            "📄 Filter by Sheet (leave empty = ALL sheets)",
+            options=_sk_sheet_options,
+            default=[],
+            key="sk_sel_sheets",
+        )
+
+    # ── Customer name + metric + button ───────────────────────────────────────
+    _sk_r1, _sk_r2, _sk_r3 = st.columns([2, 2, 1])
+    with _sk_r1:
+        _sk_cust_input = st.text_input(
             "🔍 Customer Name (partial match)",
-            placeholder="e.g. Oracle, Wipro, Cisco, YES BANK …",
-            key="cl_cust_input",
+            placeholder="e.g. Wipro, Oracle, Cisco, TATA, YES BANK …",
+            key="sk_cust_input",
         )
-    with _cl_c2:
-        _cl_field_input = st.text_input(
-            "📐 Metric / Field (optional)",
+    with _sk_r2:
+        _sk_field_input = st.text_input(
+            "📐 Metric to highlight (optional)",
             placeholder="e.g. power capacity purchased, total revenue …",
-            key="cl_field_input",
+            key="sk_field_input",
         )
-    with _cl_c3:
+    with _sk_r3:
         st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
-        _cl_run = st.button("Find Customer", key="cl_run", use_container_width=True)
+        _sk_run = st.button("Find Customer", key="sk_run", use_container_width=True)
 
-    # Autocomplete hint — show matching customer names as a small reference table
-    if _cl_cust_input and not _cl_run:
-        if not pool_base.empty:
-            _cl_hint_rows = _sq_find_customers(_cl_cust_input.strip(), pool_base)
-            _cl_cust_col  = find_col(_cl_hint_rows,
-                r"DEMARC.*Customer Name", r"customer.*name", r"client.*name")
-            if not _cl_hint_rows.empty and _cl_cust_col:
-                _cl_matches = (
-                    _cl_hint_rows[_cl_cust_col]
-                    .dropna().astype(str).str.strip()
-                    .unique().tolist()
-                )
-                _cl_matches = [m for m in _cl_matches
-                               if m and m.lower() not in ("none","nan","")]
-                if _cl_matches:
-                    st.markdown(
-                        f'<div style="font-size:.77rem;color:{CYAN};font-weight:700;'
-                        f'margin:4px 0 2px">Matching customers ({len(_cl_matches)}):</div>',
-                        unsafe_allow_html=True,
-                    )
-                    st.markdown(
-                        " &nbsp; ".join(
-                            f'<span class="badge">{m[:50]}</span>'
-                            for m in sorted(set(_cl_matches))[:20]
-                        ),
-                        unsafe_allow_html=True,
-                    )
+    # ── Live autocomplete: show matching names as typed ────────────────────────
+    if _sk_cust_input.strip() and not _sk_run:
+        _sk_hint_rows = _sk_find_customers_all(_sk_cust_input.strip(), pool_base)
+        _sk_hint_cols = _sk_all_customer_cols(_sk_hint_rows)
+        _sk_hint_names: list = []
+        for _hc in _sk_hint_cols:
+            if _hc in _sk_hint_rows.columns:
+                vals = (_sk_hint_rows[_hc].dropna().astype(str)
+                        .str.strip().unique().tolist())
+                _sk_hint_names += [
+                    v for v in vals
+                    if v and v.lower() not in ("none","nan","")
+                ]
+        _sk_hint_names = sorted(set(_sk_hint_names))
+        if _sk_hint_names:
+            st.markdown(
+                f'<div style="font-size:.77rem;color:{CYAN};font-weight:700;'
+                f'margin:4px 0 2px">Matching customers ({len(_sk_hint_names)}) '
+                f'across all files:</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                " &nbsp; ".join(
+                    f'<span class="badge">{n[:55]}</span>'
+                    for n in _sk_hint_names[:25]
+                ),
+                unsafe_allow_html=True,
+            )
 
-    # Execute lookup
-    if _cl_run:
-        if not _cl_cust_input.strip():
+    # ── Execute lookup ─────────────────────────────────────────────────────────
+    if _sk_run:
+        if not _sk_cust_input.strip():
             st.warning("Please enter a customer name.")
         elif pool_base.empty:
             st.error("No data loaded. Please check your Excel files.")
         else:
-            _cl_pool = pool_base.copy()
-            if sq_locs and "_Location" in _cl_pool.columns:
-                _cl_pool = _cl_pool[_cl_pool["_Location"].isin(sq_locs)]
+            # Build the search pool: start with ALL data (no sidebar filter)
+            _sk_pool = pool_base.copy()
+            # Apply own location filter
+            if _sk_sel_locs and "_Location" in _sk_pool.columns:
+                _sk_pool = _sk_pool[_sk_pool["_Location"].isin(_sk_sel_locs)]
+            # Apply own sheet filter
+            if _sk_sel_sheets and "_Sheet" in _sk_pool.columns:
+                _sk_pool = _sk_pool[_sk_pool["_Sheet"].isin(_sk_sel_sheets)]
 
-            _cl_rows = _sq_find_customers(_cl_cust_input.strip(), _cl_pool)
+            # Search ALL customer-name columns
+            _sk_rows = _sk_find_customers_all(_sk_cust_input.strip(), _sk_pool)
 
-            if _cl_rows.empty:
+            if _sk_rows.empty:
                 st.warning(
-                    f"No rows found matching **'{_cl_cust_input}'**. "
-                    f"Try a shorter search term (e.g. just part of the company name)."
+                    f"**'{_sk_cust_input}'** not found in "
+                    f"{'selected locations/sheets' if (_sk_sel_locs or _sk_sel_sheets) else 'any DC file'}. "
+                    f"Try a shorter or different name."
                 )
             else:
-                _cl_res = _sq_build_customer_profile(
-                    _cl_rows, _cl_cust_input.strip(), _cl_field_input.strip()
-                )
-                cust_disp = _cl_res["customer"]
-                n_rows    = _cl_res["row_count"]
+                # Canonical display name from actual data
+                _sk_cust_disp = _sk_canonical_name(_sk_rows, _sk_cust_input.strip())
+                _sk_n_rows    = len(_sk_rows)
 
-                # Header card
+                # Build (location, sheet) groups
+                _sk_has_loc   = "_Location" in _sk_rows.columns
+                _sk_has_sheet = "_Sheet"    in _sk_rows.columns
+
+                if _sk_has_loc and _sk_has_sheet:
+                    _sk_groups = list(_sk_rows.groupby(
+                        ["_Location", "_Sheet"], sort=True
+                    ))
+                elif _sk_has_loc:
+                    _sk_groups = [
+                        ((loc, ""), g)
+                        for loc, g in _sk_rows.groupby("_Location", sort=True)
+                    ]
+                else:
+                    _sk_groups = [("(All)", _sk_rows)]
+
+                _sk_found_locs   = sorted({k[0] for k, _ in _sk_groups})
+                _sk_found_sheets = sorted({k[1] for k, _ in _sk_groups if k[1]})
+                _sk_n_files      = len(_sk_found_locs)
+                _sk_n_sheets_    = len(_sk_groups)
+
+                # ── Top summary card ──────────────────────────────────────
                 st.markdown(
                     f'<div style="background:{DARK2};border:2px solid {CYAN};'
-                    f'border-radius:14px;padding:20px 24px;margin:12px 0">'
+                    f'border-radius:14px;padding:20px 26px;margin:14px 0">'
                     f'<div style="font-size:1.1rem;font-weight:900;color:{WHITE};'
-                    f'margin-bottom:4px">👤 {cust_disp}</div>'
-                    f'<div style="font-size:.8rem;color:{MUTED}">'
-                    f'{n_rows} matching row(s) across selected locations</div></div>',
+                    f'margin-bottom:6px">👤 {_sk_cust_disp}</div>'
+                    f'<div style="font-size:.82rem;color:{TEXT}">'
+                    f'<b style="color:{CYAN}">{_sk_n_rows}</b> matching row(s) '
+                    f'found in <b style="color:{CYAN}">{_sk_n_files}</b> DC location(s) '
+                    f'across <b style="color:{CYAN}">{_sk_n_sheets_}</b> sheet(s)</div>'
+                    f'<div style="margin-top:10px">'
+                    + " &nbsp; ".join(
+                        f'<span class="badge">{k[0]}'
+                        + (f' — {k[1]}' if k[1] else '')
+                        + '</span>'
+                        for k, _ in _sk_groups
+                    )
+                    + f'</div></div>',
                     unsafe_allow_html=True,
                 )
 
-                # Focus metric (highlighted answer)
-                if _cl_res.get("focus_col") and _cl_res.get("focus_val") is not None:
-                    _cfval   = _cl_res["focus_val"]
-                    _cfunit  = _cl_res.get("focus_unit", "")
-                    _cfcol   = (
-                        _cl_res["focus_col"].split("|")[-1].strip()
-                        if "|" in _cl_res["focus_col"] else _cl_res["focus_col"]
-                    )
-                    _cfdisplay = (
-                        f"₹ {_cfval:,.2f}" if _cfunit == "₹"
-                        else f"{_fmt_decimal(_cfval)} {_cfunit}".strip()
-                    )
+                # ── Focus metric (overall, across all matched rows) ───────
+                if _sk_field_input.strip():
+                    _sk_focus_col, _ = _sq_resolve_field(_sk_rows, _sk_field_input.strip())
+                    if _sk_focus_col and _sk_focus_col in _sk_rows.columns:
+                        _sk_fs  = _robust_to_numeric(_sk_rows[_sk_focus_col]).dropna()
+                        if not _sk_fs.empty:
+                            _sk_fv   = float(_sk_fs.sum())
+                            _sk_fu   = _detect_unit(_sk_focus_col)
+                            _sk_fd   = (f"₹ {_sk_fv:,.2f}" if _sk_fu == "₹"
+                                        else f"{_fmt_decimal(_sk_fv)} {_sk_fu}".strip())
+                            _sk_fcol = (_sk_focus_col.split("|")[-1].strip()
+                                        if "|" in _sk_focus_col else _sk_focus_col)
+                            st.markdown(
+                                f'<div style="background:{CARD};border:1px solid {BORD};'
+                                f'border-radius:12px;padding:22px 32px;margin:10px 0;'
+                                f'display:inline-block;min-width:280px">'
+                                f'<div style="font-size:.75rem;color:{MUTED};font-weight:700;'
+                                f'text-transform:uppercase;letter-spacing:.06em">'
+                                f'{_sk_fcol} (all locations combined)</div>'
+                                f'<div class="result-big">{_sk_fd}</div>'
+                                f'<div style="font-size:.72rem;color:{CYAN};margin-top:6px">'
+                                f'for {_sk_cust_disp}</div></div>',
+                                unsafe_allow_html=True,
+                            )
+
+                # ── Combined all-location metrics overview ────────────────
+                _sk_all_metrics = _sk_build_per_loc_metrics(_sk_rows)
+                _sk_all_profile = _sk_build_per_loc_profile(_sk_rows)
+                if not _sk_all_metrics.empty or not _sk_all_profile.empty:
                     st.markdown(
-                        f'<div style="background:{CARD};border:1px solid {BORD};'
-                        f'border-radius:12px;padding:22px 32px;margin:10px 0;'
-                        f'display:inline-block;min-width:280px">'
-                        f'<div style="font-size:.75rem;color:{MUTED};font-weight:700;'
-                        f'text-transform:uppercase;letter-spacing:.06em">{_cfcol}</div>'
-                        f'<div class="result-big">{_cfdisplay}</div>'
-                        f'<div style="font-size:.72rem;color:{CYAN};margin-top:6px">'
-                        f'for {cust_disp}</div></div>',
+                        '<div style="font-size:.8rem;font-weight:700;color:{CYAN};'
+                        'text-transform:uppercase;letter-spacing:.05em;margin:16px 0 4px">'
+                        '📊 Combined Overview — All Locations</div>'.format(CYAN=CYAN),
                         unsafe_allow_html=True,
                     )
+                    _sk_oc1, _sk_oc2 = st.columns([1, 2])
+                    with _sk_oc1:
+                        if not _sk_all_profile.empty:
+                            _p = _sk_all_profile.copy(); _p.index = [""] * len(_p)
+                            st.dataframe(_p, use_container_width=True, hide_index=True)
+                    with _sk_oc2:
+                        if not _sk_all_metrics.empty:
+                            _m = _sk_all_metrics.copy(); _m.index = [""] * len(_m)
+                            st.dataframe(_m, use_container_width=True, hide_index=True)
 
-                # Profile + Metrics columns
-                _cc1, _cc2 = st.columns([1, 2])
-                with _cc1:
-                    if not _cl_res["profile_df"].empty:
-                        st.markdown(
-                            f'<div style="font-size:.78rem;color:{CYAN};font-weight:700;'
-                            f'text-transform:uppercase;letter-spacing:.06em;'
-                            f'margin:12px 0 4px">📋 Profile</div>',
-                            unsafe_allow_html=True,
-                        )
-                        _cpf = _cl_res["profile_df"].copy()
-                        _cpf.index = [""] * len(_cpf)
-                        st.dataframe(_cpf, use_container_width=True, hide_index=True)
-
-                with _cc2:
-                    if not _cl_res["metrics_df"].empty:
-                        st.markdown(
-                            f'<div style="font-size:.78rem;color:{CYAN};font-weight:700;'
-                            f'text-transform:uppercase;letter-spacing:.06em;'
-                            f'margin:12px 0 4px">📊 All Metrics</div>',
-                            unsafe_allow_html=True,
-                        )
-                        _cmf = _cl_res["metrics_df"].copy()
-                        _cmf.index = [""] * len(_cmf)
-                        st.dataframe(_cmf, use_container_width=True, hide_index=True)
-                    else:
-                        st.info("No numeric metrics found for this customer.")
-
-                # Full detail table
+                # ── Overall download ──────────────────────────────────────
+                _sk_dl_meta  = [c for c in ["_Location","_Sheet"] if c in _sk_rows.columns]
+                _sk_dl_data  = [c for c in _sk_rows.columns if not c.startswith("_")]
+                _sk_dl_df    = _sk_rows[_sk_dl_meta + _sk_dl_data].copy()
+                _sk_dl_df.index = range(1, len(_sk_dl_df) + 1)
                 with st.expander(
-                    f"🔎 Full detail rows — {n_rows} row(s) for {cust_disp}",
-                    expanded=False
+                    f"⬇ Download all {_sk_n_rows} matching rows (all locations combined)",
+                    expanded=False,
                 ):
-                    st.dataframe(_cl_res["raw_df"], use_container_width=True)
+                    st.dataframe(_sk_dl_df, use_container_width=True)
                     st.download_button(
-                        "⬇ Download CSV",
-                        _cl_res["raw_df"].to_csv(index=False).encode(),
-                        f"customer_{cust_disp.replace(' ','_')[:40]}.csv",
+                        "⬇ Download combined CSV",
+                        _sk_dl_df.to_csv(index=False).encode(),
+                        f"customer_{_sk_cust_disp.replace(' ','_')[:40]}_ALL.csv",
                         "text/csv",
-                        key="cl_download",
+                        key="sk_dl_all",
                     )
 
-                # ── PER-FILE / PER-SHEET BREAKDOWN (additive) ─────────────
-                # Groups matching rows by each DC location + sheet and shows
-                # a separate card for every file/sheet where the customer exists.
+                # ── Per-location / per-sheet cards ────────────────────────
                 st.markdown(
-                    f"<hr style='border-color:{BORD};margin:28px 0 18px'>",
+                    f"<hr style='border-color:{BORD};margin:24px 0 16px'>",
                     unsafe_allow_html=True,
                 )
                 st.markdown(
                     '<div class="section-title">'
-                    '📂 Results by DC Location & Sheet'
+                    '📂 Results by DC Location &amp; Sheet'
                     '</div>',
                     unsafe_allow_html=True,
                 )
 
-                # Build the (location, sheet) groups from the matched rows
-                _cl_loc_col   = "_Location" if "_Location" in _cl_rows.columns else None
-                _cl_sheet_col = "_Sheet"    if "_Sheet"    in _cl_rows.columns else None
-                _cl_cust_col  = find_col(_cl_rows,
-                    r"DEMARC.*Customer Name", r"customer.*name", r"client.*name")
+                for _sk_gi, (_sk_gkey, _sk_gdf) in enumerate(_sk_groups):
+                    _sk_loc_n   = _sk_gkey[0] if isinstance(_sk_gkey, tuple) else str(_sk_gkey)
+                    _sk_sheet_n = _sk_gkey[1] if isinstance(_sk_gkey, tuple) else ""
+                    _sk_gdf     = _sk_gdf.reset_index(drop=True)
+                    _sk_g_n     = len(_sk_gdf)
+                    _sk_g_name  = _sk_canonical_name(_sk_gdf, _sk_cust_disp)
 
-                if _cl_loc_col and _cl_sheet_col:
-                    _cl_groups = (
-                        _cl_rows.groupby([_cl_loc_col, _cl_sheet_col], sort=False)
-                    )
-                elif _cl_loc_col:
-                    _cl_groups = _cl_rows.groupby([_cl_loc_col], sort=False)
-                else:
-                    _cl_groups = None
-
-                # Summary badge bar: "Found in: Airoli (Customer Details1), Noida 01 (Noida-01) …"
-                if _cl_groups is not None:
-                    _cl_found_labels = []
-                    for _cl_gkey, _ in _cl_groups:
-                        if isinstance(_cl_gkey, tuple):
-                            _cl_found_labels.append(
-                                f"{_cl_gkey[0]} <span style='color:{MUTED}'>"
-                                f"({_cl_gkey[1]})</span>"
-                            )
-                        else:
-                            _cl_found_labels.append(str(_cl_gkey))
-
-                    _cl_n_locs   = len({
-                        k[0] if isinstance(k, tuple) else k
-                        for k, _ in _cl_groups
-                    })
-                    _cl_n_sheets = len(list(_cl_groups))
+                    # Location card header
                     st.markdown(
-                        f'<div style="font-size:.82rem;color:{TEXT};margin-bottom:14px">'
-                        f'<b style="color:{CYAN}">Found in {_cl_n_locs} location(s)'
-                        f', {_cl_n_sheets} sheet(s):</b> &nbsp;'
-                        + " &nbsp;·&nbsp; ".join(
-                            f'<span class="badge">{lbl}</span>'
-                            for lbl in _cl_found_labels
+                        f'<div style="background:{DARK2};border-left:4px solid {BLUE};'
+                        f'border-radius:0 12px 12px 0;padding:14px 20px;margin:18px 0 8px">'
+                        f'<span style="font-size:1rem;font-weight:800;color:{WHITE}">'
+                        f'🏢 {_sk_loc_n}</span>'
+                        + (f'&nbsp;<span style="font-size:.82rem;color:{CYAN};'
+                           f'font-weight:600"> — {_sk_sheet_n}</span>'
+                           if _sk_sheet_n else "")
+                        + f'<br><span style="font-size:.76rem;color:{MUTED}">'
+                        f'{_sk_g_n} row(s) &nbsp;·&nbsp; '
+                        f'<span style="color:{GREEN}">{_sk_g_name}</span>'
+                        f'</span></div>',
+                        unsafe_allow_html=True,
+                    )
+
+                    # Per-group metrics & profile
+                    _sk_gmetrics = _sk_build_per_loc_metrics(_sk_gdf)
+                    _sk_gprofile = _sk_build_per_loc_profile(_sk_gdf)
+
+                    _sk_ga, _sk_gb = st.columns([1, 2])
+                    with _sk_ga:
+                        if not _sk_gprofile.empty:
+                            st.markdown(
+                                f'<div style="font-size:.72rem;color:{CYAN};font-weight:700;'
+                                f'text-transform:uppercase;margin-bottom:4px">'
+                                f'📋 Profile</div>',
+                                unsafe_allow_html=True,
+                            )
+                            _gpf = _sk_gprofile.copy(); _gpf.index = [""] * len(_gpf)
+                            st.dataframe(_gpf, use_container_width=True, hide_index=True)
+
+                    with _sk_gb:
+                        if not _sk_gmetrics.empty:
+                            st.markdown(
+                                f'<div style="font-size:.72rem;color:{CYAN};font-weight:700;'
+                                f'text-transform:uppercase;margin-bottom:4px">'
+                                f'📊 Metrics</div>',
+                                unsafe_allow_html=True,
+                            )
+                            _gmf = _sk_gmetrics.copy(); _gmf.index = [""] * len(_gmf)
+                            st.dataframe(_gmf, use_container_width=True, hide_index=True)
+                        else:
+                            st.caption("No numeric metrics in this sheet for this customer.")
+
+                    # Row detail expander for this group
+                    _sk_g_meta = [c for c in ["_Location","_Sheet"] if c in _sk_gdf.columns]
+                    _sk_g_data = [c for c in _sk_gdf.columns if not c.startswith("_")]
+                    _sk_g_show = _sk_gdf[_sk_g_meta + _sk_g_data].copy()
+                    _sk_g_show.index = range(1, len(_sk_g_show) + 1)
+                    _sk_g_title = (
+                        f"All columns — {_sk_loc_n}"
+                        + (f" / {_sk_sheet_n}" if _sk_sheet_n else "")
+                        + f"  ({_sk_g_n} row(s))"
+                    )
+                    with st.expander(_sk_g_title, expanded=(_sk_n_files == 1)):
+                        st.dataframe(_sk_g_show, use_container_width=True)
+                        _sk_g_fn = (
+                            f"customer_{_sk_cust_disp.replace(' ','_')[:25]}"
+                            f"_{_sk_loc_n.replace(' ','_')[:20]}.csv"
+                        )
+                        st.download_button(
+                            "⬇ Download this sheet's CSV",
+                            _sk_g_show.to_csv(index=False).encode(),
+                            _sk_g_fn, "text/csv",
+                            key=f"sk_dl_{_sk_gi}",
+                        )
+
+                # ── "Not found" summary for remaining locations ────────────
+                _sk_absent = [
+                    loc for loc in _sk_all_locs
+                    if loc not in _sk_found_locs
+                    and (not _sk_sel_locs or loc in _sk_sel_locs)
+                ]
+                if _sk_absent:
+                    st.markdown(
+                        f'<div style="background:{DARK2};border:1px dashed {BORD};'
+                        f'border-radius:10px;padding:12px 18px;margin:20px 0;'
+                        f'font-size:.8rem;color:{MUTED}">'
+                        f'<b>Not found in:</b> '
+                        + ", ".join(
+                            f'<span style="color:{AMBER}">{l}</span>'
+                            for l in _sk_absent
                         )
                         + "</div>",
                         unsafe_allow_html=True,
                     )
-
-                    # One card per (location, sheet)
-                    for _cl_gi, (_cl_gkey, _cl_gdf) in enumerate(_cl_groups):
-                        if isinstance(_cl_gkey, tuple):
-                            _cl_loc_name   = _cl_gkey[0]
-                            _cl_sheet_name = _cl_gkey[1]
-                        else:
-                            _cl_loc_name   = str(_cl_gkey)
-                            _cl_sheet_name = ""
-
-                        _cl_gdf = _cl_gdf.reset_index(drop=True)
-                        _cl_g_n = len(_cl_gdf)
-
-                        # Customer names in this group
-                        if _cl_cust_col and _cl_cust_col in _cl_gdf.columns:
-                            _cl_g_names = (
-                                _cl_gdf[_cl_cust_col]
-                                .dropna().astype(str).str.strip().unique().tolist()
-                            )
-                            _cl_g_names = [
-                                n for n in _cl_g_names
-                                if n and n.lower() not in ("none","nan","")
-                            ]
-                            _cl_g_name_str = _cl_g_names[0] if _cl_g_names else cust_disp
-                        else:
-                            _cl_g_name_str = cust_disp
-
-                        # Location card header
-                        st.markdown(
-                            f'<div style="background:{DARK2};border-left:4px solid {BLUE};'
-                            f'border-radius:0 10px 10px 0;padding:14px 18px;'
-                            f'margin:16px 0 8px">'
-                            f'<div style="font-size:.95rem;font-weight:800;color:{WHITE}">'
-                            f'🏢 {_cl_loc_name}'
-                            + (f' &nbsp;<span style="font-size:.78rem;color:{CYAN};'
-                               f'font-weight:600">— {_cl_sheet_name}</span>'
-                               if _cl_sheet_name else "")
-                            + f'</div>'
-                            f'<div style="font-size:.76rem;color:{MUTED};margin-top:2px">'
-                            f'{_cl_g_n} row(s) &nbsp;·&nbsp; '
-                            f'<span style="color:{GREEN}">{_cl_g_name_str}</span>'
-                            f'</div></div>',
-                            unsafe_allow_html=True,
-                        )
-
-                        # Per-group metrics (key numeric columns)
-                        _cl_g_metric_rows = []
-                        for _cl_mpat, _cl_mlabel in _SQ_CUST_DATA_PATS:
-                            _cl_mc = find_col(_cl_gdf, _cl_mpat)
-                            if not _cl_mc or _cl_mc.startswith("_"):
-                                continue
-                            _cl_ms = _robust_to_numeric(_cl_gdf[_cl_mc]).dropna()
-                            if _cl_ms.empty:
-                                continue
-                            _cl_mv   = float(_cl_ms.sum())
-                            _cl_munit = _detect_unit(_cl_mc)
-                            _cl_mdisp = (
-                                f"₹ {_cl_mv:,.2f}" if _cl_munit == "₹"
-                                else f"{_fmt_decimal(_cl_mv)} {_cl_munit}".strip()
-                            )
-                            _cl_g_metric_rows.append({
-                                "Metric": _cl_mlabel,
-                                "Value":  _cl_mdisp,
-                            })
-
-                        # Per-group profile (text metadata)
-                        _cl_g_profile_rows = []
-                        for _cl_ppat, _cl_plabel in _SQ_CUST_PROFILE_PATS:
-                            _cl_pc = find_col(_cl_gdf, _cl_ppat)
-                            if not _cl_pc or _cl_pc in ("_Location","_Sheet"):
-                                continue
-                            _cl_pvals = (
-                                _cl_gdf[_cl_pc]
-                                .dropna().astype(str).str.strip().unique().tolist()
-                            )
-                            _cl_pvals = [
-                                v for v in _cl_pvals
-                                if v and v.lower() not in ("none","nan","")
-                            ]
-                            if _cl_pvals:
-                                _cl_g_profile_rows.append({
-                                    "Field": _cl_plabel,
-                                    "Value": ", ".join(_cl_pvals[:4]),
-                                })
-
-                        # Two-column layout for this location
-                        _cl_ga, _cl_gb = st.columns([1, 2])
-                        with _cl_ga:
-                            if _cl_g_profile_rows:
-                                st.markdown(
-                                    f'<div style="font-size:.72rem;color:{CYAN};'
-                                    f'font-weight:700;text-transform:uppercase;'
-                                    f'letter-spacing:.05em;margin-bottom:4px">'
-                                    f'📋 Profile</div>',
-                                    unsafe_allow_html=True,
-                                )
-                                _cl_gpf = pd.DataFrame(_cl_g_profile_rows)
-                                _cl_gpf.index = [""] * len(_cl_gpf)
-                                st.dataframe(
-                                    _cl_gpf, use_container_width=True,
-                                    hide_index=True
-                                )
-
-                        with _cl_gb:
-                            if _cl_g_metric_rows:
-                                st.markdown(
-                                    f'<div style="font-size:.72rem;color:{CYAN};'
-                                    f'font-weight:700;text-transform:uppercase;'
-                                    f'letter-spacing:.05em;margin-bottom:4px">'
-                                    f'📊 Metrics</div>',
-                                    unsafe_allow_html=True,
-                                )
-                                _cl_gmf = pd.DataFrame(_cl_g_metric_rows)
-                                _cl_gmf.index = [""] * len(_cl_gmf)
-                                st.dataframe(
-                                    _cl_gmf, use_container_width=True,
-                                    hide_index=True
-                                )
-                            else:
-                                st.caption("No numeric data in this sheet for this customer.")
-
-                        # Row detail expander for this location/sheet
-                        _cl_exp_title = (
-                            f"All columns — {_cl_loc_name}"
-                            + (f" / {_cl_sheet_name}" if _cl_sheet_name else "")
-                            + f" ({_cl_g_n} row(s))"
-                        )
-                        with st.expander(_cl_exp_title, expanded=False):
-                            _cl_g_meta  = [c for c in ["_Location","_Sheet"]
-                                           if c in _cl_gdf.columns]
-                            _cl_g_data  = [c for c in _cl_gdf.columns
-                                           if not c.startswith("_")]
-                            _cl_g_show  = _cl_gdf[_cl_g_meta + _cl_g_data].copy()
-                            _cl_g_show.index = range(1, len(_cl_g_show) + 1)
-                            st.dataframe(_cl_g_show, use_container_width=True)
-                            _cl_g_csv_name = (
-                                f"customer_{cust_disp.replace(' ','_')[:25]}"
-                                f"_{_cl_loc_name.replace(' ','_')[:20]}.csv"
-                            )
-                            st.download_button(
-                                "⬇ Download this sheet's CSV",
-                                _cl_g_show.to_csv(index=False).encode(),
-                                _cl_g_csv_name,
-                                "text/csv",
-                                key=f"cl_dl_{_cl_gi}",
-                            )
-                else:
-                    # Fallback: no location/sheet tags — show flat table
-                    _cl_flat = _cl_rows.copy()
-                    _cl_flat.index = range(1, len(_cl_flat) + 1)
-                    st.dataframe(_cl_flat, use_container_width=True)
-                # ── END PER-FILE / PER-SHEET BREAKDOWN ───────────────────
 
 
 # ══════════════════════════════════════════════════════════════════════════════
