@@ -3761,20 +3761,11 @@ with T[4]:
     # • "Not found" summary shown for locations where customer is absent.
     # ══════════════════════════════════════════════════════════════════════════
 
-    # ── Build the full search pool from ALL loaded Excel files (all locations,
-    #    all sheets) — independent of sq_src and the sidebar sel_locs/sel_sheets
-    _sk_all_frames = []
-    for _sk_loc_key, _sk_loc_sheets in ALL.items():
-        for _sk_sn, _sk_df_raw in _sk_loc_sheets.items():
-            _sk_tmp = _sk_df_raw.copy()
-            _sk_tmp.insert(0, "_Sheet", _sk_sn)
-            _sk_tmp.insert(0, "_Location", _sk_loc_key)
-            _sk_all_frames.append(_sk_tmp)
-    _sk_full_pool_raw = (
-        pd.concat(_sk_all_frames, ignore_index=True, sort=False).reset_index(drop=True)
-        if _sk_all_frames else pd.DataFrame()
-    )
-    _sk_full_pool = _sq_preprocess_pool(_sk_full_pool_raw) if not _sk_full_pool_raw.empty else pd.DataFrame()
+    # ── Build the full search pool directly from ALL — all 10 Excel files,
+    #    all sheets — independent of sq_src and the sidebar sel_locs/sel_sheets.
+    #    We use combined_df(ALL) here (no preprocessing) so that every location
+    #    and sheet from attached Excel files is always represented.
+    _sk_full_pool = combined_df(ALL)   # has _Location and _Sheet columns
 
     st.markdown(f"<hr style='border-color:{BORD};margin:32px 0 20px'>",
                 unsafe_allow_html=True)
@@ -3792,19 +3783,13 @@ with T[4]:
         unsafe_allow_html=True,
     )
 
-    # ── Own Location + Sheet filter (uses _sk_full_pool — all 10 files) ───────
-    _sk_all_locs = (
-        sorted(_sk_full_pool["_Location"].dropna().unique().tolist())
-        if "_Location" in _sk_full_pool.columns else sorted(ALL.keys())
-    )
-    # Build full location→sheets map for dynamic sheet filter
-    _sk_loc_sheet_map: dict = {}
-    if "_Location" in _sk_full_pool.columns and "_Sheet" in _sk_full_pool.columns:
-        for _sk_l in _sk_all_locs:
-            _sk_loc_sheet_map[_sk_l] = sorted(
-                _sk_full_pool.loc[_sk_full_pool["_Location"] == _sk_l, "_Sheet"]
-                .dropna().unique().tolist()
-            )
+    # ── Location + Sheet filter options — taken directly from ALL dict
+    #    so ALL 10 Excel files and ALL their sheets are always listed,
+    #    regardless of whether any rows survived preprocessing.
+    _sk_all_locs = sorted(ALL.keys())
+    _sk_loc_sheet_map: dict = {
+        _sk_l: sorted(ALL[_sk_l].keys()) for _sk_l in _sk_all_locs
+    }
 
     _sk_fr1, _sk_fr2 = st.columns([3, 2])
     with _sk_fr1:
