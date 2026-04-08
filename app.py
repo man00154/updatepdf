@@ -3778,6 +3778,233 @@ with T[4]:
           </div>
         </div>""", unsafe_allow_html=True)
 
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # CUSTOMER NAME-WISE ALL COLUMNS SEARCH
+    # Search by customer name → all column values across all 10 odd Excel files
+    # and all sheets, with row count and validation.
+    # (Additive — does NOT touch any existing code or Customer Lookup section)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    _cnw_pool = combined_df(ALL)   # all 10 Excel files, all sheets
+
+    st.markdown(f"<hr style='border-color:{BORD};margin:32px 0 20px'>",
+                unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-title">🔎 Customer Name-Wise All Columns — Full Row Search</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div style="font-size:.85rem;color:{MUTED};margin-bottom:16px">'
+        f'Enter a customer name to retrieve <b>all column values</b> for every matching row '
+        f'across all attached odd 10 Excel files and all sheets. '
+        f'Shows total number of matching rows and validates the result.</div>',
+        unsafe_allow_html=True,
+    )
+
+    _cnw_col1, _cnw_col2 = st.columns([3, 1])
+    with _cnw_col1:
+        _cnw_input = st.text_input(
+            "👤 Customer Name (partial match, case-insensitive)",
+            placeholder="e.g. Wipro, Oracle, Cisco, TATA, YES BANK …",
+            key="cnw_input",
+        )
+    with _cnw_col2:
+        st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
+        _cnw_run = st.button("🔍 Search All Columns", key="cnw_run", use_container_width=True)
+
+    if _cnw_run:
+        if not _cnw_input.strip():
+            st.warning("Please enter a customer name to search.")
+        elif _cnw_pool.empty:
+            st.error("No data loaded. Please check your Excel files.")
+        else:
+            _cnw_cust_cols = _sk_all_customer_cols(_cnw_pool)
+            if not _cnw_cust_cols:
+                st.warning("No customer-name column found in the loaded data.")
+            else:
+                _cnw_term = _cnw_input.strip().lower()
+                _cnw_combined_idx = set()
+                for _cc in _cnw_cust_cols:
+                    _mask = _cnw_pool[_cc].astype(str).str.lower().str.contains(
+                        re.escape(_cnw_term), na=False
+                    )
+                    _cnw_combined_idx.update(_cnw_pool.index[_mask].tolist())
+
+                if not _cnw_combined_idx:
+                    st.warning(
+                        f"**'{_cnw_input}'** not found in any DC Excel file or sheet. "
+                        f"Try a shorter or different name."
+                    )
+                else:
+                    _cnw_rows = _cnw_pool.loc[sorted(_cnw_combined_idx)].copy().reset_index(drop=True)
+                    _cnw_n    = len(_cnw_rows)
+
+                    _cnw_disp_name = _cnw_input.strip()
+                    for _cc in _cnw_cust_cols:
+                        if _cc in _cnw_rows.columns:
+                            _vv = _cnw_rows[_cc].dropna().astype(str).str.strip().unique().tolist()
+                            _vv = [v for v in _vv if v and v.lower() not in ("none", "nan", "")]
+                            if _vv:
+                                _cnw_disp_name = _vv[0]
+                                break
+
+                    _cnw_files_found  = sorted(_cnw_rows["_Location"].unique().tolist()) if "_Location" in _cnw_rows.columns else []
+                    _cnw_sheets_found = sorted(_cnw_rows["_Sheet"].unique().tolist())    if "_Sheet"    in _cnw_rows.columns else []
+
+                    st.markdown(
+                        f'<div style="background:{DARK2};border:2px solid {CYAN};'
+                        f'border-radius:14px;padding:20px 26px;margin:14px 0">'
+                        f'<div style="font-size:1.1rem;font-weight:900;color:{WHITE};margin-bottom:6px">'
+                        f'✅ Found: {_cnw_disp_name}</div>'
+                        f'<div style="font-size:.85rem;color:{TEXT}">'
+                        f'<b style="color:{CYAN}">{_cnw_n}</b> row(s) matched across '
+                        f'<b style="color:{CYAN}">{len(_cnw_files_found)}</b> DC file(s) and '
+                        f'<b style="color:{CYAN}">{len(_cnw_sheets_found)}</b> sheet(s)</div>'
+                        f'<div style="margin-top:10px;font-size:.78rem;color:{MUTED}">'
+                        f'Files: '
+                        + (", ".join(f'<span style="color:{GREEN}">{l}</span>' for l in _cnw_files_found) or "—")
+                        + f'</div><div style="font-size:.78rem;color:{MUTED};margin-top:4px">'
+                        f'Sheets: '
+                        + (", ".join(f'<span style="color:{AMBER}">{s}</span>' for s in _cnw_sheets_found[:15]) or "—")
+                        + f'</div></div>',
+                        unsafe_allow_html=True,
+                    )
+
+                    with st.expander("🔬 Validation — Row count per file & sheet", expanded=False):
+                        if "_Location" in _cnw_rows.columns and "_Sheet" in _cnw_rows.columns:
+                            _cnw_val_df = (
+                                _cnw_rows.groupby(["_Location", "_Sheet"])
+                                .size()
+                                .reset_index(name="Row Count")
+                                .sort_values(["_Location", "_Sheet"])
+                            )
+                            _cnw_val_df.index = range(1, len(_cnw_val_df) + 1)
+                            st.dataframe(_cnw_val_df, use_container_width=True)
+                            st.markdown(
+                                f'<div style="font-size:.78rem;color:{MUTED};margin-top:6px">'
+                                f'<b>Total rows matched:</b> '
+                                f'<b style="color:{CYAN}">{_cnw_n}</b> across '
+                                f'<b style="color:{CYAN}">{len(_cnw_files_found)}</b> file(s)</div>',
+                                unsafe_allow_html=True,
+                            )
+
+                    _cnw_meta_c = [c for c in ["_Location", "_Sheet"] if c in _cnw_rows.columns]
+                    _cnw_data_c = [c for c in _cnw_rows.columns if not c.startswith("_")]
+                    _cnw_disp   = _cnw_rows[_cnw_meta_c + _cnw_data_c].copy()
+                    _cnw_disp.index = range(1, len(_cnw_disp) + 1)
+
+                    st.markdown(
+                        f'<div style="font-size:.8rem;color:{CYAN};font-weight:700;'
+                        f'text-transform:uppercase;letter-spacing:.05em;margin:16px 0 6px">'
+                        f'📋 All Columns — {_cnw_n} row(s) for "{_cnw_disp_name}"</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.dataframe(_cnw_disp, use_container_width=True)
+
+                    st.download_button(
+                        f"⬇️ Download All Columns CSV — {_cnw_disp_name[:30]}",
+                        _cnw_disp.to_csv(index=False).encode("utf-8"),
+                        f"customer_allcols_{_cnw_disp_name.replace(' ', '_')[:30]}.csv",
+                        "text/csv",
+                        key="cnw_dl_all",
+                    )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # FETCH ANY CELL VALUE
+    # Pick file (location), sheet, row number, and column to read a specific
+    # cell value from across all attached odd 10 Excel files and all sheets.
+    # (Additive — does NOT touch any existing code or Customer Lookup section)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    st.markdown(f"<hr style='border-color:{BORD};margin:32px 0 20px'>",
+                unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-title">📌 Fetch Any Cell Value — Across All Files & Sheets</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div style="font-size:.85rem;color:{MUTED};margin-bottom:16px">'
+        f'Select a DC file (location), sheet, row number, and column to retrieve the exact '
+        f'cell value from any of the attached odd 10 Excel files and all their sheets.</div>',
+        unsafe_allow_html=True,
+    )
+
+    _fcv_all_locs = sorted(ALL.keys())
+    _fcv_c1, _fcv_c2 = st.columns([2, 2])
+    with _fcv_c1:
+        _fcv_sel_loc = st.selectbox(
+            "🏢 Select DC File (Location)",
+            options=_fcv_all_locs,
+            key="fcv_sel_loc",
+        )
+    with _fcv_c2:
+        _fcv_sheets_for_loc = sorted(ALL.get(_fcv_sel_loc, {}).keys())
+        _fcv_sel_sheet = st.selectbox(
+            "📄 Select Sheet",
+            options=_fcv_sheets_for_loc,
+            key="fcv_sel_sheet",
+        )
+
+    _fcv_df_preview = None
+    if _fcv_sel_loc and _fcv_sel_sheet:
+        _fcv_df_preview = ALL.get(_fcv_sel_loc, {}).get(_fcv_sel_sheet)
+
+    if _fcv_df_preview is not None and not _fcv_df_preview.empty:
+        _fcv_total_rows = len(_fcv_df_preview)
+        _fcv_all_cols   = [c for c in _fcv_df_preview.columns if not c.startswith("_")]
+
+        _fcv_c3, _fcv_c4, _fcv_c5 = st.columns([1, 3, 1])
+        with _fcv_c3:
+            _fcv_row_num = st.number_input(
+                f"🔢 Row Number (1–{_fcv_total_rows})",
+                min_value=1,
+                max_value=_fcv_total_rows,
+                value=1,
+                step=1,
+                key="fcv_row_num",
+            )
+        with _fcv_c4:
+            _fcv_sel_col = st.selectbox(
+                "📐 Select Column",
+                options=_fcv_all_cols,
+                key="fcv_sel_col",
+            )
+        with _fcv_c5:
+            st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
+            _fcv_fetch = st.button("📌 Fetch Cell", key="fcv_fetch", use_container_width=True)
+
+        if _fcv_fetch:
+            _fcv_row_idx  = int(_fcv_row_num) - 1
+            _fcv_cell_val = _fcv_df_preview.iloc[_fcv_row_idx][_fcv_sel_col]
+            _fcv_val_str  = str(_fcv_cell_val) if _fcv_cell_val is not None else "—"
+
+            st.markdown(
+                f'<div style="background:{DARK2};border:2px solid {CYAN};'
+                f'border-radius:14px;padding:22px 28px;margin:14px 0">'
+                f'<div style="font-size:.75rem;color:{MUTED};font-weight:700;'
+                f'text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">'
+                f'Cell Value</div>'
+                f'<div style="font-size:2.2rem;font-weight:900;color:{CYAN};'
+                f'word-break:break-all;line-height:1.2">{_fcv_val_str}</div>'
+                f'<div style="font-size:.78rem;color:{MUTED};margin-top:12px;'
+                f'border-top:1px solid {BORD};padding-top:10px">'
+                f'📁 File: <b style="color:{TEXT}">{_fcv_sel_loc}</b> &nbsp;·&nbsp; '
+                f'📄 Sheet: <b style="color:{TEXT}">{_fcv_sel_sheet}</b> &nbsp;·&nbsp; '
+                f'🔢 Row: <b style="color:{TEXT}">{int(_fcv_row_num)}</b> &nbsp;·&nbsp; '
+                f'📐 Column: <b style="color:{TEXT}">{_fcv_sel_col}</b>'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
+
+            with st.expander("🔎 Full row context", expanded=False):
+                _fcv_row_df = _fcv_df_preview.iloc[[_fcv_row_idx]][_fcv_all_cols].copy()
+                _fcv_row_df = _fcv_row_df.T.reset_index()
+                _fcv_row_df.columns = ["Column", "Value"]
+                _fcv_row_df.index = range(1, len(_fcv_row_df) + 1)
+                st.dataframe(_fcv_row_df, use_container_width=True)
+    else:
+        st.info("Select a DC file and sheet to enable cell fetching.")
     # ══════════════════════════════════════════════════════════════════════════
     # SHAMBHUSHIV — ENHANCED CUSTOMER LOOKUP
     # • Searches ALL 10 DC Excel files and ALL sheets regardless of the
