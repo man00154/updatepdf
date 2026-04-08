@@ -1416,7 +1416,7 @@ Return a JSON array. Each element is one operation:
     "rhs":        true | false | null,
     "shs":        true | false | null
   },
-  "location": ["airoli","noida","rabale","banglore,"vashi","chennai"] | null,
+  "location": ["any"] | null,
   "operation": "sum"|"avg"|"mean"|"min"|"max"|"count"|"std"|"median"|"variance"|"range"|"count_nonzero"|"top"|"bottom" | null,
   "field_hint": "<exact phrase from the list below>" | null,
   "top_n": integer | null,
