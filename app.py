@@ -2084,12 +2084,12 @@ with T[0]:
 
         if cap_c:
             tot_cap = _n(cap_c)
-            k[3].markdown(kpi_html(fmt(tot_cap), "Total Capacity Purchased",
+            k[3].markdown(kpi_html(fmt(tot_cap), cap_c,
                                    "Power Capacity section", GREEN), unsafe_allow_html=True)
 
         if use_c:
             tot_use = _n(use_c)
-            k[4].markdown(kpi_html(fmt(tot_use), "Capacity In Use",
+            k[4].markdown(kpi_html(fmt(tot_use), use_c,
                                    "Power Capacity section", AMBER), unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -2101,7 +2101,7 @@ with T[0]:
             cage_vals = CUST[caged_c].astype(str).str.upper().str.strip()
             n_caged   = (cage_vals == "CAGED").sum()
             n_uncaged = (cage_vals == "UNCAGED").sum()
-            bm_cols[0].markdown(kpi_html(f"{n_caged}", "Caged",
+            bm_cols[0].markdown(kpi_html(f"{n_caged}", caged_c,
                                          f"Uncaged: {n_uncaged}", CYAN), unsafe_allow_html=True)
 
         if own_c:
@@ -2109,21 +2109,21 @@ with T[0]:
             shs_c = _cnt_val(own_c, "SHS")
             if rhs_c is not None or shs_c is not None:
                 bm_cols[1].markdown(
-                    kpi_html(f"{rhs_c or 0}", "RHS",
+                    kpi_html(f"{rhs_c or 0}", own_c,
                              f"SHS: {shs_c or 0}", LBLUE), unsafe_allow_html=True)
 
         if pw_sub_c:
             rated = _cnt_val(pw_sub_c, "RATED")
             subsc = _cnt_val(pw_sub_c, "SUBSCRIBED")
             bm_cols[2].markdown(
-                kpi_html(f"{rated or 0}", "Power Sub: Rated",
+                kpi_html(f"{rated or 0}", pw_sub_c,
                          f"Subscribed: {subsc or 0}", AMBER), unsafe_allow_html=True)
 
         if pw_use_m_c:
             bundled = _cnt_val(pw_use_m_c, "BUNDLED")
             metered = _cnt_val(pw_use_m_c, "METERED")
             bm_cols[3].markdown(
-                kpi_html(f"{bundled or 0}", "Power Usage: Bundled",
+                kpi_html(f"{bundled or 0}", pw_use_m_c,
                          f"Metered: {metered or 0}", GREEN), unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -2136,37 +2136,37 @@ with T[0]:
             u_m    = _cnt_val(sub_mode_c, "U SPACE")
             sqft_m = _cnt_val(sub_mode_c, "SQFT SPACE")
             sp_cols[0].markdown(
-                kpi_html(f"{rack_m or 0}", "Subscription Mode: Rack",
+                kpi_html(f"{rack_m or 0}", sub_mode_c,
                          f"U Space: {u_m or 0} | SqFt: {sqft_m or 0}", CYAN),
                 unsafe_allow_html=True)
 
         if space_sub_c:
             v = _n(space_sub_c)
             if v is not None:
-                sp_cols[1].markdown(kpi_html(fmt(v), "Space Subscription",
+                sp_cols[1].markdown(kpi_html(fmt(v), space_sub_c,
                                              space_sub_c[:25], GREEN), unsafe_allow_html=True)
 
         if space_inuse_c:
             v = _n(space_inuse_c)
             if v is not None:
-                sp_cols[2].markdown(kpi_html(fmt(v), "Space In Use",
+                sp_cols[2].markdown(kpi_html(fmt(v), space_inuse_c,
                                              space_inuse_c[:25], AMBER), unsafe_allow_html=True)
 
         if space_ytbg_c:
             v = _n(space_ytbg_c)
             if v is not None:
-                sp_cols[3].markdown(kpi_html(fmt(v), "Yet To Be Given / Billed",
+                sp_cols[3].markdown(kpi_html(fmt(v), space_ytbg_c,
                                              space_ytbg_c[:25], RED), unsafe_allow_html=True)
 
         if space_rate_c:
             v = _avg(space_rate_c)
             if v is not None:
-                sp_cols[4].markdown(kpi_html(fmt(v), "Avg Per Unit Rate (MRC)",
+                sp_cols[4].markdown(kpi_html(fmt(v), space_rate_c,
                                              space_rate_c[:25], LBLUE), unsafe_allow_html=True)
         elif rack_c:
             v = _n(rack_c)
             if v is not None:
-                sp_cols[4].markdown(kpi_html(fmt(v), "Total Racks / Space",
+                sp_cols[4].markdown(kpi_html(fmt(v), rack_c,
                                              rack_c[:25], LBLUE), unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -2175,25 +2175,25 @@ with T[0]:
         pc_cols = st.columns(5)
 
         if cap_c:
-            pc_cols[0].markdown(kpi_html(fmt(_n(cap_c)), "Total Capacity Purchased",
+            pc_cols[0].markdown(kpi_html(fmt(_n(cap_c)), cap_c,
                                          cap_c[:25], GREEN), unsafe_allow_html=True)
         if use_c:
-            pc_cols[1].markdown(kpi_html(fmt(_n(use_c)), "Capacity In Use",
+            pc_cols[1].markdown(kpi_html(fmt(_n(use_c)), use_c,
                                          use_c[:25], AMBER), unsafe_allow_html=True)
         if cap_ytbg_c:
             v = _n(cap_ytbg_c)
             if v is not None:
-                pc_cols[2].markdown(kpi_html(fmt(v), "Capacity To Be Given",
+                pc_cols[2].markdown(kpi_html(fmt(v), cap_ytbg_c,
                                              cap_ytbg_c[:25], RED), unsafe_allow_html=True)
         if sub_kw_c:
             v = _n(sub_kw_c)
             if v is not None:
-                pc_cols[3].markdown(kpi_html(fmt(v), "Subscribed Cap. To Give (KW)",
+                pc_cols[3].markdown(kpi_html(fmt(v), sub_kw_c,
                                              sub_kw_c[:25], LBLUE), unsafe_allow_html=True)
         if alloc_kw_c:
             v = _n(alloc_kw_c)
             if v is not None:
-                pc_cols[4].markdown(kpi_html(fmt(v), "Allocated Capacity KW",
+                pc_cols[4].markdown(kpi_html(fmt(v), alloc_kw_c,
                                              alloc_kw_c[:25], CYAN), unsafe_allow_html=True)
         elif cap_c and use_c:
             t_cap = _n(cap_c) or 0
@@ -2210,15 +2210,15 @@ with T[0]:
             st.markdown('<div class="section-title">Power Usage</div>', unsafe_allow_html=True)
             pu_cols = st.columns(4)
             i = 0
-            for col, label, color in [
-                (pu_sub_c,   "KW-HR/Month Subscription", GREEN),
-                (pu_inuse_c, "Power Usage In Use",        AMBER),
-                (pu_ytbg_c,  "Power Usage Yet To Give",   RED),
+            for col, color in [
+                (pu_sub_c,   GREEN),
+                (pu_inuse_c, AMBER),
+                (pu_ytbg_c,  RED),
             ]:
                 if col:
                     v = _n(col)
                     if v is not None:
-                        pu_cols[i].markdown(kpi_html(fmt(v), label, col[:25], color),
+                        pu_cols[i].markdown(kpi_html(fmt(v), col, col[:25], color),
                                             unsafe_allow_html=True)
                         i += 1
             st.markdown("<br>", unsafe_allow_html=True)
@@ -2230,12 +2230,12 @@ with T[0]:
             if seat_sub_c:
                 v = _n(seat_sub_c)
                 if v is not None:
-                    ss_cols[0].markdown(kpi_html(fmt(v), "Sitting Space Subscription",
+                    ss_cols[0].markdown(kpi_html(fmt(v), seat_sub_c,
                                                  seat_sub_c[:25], CYAN), unsafe_allow_html=True)
             if seat_inuse_c:
                 v = _n(seat_inuse_c)
                 if v is not None:
-                    ss_cols[1].markdown(kpi_html(fmt(v), "Sitting Space In Use",
+                    ss_cols[1].markdown(kpi_html(fmt(v), seat_inuse_c,
                                                  seat_inuse_c[:25], AMBER), unsafe_allow_html=True)
             st.markdown("<br>", unsafe_allow_html=True)
 
@@ -2243,33 +2243,33 @@ with T[0]:
         st.markdown('<div class="section-title">Revenue (Monthly)</div>', unsafe_allow_html=True)
         rv_cols = st.columns(5)
         rv_items = [
-            (rev_space_c,  "Space Revenue (incl. Capacity)", CYAN),
-            (rev_addcap_c, "Additional Capacity Revenue",    LBLUE),
-            (rev_pwuse_c,  "Power Usage Revenue",            GREEN),
-            (rev_seat_c,   "Seating Space Revenue",          AMBER),
-            (rev_other_c,  "Any Other Items",                MUTED),
+            (rev_space_c,  CYAN),
+            (rev_addcap_c, LBLUE),
+            (rev_pwuse_c,  GREEN),
+            (rev_seat_c,   AMBER),
+            (rev_other_c,  MUTED),
         ]
         filled = 0
-        for col, label, color in rv_items:
+        for col, color in rv_items:
             if col and filled < 5:
                 v = _n(col)
                 if v is not None:
-                    rv_cols[filled].markdown(kpi_html(fmt(v), label, col[:25], color),
+                    rv_cols[filled].markdown(kpi_html(fmt(v), col, col[:25], color),
                                              unsafe_allow_html=True)
                     filled += 1
 
         st.markdown("<br>", unsafe_allow_html=True)
         rv2_cols = st.columns(4)
         rv2_items = [
-            (rev_total_c,  "Total Revenue",     GREEN),
-            (rev_mrc_c,    "Total MRC",         LBLUE),
+            (rev_total_c,  GREEN),
+            (rev_mrc_c,    LBLUE),
         ]
         filled2 = 0
-        for col, label, color in rv2_items:
+        for col, color in rv2_items:
             if col and filled2 < 4:
                 v = _n(col)
                 if v is not None:
-                    rv2_cols[filled2].markdown(kpi_html(fmt(v), label, col[:25], color),
+                    rv2_cols[filled2].markdown(kpi_html(fmt(v), col, col[:25], color),
                                                unsafe_allow_html=True)
                     filled2 += 1
 
@@ -2277,7 +2277,7 @@ with T[0]:
             freq_counts = CUST[rev_freq_c].dropna().value_counts()
             top_freq = freq_counts.index[0] if not freq_counts.empty else "—"
             rv2_cols[min(filled2, 3)].markdown(
-                kpi_html(str(top_freq), "Top Billing Frequency",
+                kpi_html(str(top_freq), rev_freq_c,
                          f"{len(freq_counts)} types", AMBER), unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -2289,28 +2289,28 @@ with T[0]:
         if con_start_c:
             non_null = CUST[con_start_c].dropna()
             ci_cols[ci_i].markdown(
-                kpi_html(f"{len(non_null):,}", "Contracts With Start Date",
+                kpi_html(f"{len(non_null):,}", con_start_c,
                          con_start_c[:25], CYAN), unsafe_allow_html=True)
             ci_i += 1
 
         if con_term_c:
             v = _avg(con_term_c)
             if v is not None:
-                ci_cols[ci_i].markdown(kpi_html(f"{v:.1f} yr", "Avg Contract Term",
+                ci_cols[ci_i].markdown(kpi_html(f"{v:.1f} yr", con_term_c,
                                                 con_term_c[:25], GREEN), unsafe_allow_html=True)
                 ci_i += 1
 
         if con_expiry_c:
             non_null = CUST[con_expiry_c].dropna()
             ci_cols[ci_i].markdown(
-                kpi_html(f"{len(non_null):,}", "Contracts With Expiry Date",
+                kpi_html(f"{len(non_null):,}", con_expiry_c,
                          con_expiry_c[:25], AMBER), unsafe_allow_html=True)
             ci_i += 1
 
         if rev_so_c:
             so_count = CUST[rev_so_c].dropna().nunique()
             ci_cols[min(ci_i, 3)].markdown(
-                kpi_html(f"{so_count:,}", "Unique Sales Orders",
+                kpi_html(f"{so_count:,}", rev_so_c,
                          rev_so_c[:25], LBLUE), unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
