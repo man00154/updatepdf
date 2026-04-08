@@ -4731,6 +4731,154 @@ with T[4]:
 
 
     # ══════════════════════════════════════════════════════════════════════════
+    # METRIC BASED LOOKUP — Direct numeric aggregation across all files/sheets
+    # ══════════════════════════════════════════════════════════════════════════
+
+    st.markdown(f"<hr style='border-color:{BORD};margin:32px 0 20px'>",
+                unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-title">📊 Metric Based Lookup — Direct Numeric Aggregation Across All Files & Sheets</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div style="font-size:.85rem;color:{MUTED};margin-bottom:16px">'
+        f'Select a metric and a numeric column to instantly compute aggregations across '
+        f'<b>all 10 DC Excel files and all sheets</b> — no AI prompt required. '
+        f'Optionally filter by location and sheet, and get a per-location breakdown.</div>',
+        unsafe_allow_html=True,
+    )
+
+    _mbl_pool_df = CUST.copy() if not CUST.empty else pd.DataFrame()
+    _mbl_num_cols = []
+    if not _mbl_pool_df.empty:
+        for _mbl_c in _mbl_pool_df.columns:
+            if _mbl_c.startswith("_"):
+                continue
+            try:
+                _mbl_conv = pd.to_numeric(_mbl_pool_df[_mbl_c], errors="coerce")
+                if _mbl_conv.notna().sum() / max(len(_mbl_pool_df), 1) > 0.15:
+                    _mbl_num_cols.append(_mbl_c)
+            except Exception:
+                pass
+
+    _mbl_col1, _mbl_col2, _mbl_col3 = st.columns([2, 4, 2])
+    with _mbl_col1:
+        _mbl_metric = st.selectbox(
+            "📐 Metric",
+            ["Sum", "Average", "Min", "Max", "Count", "Median", "Std Dev", "Count Non-Zero"],
+            key="mbl_metric",
+        )
+    with _mbl_col2:
+        _mbl_field = st.selectbox(
+            "📊 Column / Field",
+            ["— select a column —"] + sorted(_mbl_num_cols),
+            key="mbl_field",
+        )
+    with _mbl_col3:
+        _mbl_loc_sel = st.selectbox(
+            "📍 Location Filter",
+            ["All Locations"] + sorted(fdata.keys()),
+            key="mbl_loc_sel",
+        )
+
+    _mbl_sh_opts = ["All Sheets"]
+    if _mbl_loc_sel != "All Locations":
+        _mbl_sh_opts += sorted(fdata.get(_mbl_loc_sel, {}).keys())
+    _mbl_sheet_sel = st.selectbox("📄 Sheet Filter", _mbl_sh_opts, key="mbl_sheet_sel")
+
+    _mbl_btn_c1, _mbl_btn_c2 = st.columns([5, 1])
+    with _mbl_btn_c2:
+        _mbl_run = st.button("▶ Compute Metric", key="mbl_run", use_container_width=True)
+
+    if _mbl_run:
+        if _mbl_field == "— select a column —":
+            st.warning("Please select a column / field to compute the metric on.")
+        else:
+            _mbl_df = CUST.copy() if not CUST.empty else pd.DataFrame()
+            if _mbl_loc_sel != "All Locations" and "_Location" in _mbl_df.columns:
+                _mbl_df = _mbl_df[_mbl_df["_Location"] == _mbl_loc_sel]
+            if _mbl_sheet_sel != "All Sheets" and "_Sheet" in _mbl_df.columns:
+                _mbl_df = _mbl_df[_mbl_df["_Sheet"] == _mbl_sheet_sel]
+
+            if _mbl_field not in _mbl_df.columns:
+                st.error(f"Column '{_mbl_field}' not found in the selected scope.")
+            else:
+                _mbl_series = pd.to_numeric(_mbl_df[_mbl_field], errors="coerce").dropna()
+                if _mbl_series.empty:
+                    st.warning(
+                        f"No numeric values found in column '{_mbl_field}' "
+                        f"for the selected scope."
+                    )
+                else:
+                    _mbl_op_map = {
+                        "Sum":            lambda s: s.sum(),
+                        "Average":        lambda s: s.mean(),
+                        "Min":            lambda s: s.min(),
+                        "Max":            lambda s: s.max(),
+                        "Count":          lambda s: float(len(s)),
+                        "Median":         lambda s: s.median(),
+                        "Std Dev":        lambda s: s.std(ddof=1),
+                        "Count Non-Zero": lambda s: float((s != 0).sum()),
+                    }
+                    _mbl_result = _mbl_op_map[_mbl_metric](_mbl_series)
+                    _mbl_scope = (
+                        f"{_mbl_loc_sel}" if _mbl_loc_sel != "All Locations"
+                        else "All Locations"
+                    )
+                    if _mbl_sheet_sel != "All Sheets":
+                        _mbl_scope += f" / {_mbl_sheet_sel}"
+                    _mbl_fmt = (
+                        f"{_mbl_result:,.2f}"
+                        if isinstance(_mbl_result, float) else str(_mbl_result)
+                    )
+                    st.markdown(f"""
+        <div class="result-box">
+          <div style="font-size:.82rem;color:{MUTED};margin-bottom:6px">
+            <b>{_mbl_metric}</b> of
+            <b style="color:{CYAN}">{_mbl_field}</b>
+            &nbsp;·&nbsp; {_mbl_scope}
+          </div>
+          <div class="result-big">{_mbl_fmt}</div>
+          <div style="font-size:.78rem;color:{MUTED};margin-top:8px">
+            Based on <b style="color:{CYAN}">{len(_mbl_series):,}</b> numeric records
+          </div>
+        </div>""", unsafe_allow_html=True)
+
+                    if _mbl_loc_sel == "All Locations" and "_Location" in CUST.columns:
+                        _mbl_grp_rows = []
+                        for _mbl_gloc, _mbl_gdf in CUST.groupby("_Location"):
+                            _mbl_gs = pd.to_numeric(
+                                _mbl_gdf.get(_mbl_field, pd.Series()),
+                                errors="coerce"
+                            ).dropna()
+                            if not _mbl_gs.empty:
+                                _mbl_grp_rows.append({
+                                    "Location":     _mbl_gloc,
+                                    _mbl_metric:    _mbl_op_map[_mbl_metric](_mbl_gs),
+                                    "Records Used": len(_mbl_gs),
+                                })
+                        if _mbl_grp_rows:
+                            _mbl_grp_df = (
+                                pd.DataFrame(_mbl_grp_rows)
+                                .sort_values(_mbl_metric, ascending=False)
+                                .reset_index(drop=True)
+                            )
+                            st.markdown(
+                                f'<div style="font-size:.85rem;color:{MUTED};'
+                                f'margin:14px 0 6px"><b>Per-Location Breakdown:</b></div>',
+                                unsafe_allow_html=True,
+                            )
+                            st.dataframe(_mbl_grp_df, use_container_width=True)
+                            st.download_button(
+                                "⬇ Download Breakdown CSV",
+                                _mbl_grp_df.to_csv(index=False).encode("utf-8"),
+                                f"metric_{_mbl_metric.lower()}_{_mbl_field[:20].replace(' ', '_')}.csv",
+                                "text/csv",
+                                key="mbl_dl",
+                            )
+
+
+    # ══════════════════════════════════════════════════════════════════════════
     # FETCH ANY CELL VALUE — by VALUE (not by position)
     # Search for a specific value across ALL 10 DC Excel files and ALL sheets.
     # Returns every cell (file, sheet, row, column) that contains the value.
