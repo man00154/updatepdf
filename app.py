@@ -1516,6 +1516,7 @@ Execute each independently on the filtered dataset.
 - The output table MUST contain ONLY rows belonging to that customer. Rows of any other customer MUST be excluded entirely.
 - The trailing footer line (e.g. "📋 Wipro Customer Details — 159 row(s)") MUST NOT be displayed in the output. The result ends after the last matching data row.
 - If the customer name is not found in any sheet/file, return an empty result with a clear "No matching customer found" message — do NOT fall back to showing all customers.
+- After returning the matched customer's rows, do NOT append, attach, or display any additional rows from any other location or sheet (including Airoli or any default dataset). The result set ends strictly at the last row belonging to the queried customer. Any rows from other locations (e.g. all 159 Airoli rows) appearing after the customer result are a CRITICAL BUG and must be suppressed entirely.
 
 ## LOCATION STRICT FILTER RULES
 - When the query specifies a location, the "location" field in the JSON MUST be set to only that location's alias list (e.g. ["noida"]).
