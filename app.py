@@ -336,10 +336,10 @@ def load_all() -> dict:
     for label, (_, fpath, kind) in sorted(label_map.items()):
         if kind == "xlsx":
             try:
-                wb = openpyxl.load_workbook(str(fpath), data_only=True, read_only=False)
+                wb = openpyxl.load_workbook(str(fpath), data_only=True, read_only=False, keep_links=False)
             except Exception:
                 try:
-                    wb = openpyxl.load_workbook(str(fpath), data_only=False)
+                    wb = openpyxl.load_workbook(str(fpath), data_only=False, keep_links=False)
                 except Exception:
                     continue
             sheets: dict = {}
