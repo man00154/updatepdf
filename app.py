@@ -1847,9 +1847,10 @@ Query: "how many customers per location"
 
 Query: "top 5 customers by revenue"
 → [{"id":"op1","type":"aggregate","label":"Top 5 Customers by Revenue","filter":null,"location":null,"files":null,"sheets":null,"operation":"top","field_hint":"total revenue","canonical_columns":["Revenue | Monthly"],"top_n":5,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
-"""
+
 Query: "find Rated/Subscribed/Metered customers in Bangalore"
 → [{"id":"op1","type":"cell_lookup","label":"Rated/Subscribed/Metered customers — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":null,"operation":null,"field_hint":null,"canonical_columns":["Space | Rated/Subscribed/Metered"],"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":"rated/subscribed/metered","return_columns":null,"match_mode":"is_not_null"}]
+"""
 
 def _robust_to_numeric(series: pd.Series) -> pd.Series:
     """
