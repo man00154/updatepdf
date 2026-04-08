@@ -3820,6 +3820,216 @@ with T[4]:
                         key="cl_download",
                     )
 
+                # ── PER-FILE / PER-SHEET BREAKDOWN (additive) ─────────────
+                # Groups matching rows by each DC location + sheet and shows
+                # a separate card for every file/sheet where the customer exists.
+                st.markdown(
+                    f"<hr style='border-color:{BORD};margin:28px 0 18px'>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    '<div class="section-title">'
+                    '📂 Results by DC Location & Sheet'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
+
+                # Build the (location, sheet) groups from the matched rows
+                _cl_loc_col   = "_Location" if "_Location" in _cl_rows.columns else None
+                _cl_sheet_col = "_Sheet"    if "_Sheet"    in _cl_rows.columns else None
+                _cl_cust_col  = find_col(_cl_rows,
+                    r"DEMARC.*Customer Name", r"customer.*name", r"client.*name")
+
+                if _cl_loc_col and _cl_sheet_col:
+                    _cl_groups = (
+                        _cl_rows.groupby([_cl_loc_col, _cl_sheet_col], sort=False)
+                    )
+                elif _cl_loc_col:
+                    _cl_groups = _cl_rows.groupby([_cl_loc_col], sort=False)
+                else:
+                    _cl_groups = None
+
+                # Summary badge bar: "Found in: Airoli (Customer Details1), Noida 01 (Noida-01) …"
+                if _cl_groups is not None:
+                    _cl_found_labels = []
+                    for _cl_gkey, _ in _cl_groups:
+                        if isinstance(_cl_gkey, tuple):
+                            _cl_found_labels.append(
+                                f"{_cl_gkey[0]} <span style='color:{MUTED}'>"
+                                f"({_cl_gkey[1]})</span>"
+                            )
+                        else:
+                            _cl_found_labels.append(str(_cl_gkey))
+
+                    _cl_n_locs   = len({
+                        k[0] if isinstance(k, tuple) else k
+                        for k, _ in _cl_groups
+                    })
+                    _cl_n_sheets = len(list(_cl_groups))
+                    st.markdown(
+                        f'<div style="font-size:.82rem;color:{TEXT};margin-bottom:14px">'
+                        f'<b style="color:{CYAN}">Found in {_cl_n_locs} location(s)'
+                        f', {_cl_n_sheets} sheet(s):</b> &nbsp;'
+                        + " &nbsp;·&nbsp; ".join(
+                            f'<span class="badge">{lbl}</span>'
+                            for lbl in _cl_found_labels
+                        )
+                        + "</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                    # One card per (location, sheet)
+                    for _cl_gi, (_cl_gkey, _cl_gdf) in enumerate(_cl_groups):
+                        if isinstance(_cl_gkey, tuple):
+                            _cl_loc_name   = _cl_gkey[0]
+                            _cl_sheet_name = _cl_gkey[1]
+                        else:
+                            _cl_loc_name   = str(_cl_gkey)
+                            _cl_sheet_name = ""
+
+                        _cl_gdf = _cl_gdf.reset_index(drop=True)
+                        _cl_g_n = len(_cl_gdf)
+
+                        # Customer names in this group
+                        if _cl_cust_col and _cl_cust_col in _cl_gdf.columns:
+                            _cl_g_names = (
+                                _cl_gdf[_cl_cust_col]
+                                .dropna().astype(str).str.strip().unique().tolist()
+                            )
+                            _cl_g_names = [
+                                n for n in _cl_g_names
+                                if n and n.lower() not in ("none","nan","")
+                            ]
+                            _cl_g_name_str = _cl_g_names[0] if _cl_g_names else cust_disp
+                        else:
+                            _cl_g_name_str = cust_disp
+
+                        # Location card header
+                        st.markdown(
+                            f'<div style="background:{DARK2};border-left:4px solid {BLUE};'
+                            f'border-radius:0 10px 10px 0;padding:14px 18px;'
+                            f'margin:16px 0 8px">'
+                            f'<div style="font-size:.95rem;font-weight:800;color:{WHITE}">'
+                            f'🏢 {_cl_loc_name}'
+                            + (f' &nbsp;<span style="font-size:.78rem;color:{CYAN};'
+                               f'font-weight:600">— {_cl_sheet_name}</span>'
+                               if _cl_sheet_name else "")
+                            + f'</div>'
+                            f'<div style="font-size:.76rem;color:{MUTED};margin-top:2px">'
+                            f'{_cl_g_n} row(s) &nbsp;·&nbsp; '
+                            f'<span style="color:{GREEN}">{_cl_g_name_str}</span>'
+                            f'</div></div>',
+                            unsafe_allow_html=True,
+                        )
+
+                        # Per-group metrics (key numeric columns)
+                        _cl_g_metric_rows = []
+                        for _cl_mpat, _cl_mlabel in _SQ_CUST_DATA_PATS:
+                            _cl_mc = find_col(_cl_gdf, _cl_mpat)
+                            if not _cl_mc or _cl_mc.startswith("_"):
+                                continue
+                            _cl_ms = _robust_to_numeric(_cl_gdf[_cl_mc]).dropna()
+                            if _cl_ms.empty:
+                                continue
+                            _cl_mv   = float(_cl_ms.sum())
+                            _cl_munit = _detect_unit(_cl_mc)
+                            _cl_mdisp = (
+                                f"₹ {_cl_mv:,.2f}" if _cl_munit == "₹"
+                                else f"{_fmt_decimal(_cl_mv)} {_cl_munit}".strip()
+                            )
+                            _cl_g_metric_rows.append({
+                                "Metric": _cl_mlabel,
+                                "Value":  _cl_mdisp,
+                            })
+
+                        # Per-group profile (text metadata)
+                        _cl_g_profile_rows = []
+                        for _cl_ppat, _cl_plabel in _SQ_CUST_PROFILE_PATS:
+                            _cl_pc = find_col(_cl_gdf, _cl_ppat)
+                            if not _cl_pc or _cl_pc in ("_Location","_Sheet"):
+                                continue
+                            _cl_pvals = (
+                                _cl_gdf[_cl_pc]
+                                .dropna().astype(str).str.strip().unique().tolist()
+                            )
+                            _cl_pvals = [
+                                v for v in _cl_pvals
+                                if v and v.lower() not in ("none","nan","")
+                            ]
+                            if _cl_pvals:
+                                _cl_g_profile_rows.append({
+                                    "Field": _cl_plabel,
+                                    "Value": ", ".join(_cl_pvals[:4]),
+                                })
+
+                        # Two-column layout for this location
+                        _cl_ga, _cl_gb = st.columns([1, 2])
+                        with _cl_ga:
+                            if _cl_g_profile_rows:
+                                st.markdown(
+                                    f'<div style="font-size:.72rem;color:{CYAN};'
+                                    f'font-weight:700;text-transform:uppercase;'
+                                    f'letter-spacing:.05em;margin-bottom:4px">'
+                                    f'📋 Profile</div>',
+                                    unsafe_allow_html=True,
+                                )
+                                _cl_gpf = pd.DataFrame(_cl_g_profile_rows)
+                                _cl_gpf.index = [""] * len(_cl_gpf)
+                                st.dataframe(
+                                    _cl_gpf, use_container_width=True,
+                                    hide_index=True
+                                )
+
+                        with _cl_gb:
+                            if _cl_g_metric_rows:
+                                st.markdown(
+                                    f'<div style="font-size:.72rem;color:{CYAN};'
+                                    f'font-weight:700;text-transform:uppercase;'
+                                    f'letter-spacing:.05em;margin-bottom:4px">'
+                                    f'📊 Metrics</div>',
+                                    unsafe_allow_html=True,
+                                )
+                                _cl_gmf = pd.DataFrame(_cl_g_metric_rows)
+                                _cl_gmf.index = [""] * len(_cl_gmf)
+                                st.dataframe(
+                                    _cl_gmf, use_container_width=True,
+                                    hide_index=True
+                                )
+                            else:
+                                st.caption("No numeric data in this sheet for this customer.")
+
+                        # Row detail expander for this location/sheet
+                        _cl_exp_title = (
+                            f"All columns — {_cl_loc_name}"
+                            + (f" / {_cl_sheet_name}" if _cl_sheet_name else "")
+                            + f" ({_cl_g_n} row(s))"
+                        )
+                        with st.expander(_cl_exp_title, expanded=False):
+                            _cl_g_meta  = [c for c in ["_Location","_Sheet"]
+                                           if c in _cl_gdf.columns]
+                            _cl_g_data  = [c for c in _cl_gdf.columns
+                                           if not c.startswith("_")]
+                            _cl_g_show  = _cl_gdf[_cl_g_meta + _cl_g_data].copy()
+                            _cl_g_show.index = range(1, len(_cl_g_show) + 1)
+                            st.dataframe(_cl_g_show, use_container_width=True)
+                            _cl_g_csv_name = (
+                                f"customer_{cust_disp.replace(' ','_')[:25]}"
+                                f"_{_cl_loc_name.replace(' ','_')[:20]}.csv"
+                            )
+                            st.download_button(
+                                "⬇ Download this sheet's CSV",
+                                _cl_g_show.to_csv(index=False).encode(),
+                                _cl_g_csv_name,
+                                "text/csv",
+                                key=f"cl_dl_{_cl_gi}",
+                            )
+                else:
+                    # Fallback: no location/sheet tags — show flat table
+                    _cl_flat = _cl_rows.copy()
+                    _cl_flat.index = range(1, len(_cl_flat) + 1)
+                    st.dataframe(_cl_flat, use_container_width=True)
+                # ── END PER-FILE / PER-SHEET BREAKDOWN ───────────────────
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 5 – CROSS-LOCATION
