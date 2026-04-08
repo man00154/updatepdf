@@ -2374,75 +2374,75 @@ def execute_ai_operations(operations: list, df: pd.DataFrame) -> list:
             continue
 
         # ── CANONICAL COLUMN RESOLUTION ────────────────────────────────────────
-          def _resolve_canonical_column(df_: pd.DataFrame, canonical: str) -> "str | None":
-              """
-              Resolve a canonical two-level name 'Parent | Sub' to an actual DataFrame
-              column. Resolution order:
-                1. Exact match (column already named canonically)
-                2. _CANONICAL_REGISTRY regex patterns (precise per-archetype mapping)
-                3. Fuzzy parent+sub token matching (robust fallback)
-              Never fabricates — returns None if nothing matches.
-              """
-              # 1. Exact column name match
-              if canonical in df_.columns:
-                  return canonical
+        def _resolve_canonical_column(df_: pd.DataFrame, canonical: str) -> "str | None":
+            """
+            Resolve a canonical two-level name 'Parent | Sub' to an actual DataFrame
+            column. Resolution order:
+              1. Exact match (column already named canonically)
+              2. _CANONICAL_REGISTRY regex patterns (precise per-archetype mapping)
+              3. Fuzzy parent+sub token matching (robust fallback)
+            Never fabricates — returns None if nothing matches.
+            """
+            # 1. Exact column name match
+            if canonical in df_.columns:
+                return canonical
 
-              # 2. Registry-driven regex matching (ordered by specificity)
-              patterns = _CANONICAL_REGISTRY.get(canonical, [])
-              for pat in patterns:
-                  for c in df_.columns:
-                      try:
-                          if re.search(pat, c, re.I):
-                              return c
-                      except re.error:
-                          pass
+            # 2. Registry-driven regex matching (ordered by specificity)
+            patterns = _CANONICAL_REGISTRY.get(canonical, [])
+            for pat in patterns:
+                for c in df_.columns:
+                    try:
+                        if re.search(pat, c, re.I):
+                            return c
+                    except re.error:
+                        pass
 
-              # 3. Fuzzy fallback using parent / sub token overlap
-              if " | " in canonical:
-                  parent_raw, sub_raw = canonical.split(" | ", 1)
-                  parent = parent_raw.strip().lower()
-                  sub    = sub_raw.strip().lower()
-                  is_unnamed_sub = (sub.startswith("unnamed") or
-                                    sub.startswith("x_level") or
-                                    "level_1" in sub)
+            # 3. Fuzzy fallback using parent / sub token overlap
+            if " | " in canonical:
+                parent_raw, sub_raw = canonical.split(" | ", 1)
+                parent = parent_raw.strip().lower()
+                sub    = sub_raw.strip().lower()
+                is_unnamed_sub = (sub.startswith("unnamed") or
+                                  sub.startswith("x_level") or
+                                  "level_1" in sub)
 
-                  # 3a. Parent contains AND (sub contains OR sub is unnamed artifact)
-                  for c in df_.columns:
-                      cl = c.lower()
-                      if parent in cl:
-                          if is_unnamed_sub or sub in cl:
-                              return c
+                # 3a. Parent contains AND (sub contains OR sub is unnamed artifact)
+                for c in df_.columns:
+                    cl = c.lower()
+                    if parent in cl:
+                        if is_unnamed_sub or sub in cl:
+                            return c
 
-                  # 3b. Parent-only when sub is an Unnamed artifact
-                  if is_unnamed_sub:
-                      for c in df_.columns:
-                          if parent in c.lower():
-                              return c
+                # 3b. Parent-only when sub is an Unnamed artifact
+                if is_unnamed_sub:
+                    for c in df_.columns:
+                        if parent in c.lower():
+                            return c
 
-                  # 3c. Token overlap — any parent word AND any meaningful sub word
-                  parent_words = [w for w in re.split(r"\W+", parent) if len(w) > 2]
-                  sub_words    = [w for w in re.split(r"\W+", sub) if len(w) > 2
-                                  and w not in ("unnamed", "level", "level1")]
-                  for c in df_.columns:
-                      cl = c.lower()
-                      p_match = any(w in cl for w in parent_words)
-                      s_match = any(w in cl for w in sub_words) if sub_words else True
-                      if p_match and s_match:
-                          return c
+                # 3c. Token overlap — any parent word AND any meaningful sub word
+                parent_words = [w for w in re.split(r"\W+", parent) if len(w) > 2]
+                sub_words    = [w for w in re.split(r"\W+", sub) if len(w) > 2
+                                and w not in ("unnamed", "level", "level1")]
+                for c in df_.columns:
+                    cl = c.lower()
+                    p_match = any(w in cl for w in parent_words)
+                    s_match = any(w in cl for w in sub_words) if sub_words else True
+                    if p_match and s_match:
+                        return c
 
-                  # 3d. Sub-word-only last resort for strong multi-word sub-headers
-                  if sub_words and len(sub_words) >= 2:
-                      for c in df_.columns:
-                          if sum(1 for w in sub_words if w in c.lower()) >= 2:
-                              return c
-              else:
-                  # Single-level canonical — keyword token match
-                  kw    = canonical.strip().lower()
-                  words = [w for w in re.split(r"\W+", kw) if len(w) > 2]
-                  for c in df_.columns:
-                      if any(w in c.lower() for w in words):
-                          return c
-              return None
+                # 3d. Sub-word-only last resort for strong multi-word sub-headers
+                if sub_words and len(sub_words) >= 2:
+                    for c in df_.columns:
+                        if sum(1 for w in sub_words if w in c.lower()) >= 2:
+                            return c
+            else:
+                # Single-level canonical — keyword token match
+                kw    = canonical.strip().lower()
+                words = [w for w in re.split(r"\W+", kw) if len(w) > 2]
+                for c in df_.columns:
+                    if any(w in c.lower() for w in words):
+                        return c
+            return None
 
         # ── COLUMN_FETCH ──────────────────────────────────────────────────────
         if op_type == "column_fetch":
