@@ -3750,15 +3750,32 @@ with T[4]:
         </div>""", unsafe_allow_html=True)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # SHAKTISHIV — ENHANCED CUSTOMER LOOKUP
-    # Replaces namahshivay's lookup with:
-    #   • own location + sheet filters (independent of sidebar sq_locs)
-    #   • _sk_find_customers_all  — searches ALL customer-name columns
-    #     (fixes: rows from Bangalore, Kolkata, Noida were missed because
-    #      they use "Customer Name" not "DEMARC | Customer Name")
-    #   • per-location / per-sheet cards for every matched group
-    #   • "not found" summary for locations where customer is absent
+    # SHAMBHUSHIV — ENHANCED CUSTOMER LOOKUP
+    # • Searches ALL 10 DC Excel files and ALL sheets regardless of the
+    #   "Query data source" dropdown above (which only affects Smart Query).
+    # • _sk_full_pool is built fresh from ALL (the global dict of all loaded
+    #   Excel files) so every location/sheet is always searchable.
+    # • Location dropdown shows ALL locations from all 10 Excel files.
+    # • Sheet dropdown is dynamically populated from selected locations.
+    # • Results are shown location-wise AND sheet-wise with per-group metrics.
+    # • "Not found" summary shown for locations where customer is absent.
     # ══════════════════════════════════════════════════════════════════════════
+
+    # ── Build the full search pool from ALL loaded Excel files (all locations,
+    #    all sheets) — independent of sq_src and the sidebar sel_locs/sel_sheets
+    _sk_all_frames = []
+    for _sk_loc_key, _sk_loc_sheets in ALL.items():
+        for _sk_sn, _sk_df_raw in _sk_loc_sheets.items():
+            _sk_tmp = _sk_df_raw.copy()
+            _sk_tmp.insert(0, "_Sheet", _sk_sn)
+            _sk_tmp.insert(0, "_Location", _sk_loc_key)
+            _sk_all_frames.append(_sk_tmp)
+    _sk_full_pool_raw = (
+        pd.concat(_sk_all_frames, ignore_index=True, sort=False).reset_index(drop=True)
+        if _sk_all_frames else pd.DataFrame()
+    )
+    _sk_full_pool = _sq_preprocess_pool(_sk_full_pool_raw) if not _sk_full_pool_raw.empty else pd.DataFrame()
+
     st.markdown(f"<hr style='border-color:{BORD};margin:32px 0 20px'>",
                 unsafe_allow_html=True)
     st.markdown(
@@ -3771,21 +3788,21 @@ with T[4]:
         f'Works even when the same customer appears in multiple locations. '
         f'Type part of the name — partial match, case-insensitive '
         f'(e.g. <b style="color:{CYAN}">Wipro</b> finds WIPRO LIMITED, Wipro Nabard, etc.). '
-        f'Use the filters below to narrow to a specific file or sheet.</div>',
+        f'Use the filters below to narrow to a specific DC file or sheet.</div>',
         unsafe_allow_html=True,
     )
 
-    # ── Own Location + Sheet filter (independent of sidebar) ──────────────────
+    # ── Own Location + Sheet filter (uses _sk_full_pool — all 10 files) ───────
     _sk_all_locs = (
-        sorted(pool_base["_Location"].dropna().unique().tolist())
-        if "_Location" in pool_base.columns else []
+        sorted(_sk_full_pool["_Location"].dropna().unique().tolist())
+        if "_Location" in _sk_full_pool.columns else sorted(ALL.keys())
     )
     # Build full location→sheets map for dynamic sheet filter
     _sk_loc_sheet_map: dict = {}
-    if "_Location" in pool_base.columns and "_Sheet" in pool_base.columns:
+    if "_Location" in _sk_full_pool.columns and "_Sheet" in _sk_full_pool.columns:
         for _sk_l in _sk_all_locs:
             _sk_loc_sheet_map[_sk_l] = sorted(
-                pool_base.loc[pool_base["_Location"] == _sk_l, "_Sheet"]
+                _sk_full_pool.loc[_sk_full_pool["_Location"] == _sk_l, "_Sheet"]
                 .dropna().unique().tolist()
             )
 
@@ -3833,8 +3850,9 @@ with T[4]:
         _sk_run = st.button("Find Customer", key="sk_run", use_container_width=True)
 
     # ── Live autocomplete: show matching names as typed ────────────────────────
+    # Uses _sk_full_pool (all 10 Excel files) so autocomplete is always complete
     if _sk_cust_input.strip() and not _sk_run:
-        _sk_hint_rows = _sk_find_customers_all(_sk_cust_input.strip(), pool_base)
+        _sk_hint_rows = _sk_find_customers_all(_sk_cust_input.strip(), _sk_full_pool)
         _sk_hint_cols = _sk_all_customer_cols(_sk_hint_rows)
         _sk_hint_names: list = []
         for _hc in _sk_hint_cols:
@@ -3865,19 +3883,21 @@ with T[4]:
     if _sk_run:
         if not _sk_cust_input.strip():
             st.warning("Please enter a customer name.")
-        elif pool_base.empty:
+        elif _sk_full_pool.empty:
             st.error("No data loaded. Please check your Excel files.")
         else:
-            # Build the search pool: start with ALL data (no sidebar filter)
-            _sk_pool = pool_base.copy()
-            # Apply own location filter
+            # Build the search pool: start with _sk_full_pool (all 10 Excel files)
+            # so that customer lookup is ALWAYS across all locations/sheets,
+            # independent of the sidebar or the sq_src dropdown above.
+            _sk_pool = _sk_full_pool.copy()
+            # Apply own location filter (if user selected specific locations)
             if _sk_sel_locs and "_Location" in _sk_pool.columns:
                 _sk_pool = _sk_pool[_sk_pool["_Location"].isin(_sk_sel_locs)]
-            # Apply own sheet filter
+            # Apply own sheet filter (if user selected specific sheets)
             if _sk_sel_sheets and "_Sheet" in _sk_pool.columns:
                 _sk_pool = _sk_pool[_sk_pool["_Sheet"].isin(_sk_sel_sheets)]
 
-            # Search ALL customer-name columns
+            # Search ALL customer-name columns across the pool
             _sk_rows = _sk_find_customers_all(_sk_cust_input.strip(), _sk_pool)
 
             if _sk_rows.empty:
