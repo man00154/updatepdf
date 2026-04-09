@@ -5535,7 +5535,9 @@ with T[4]:
                         st.dataframe(_vc, use_container_width=True)
                     else:  # Show All Rows
                         _meta_r = [c for c in ["_Location", "_Sheet"] if c in _work.columns]
-                        _disp_r = _work[_meta_r + [_sel_col]].copy()
+                        _cn_txt_r = find_col(_work, r"customer.*name|client.*name|^customer$")
+                        _txt_extra = [_cn_txt_r] if (_cn_txt_r and _cn_txt_r not in _meta_r and _cn_txt_r in _work.columns) else []
+                        _disp_r = _work[_meta_r + _txt_extra + [_sel_col]].copy()
                         _disp_r.index = range(1, len(_disp_r) + 1)
                         st.dataframe(_disp_r, use_container_width=True)
                         st.download_button(
@@ -5634,11 +5636,16 @@ with T[4]:
                             })
 
                         elif _sel_op_name == "Cumulative Sum":
-                            _cum_df = pd.DataFrame({
-                                "Row #": range(1, len(_num_s) + 1),
-                                _sel_col: _num_s.values,
-                                "Cumulative Sum": _num_s.cumsum().values,
-                            })
+                            _cn_cum = find_col(_work, r"customer.*name|client.*name|^customer$")
+                            _cum_base = _work.copy()
+                            _cum_base[_sel_col] = _robust_to_numeric(_cum_base[_sel_col])
+                            _cum_base = _cum_base.dropna(subset=[_sel_col]).reset_index(drop=True)
+                            _cum_dict = {"Row #": range(1, len(_cum_base) + 1)}
+                            if _cn_cum and _cn_cum in _cum_base.columns:
+                                _cum_dict["Customer Name"] = _cum_base[_cn_cum].astype(str).values
+                            _cum_dict[_sel_col] = _cum_base[_sel_col].values
+                            _cum_dict["Cumulative Sum"] = _cum_base[_sel_col].cumsum().values
+                            _cum_df = pd.DataFrame(_cum_dict)
                             st.dataframe(_cum_df, use_container_width=True)
                             _res_cum = {
                                 "type": "table", "label": _q_label,
@@ -5702,6 +5709,33 @@ with T[4]:
                                     _loc_df2.index = range(1, len(_loc_df2) + 1)
                                     with st.expander("📍 Per-location breakdown", expanded=True):
                                         st.dataframe(_loc_df2, use_container_width=True)
+
+                            # Per-customer breakdown (mandatory customer name in results)
+                            _cn_sc2 = find_col(_work, r"customer.*name|client.*name|^customer$")
+                            if _cn_sc2 and _cn_sc2 in _work.columns:
+                                _cust_sc_rows = []
+                                for _cc, _cg in _work.groupby(_cn_sc2):
+                                    _cs2 = _robust_to_numeric(_cg[_sel_col]).dropna()
+                                    if not _cs2.empty:
+                                        _cust_sc_rows.append({
+                                            "Customer Name": _cc,
+                                            f"{_sel_op_name} of {_sel_col}": round(float(_op_fn(_cs2)), 4),
+                                            "Valid Rows": len(_cs2),
+                                        })
+                                if _cust_sc_rows:
+                                    _cust_sc_df = pd.DataFrame(_cust_sc_rows).sort_values(
+                                        f"{_sel_op_name} of {_sel_col}", ascending=False
+                                    ).reset_index(drop=True)
+                                    _cust_sc_df.index = range(1, len(_cust_sc_df) + 1)
+                                    with st.expander("👤 Per-customer breakdown", expanded=True):
+                                        st.dataframe(_cust_sc_df, use_container_width=True)
+                                        st.download_button(
+                                            "⬇️ Download Customer Breakdown CSV",
+                                            _cust_sc_df.to_csv(index=False).encode("utf-8"),
+                                            f"customer_breakdown_{_sel_col[:30].replace(' ','_')}.csv",
+                                            "text/csv",
+                                            key="sq_cust_sc_dl",
+                                        )
 
                             # Save to history
                             _auto_loc2 = None
