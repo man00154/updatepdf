@@ -4785,172 +4785,950 @@ with T[4]:
                 f'</div>',
                 unsafe_allow_html=True)
 
-    # ── Unified query input (AI query + customer name-wise full row search) ──────
-    st.markdown(
-        f'<div style="font-size:.82rem;color:{MUTED};margin-bottom:6px">'
-        f'Type an <b style="color:{CYAN}">AI query</b> (e.g. <i>sum of power</i>, '
-        f'<i>list caged customers</i>) <b>or</b> a '
-        f'<b style="color:{CYAN}">customer name</b> (e.g. <i>Wipro</i>, <i>Oracle</i>) '
-        f'to retrieve all column values for every matching row across all 10 Excel files '
-        f'and all sheets. Both modes work in the same box.</div>',
-        unsafe_allow_html=True,
-    )
+    # ── NEW STRUCTURED QUERY ENGINE (no AI — 100 % accurate, direct DataFrame ops) ──
+    # Two query modes:
+    #   Mode A: Customer Name Search  — find ALL rows matching a customer across every file & sheet
+    #   Mode B: Column & Operations  — pick a real column, apply operations, optional filters
+    # Location-wise column headers derived from locationheaders.txt (actual Excel sub-headers)
+    # ─────────────────────────────────────────────────────────────────────────────────
 
-    query = st.text_area(
-        "🔍 Enter your query or customer name",
-        placeholder=(
-            "AI query: List all caged customers AND sum capacity in use AND total power used\n"
-            "Customer search: Wipro   |   Oracle   |   CISCO SYSTEMS   |   YES BANK\n"
-            "Combined: power capacity purchased for Oracle"
-        ),
-        key="sq_q",
-        height=90,
+    # ── Embedded location-wise canonical column headers (from locationheaders.txt) ──
+    _LOC_CANON_HEADERS = {
+        "Airoli": [
+            "Sr. No", "FLOOR", "SH", "Customer Name",
+            "Power Subscription Model (Rated/Subscribed)",
+            "Power Usage Model (Bundled / Metered)",
+            "Subscription Mode (Rack/U Space/SqFt Space)",
+            "Ownership(Sify/Customer)", "Caged /Uncaged",
+            "Space | Subscription", "Space | In Use",
+            "Power Capacity | Subscription Model (Rated/Subscribed)",
+            "Power Capacity | UoM (KVA/KW)",
+            "Power Capacity | Total Capacity Purchased",
+            "Power Capacity | Capacity in Use",
+            "Power Capacity | Usage in KW",
+            "Power Capacity | Billable Additional Capacity",
+            "Power Capacity | Additional Capacity Charges (MRC)",
+            "Power Capacity | Usage Model (Bundled/Metered)",
+            "Power Capacity | Multiplier",
+            "Power Capacity | Unit rate Model (Fixed/Variable)",
+            "Power Capacity | Unit Rate (per KW-HR)",
+            "Power Capacity | No Of Units (KW-HR/ Month)",
+            "Seating Space | Subscription Model (No. of Seats/Space)",
+            "Seating Space | Enclosed/Shared",
+            "Seating Space | Subscription", "Seating Space | In Use",
+        ],
+        "Bangalore 01": [
+            "Floor", "Floor / Module", "Customer Name", "RHS/SH",
+            "Power Subscription Model (Rated/Subscribed)",
+            "Power Usage Model (Bundled / Metered)",
+            "Subscription Mode", "Caged /Uncaged",
+            "Space | UoM", "Space | Subscription", "Space | In Use",
+            "Space | Yet to be given/", "Space | Billed",
+            "Space | Reserved Capacity if any (Non-Billable)",
+            "Space | Per Unit rate (MRC)",
+            "Power Capacity | Subscription Model",
+            "Power Capacity | UoM",
+            "Power Capacity | Total Capacity Purchased",
+            "Power Capacity | Capacity in Use",
+            "Power Capacity | Capacity to be given",
+            "Power Capacity | Reserved Capacity if any",
+            "Power Capacity | Subscribed Capacity to be given in KW",
+            "Power Capacity | Allocated Capacity in KW",
+            "Power Capacity | DC NW Infra",
+            "Power Capacity | Usage in KW",
+            "Power Capacity | Billable Additional Capacity",
+            "Power Capacity | Additional Capacity Charges (MRC)",
+            "Power Usage | Usage Model", "Power Usage | Multiplier",
+            "Power Usage | Unit rate Model (Fixed/Variable)",
+            "Power Usage | Unit Rate (per KW-HR)",
+            "Power Usage | No Of Units (KW-HR/ Month)",
+            "Seating Space | Subscription Model", "Seating Space | UoM",
+            "Seating Space | Subscription", "Seating Space | In Use",
+            "Seating Space | Yet to be given", "Seating Space | Billed",
+            "Seating Space | Reserved Capacity if any",
+            "Seating Space | Per Unit rate",
+            "Revenue | Space revenue including capacity",
+            "Revenue | Additional Capacity Revenue",
+            "Revenue | Power Usage revenue",
+            "Revenue | Seating Space", "Revenue | Any Other Items",
+            "Revenue | Total Revenue", "Revenue | Billing Frequency",
+            "Contract | Sales Order ref No",
+            "Contract | Contract Start Date",
+            "Contract | Term of Contract (No of Years)",
+            "Contract | Current Expiry Date",
+            "Contract | Remarks if any", "Contract | Cross connect",
+        ],
+        "Chennai 01": [
+            "Floor / Module", "Customer Name",
+            "Power Subscription Model (Rated/Subscribed)",
+            "Power Usage Model (Bundled / Metered)",
+            "Subscription Mode", "Caged /Uncaged",
+            "Space | UoM", "Space | Subscription", "Space | In Use",
+            "Space | Yet to be given/", "Space | Billed",
+            "Space | Reserved Capacity if any (Non-Billable)",
+            "Space | Per Unit rate (MRC)",
+            "Power Capacity | Subscription Model",
+            "Power Capacity | UoM",
+            "Power Capacity | Total Capacity Purchased",
+            "Power Capacity | Capacity in Use",
+            "Power Capacity | Capacity to be given",
+            "Power Capacity | Reserved Capacity if any",
+            "Power Capacity | Subscribed Capacity to be given in KW",
+            "Power Capacity | Allocated Capacity in KW",
+            "Power Capacity | Usage in KW",
+            "Power Capacity | Billable Additional Capacity",
+            "Power Capacity | Additional Capacity Charges (MRC)",
+            "Power Usage | Usage Model", "Power Usage | Multiplier",
+            "Power Usage | Unit rate Model (Fixed/Variable)",
+            "Power Usage | Unit Rate (per KW-HR)",
+            "Power Usage | No Of Units (KW-HR/ Month)",
+            "Seating Space | Subscription Model", "Seating Space | UoM",
+            "Seating Space | Subscription", "Seating Space | In Use",
+            "Seating Space | Yet to be given", "Seating Space | Billed",
+            "Seating Space | Reserved Capacity if any",
+            "Seating Space | Per Unit rate",
+            "Revenue | Space revenue including capacity",
+            "Revenue | Additional Capacity Revenue",
+            "Revenue | Power Usage revenue",
+            "Revenue | Seating Space", "Revenue | Any Other Items",
+            "Revenue | Total Revenue", "Revenue | Billing Frequency",
+            "Contract | Sales Order ref No",
+            "Contract | Contract Start Date",
+            "Contract | Term of Contract (No of Years)",
+            "Contract | Current Expiry Date",
+            "Contract | Remarks if any",
+            "Analytics | Avg revenue /Rack /Month",
+            "Analytics | Avg revenue /KW /Month",
+            "Analytics | Net Revenue / Resvd KW",
+            "Analytics | Total Rev (Cap + Power)",
+            "Analytics | Capacity Revenue", "Analytics | Power Revenue",
+            "Analytics | Net Rev Total",
+            "Analytics | Power Surplus/Leakage",
+            "Analytics | Capacity Surplus/Leakage",
+            "Analytics | Total Surplus/Leakage",
+        ],
+        "Kolkata": [
+            "Floor", "Floor / Module", "Customer Name", "RHS/SH",
+            "Power Subscription Model (Rated/Subscribed)",
+            "Power Usage Model (Bundled / Metered)",
+            "Subscription Mode", "Caged /Uncaged",
+            "Space | UoM", "Space | Subscription", "Space | In Use",
+            "Space | Yet to be given/", "Space | Billed",
+            "Space | Reserved Capacity if any (Non-Billable)",
+            "Space | Per Unit rate (MRC)",
+            "Power Capacity | Subscription Model",
+            "Power Capacity | UoM",
+            "Power Capacity | Total Capacity Purchased",
+            "Power Capacity | Capacity in Use",
+            "Power Capacity | Capacity to be given",
+            "Power Capacity | Reserved Capacity if any",
+            "Power Capacity | Subscribed Capacity to be given in KW",
+            "Power Capacity | Allocated Capacity in KW",
+            "Power Capacity | DC NW Infra",
+            "Power Capacity | Usage in KW",
+            "Power Capacity | Billable Additional Capacity",
+            "Power Capacity | Additional Capacity Charges (MRC)",
+            "Power Usage | Usage Model", "Power Usage | Multiplier",
+            "Power Usage | Unit rate Model (Fixed/Variable)",
+            "Power Usage | Unit Rate (per KW-HR)",
+            "Power Usage | No Of Units (KW-HR/ Month)",
+            "Seating Space | Subscription Model", "Seating Space | UoM",
+            "Seating Space | Subscription", "Seating Space | In Use",
+            "Seating Space | Yet to be given", "Seating Space | Billed",
+            "Seating Space | Reserved Capacity if any",
+            "Seating Space | Per Unit rate",
+            "Revenue | Space revenue including capacity",
+            "Revenue | Additional Capacity Revenue",
+            "Revenue | Power Usage revenue",
+            "Revenue | Seating Space", "Revenue | Any Other Items",
+            "Revenue | Total Revenue", "Revenue | Billing Frequency",
+            "Contract | Sales Order ref No",
+            "Contract | Contract Start Date",
+            "Contract | Term of Contract (No of Years)",
+            "Contract | Current Expiry Date",
+            "Contract | Remarks if any",
+        ],
+        "Vashi": [
+            "Floor / Module", "Customer",
+            "Power Subscription Model (Rated/Subscribed)",
+            "Power Usage Model (Bundled / Metered)",
+            "Subscription Mode", "Caged /Uncaged",
+            "Space | UoM", "Space | Subscription", "Space | In Use",
+            "Space | Yet to be given/", "Space | Billed",
+            "Space | Reserved Capacity if any (Non-Billable)",
+            "Space | Per Unit rate (MRC)",
+            "Power Capacity | Subscription Model",
+            "Power Capacity | UoM",
+            "Power Capacity | Total Capacity Purchased",
+            "Power Capacity | Capacity in Use",
+            "Power Capacity | Capacity to be given",
+            "Power Capacity | Reserved Capacity if any",
+            "Power Capacity | Subscribed Capacity to be given in KW",
+            "Power Capacity | Allocated Capacity in KW",
+            "Power Capacity | Usage in KW",
+            "Power Capacity | Billable Additional Capacity",
+            "Power Capacity | Additional Capacity Charges (MRC)",
+            "Power Usage | Usage Model", "Power Usage | Multiplier",
+            "Power Usage | Uit rate Model (Fixed/Variable)",
+            "Power Usage | Unit Rate (per KW-HR)",
+            "Power Usage | No Of Units (KW-HR/ Month)",
+            "Seating Space | Subscription Model", "Seating Space | UoM",
+            "Seating Space | Subscription", "Seating Space | In Use",
+            "Seating Space | Yet to be given", "Seating Space | Billed",
+            "Seating Space | Reserved Capacity if any",
+            "Seating Space | Per Unit rate",
+            "Revenue | Space revenue including capacity",
+            "Revenue | Additional Capacity Revenue",
+            "Revenue | Power Usage revenue",
+            "Revenue | Seating Space", "Revenue | Any Other Items",
+            "Revenue | Total Revenue", "Revenue | Billing Frequency",
+            "Contract | Sales Order ref No",
+            "Contract | Contract Start Date",
+            "Contract | Term of Contract (No of Years)",
+            "Contract | Current Expiry Date",
+            "Contract | Remarks if any",
+            "Analytics | Avg revenue /Rack /Month",
+            "Analytics | Avg revenue /KW /Month",
+            "Analytics | Net Revenue / Resvd KW",
+            "Analytics | Total Rev (Cap + Power)",
+            "Analytics | Capacity Revenue", "Analytics | Power Revenue",
+            "Analytics | Net Rev Total",
+            "Analytics | Power Surplus/Leakage",
+            "Analytics | Capacity Surplus/Leakage",
+            "Analytics | Total Surplus/Leakage",
+        ],
+        "Noida 01": [
+            "Floor / Module", "Customer Name", "RHS/SH",
+            "Sitting Space (Subscription)", "IR DATE",
+            "Power Subscription Model (Rated/Subscribed)",
+            "Power Usage Model (Bundled / Metered)",
+            "Subscription Mode", "Caged /Uncaged",
+            "Space | UoM", "Space | Subscription", "Space | In Use",
+            "Space | Yet to be given/", "Space | Billed",
+            "Space | Reserved Capacity if any (Non-Billable)",
+            "Space | Per Unit rate (MRC)",
+            "Power Capacity | Subscription Model", "Power Capacity | UoM",
+            "Power Capacity | Total Capacity Purchased",
+            "Power Capacity | Capacity in Use",
+            "Power Capacity | Capacity to be given",
+            "Power Capacity | Reserved Capacity if any",
+            "Power Capacity | Subscribed Capacity to be given in KW",
+            "Power Capacity | Allocated Capacity in KW (for KVA subscribed customer 50% diversity)",
+            "Power Capacity | DC NW Infra",
+            "Power Capacity | Billable Additional Capacity",
+            "Power Capacity | Additional Capacity Charges (MRC)",
+            "Power Usage | Usage Model", "Power Usage | Multiplier",
+            "Power Usage | Uit rate Model (Fixed/Variable)",
+            "Power Usage | Unit Rate (per KW-HR)",
+            "Power Usage | No Of Units (KW-HR/ Month)",
+            "Seating Space | Subscription Model", "Seating Space | UoM",
+            "Seating Space | Subscription", "Seating Space | In Use",
+            "Seating Space | Yet to be given", "Seating Space | Billed",
+            "Seating Space | Reserved Capacity if any",
+            "Seating Space | Per Unit rate",
+            "Revenue | Space revenue including capacity",
+            "Revenue | Additional Capacity Revenue",
+            "Revenue | Power Usage revenue",
+            "Revenue | Seating Space", "Revenue | Any Other Items",
+            "Revenue | Total Revenue", "Revenue | Billing Frequency",
+            "Contract | Sales Order ref No",
+            "Contract | Contract Start Date",
+            "Contract | Term of Contract (No of Years)",
+            "Contract | Current Expiry Date",
+            "Contract | Remarks if any",
+            "Analytics | Avg revenue /Rack /Month",
+            "Analytics | Avg revenue /KW /Month",
+            "Analytics | Net Revenue / Resvd KW",
+            "Analytics | Total Rev (Cap + Power)",
+            "Analytics | Capacity Revenue", "Analytics | Power Revenue",
+            "Analytics | Net Rev Total",
+            "Analytics | Power Surplus/Leakage",
+            "Analytics | Capacity Surplus/Leakage",
+            "Analytics | Total Surplus/Leakage",
+        ],
+        "Noida 02": [
+            "Floor / Module", "Customer Name", "RHS/SH",
+            "Sitting Space (Subscription)", "IR DATE",
+            "Power Subscription Model (Rated/Subscribed)",
+            "Power Usage Model (Bundled / Metered)",
+            "Subscription Mode", "Caged /Uncaged",
+            "Space | UoM", "Space | Subscription", "Space | In Use",
+            "Space | Yet to be given/", "Space | Billed",
+            "Space | Reserved Capacity if any (Non-Billable)",
+            "Space | Per Unit rate (MRC)",
+            "Power Capacity | Subscription Model", "Power Capacity | UoM",
+            "Power Capacity | Total Capacity Purchased",
+            "Power Capacity | Capacity in Use",
+            "Power Capacity | Capacity to be given",
+            "Power Capacity | Reserved Capacity if any",
+            "Power Capacity | Subscribed Capacity to be given in KW",
+            "Power Capacity | Allocated Capacity in KW (for KVA subscribed customer 50% diversity)",
+            "Power Capacity | DC NW Infra",
+            "Power Capacity | Billable Additional Capacity",
+            "Power Capacity | Additional Capacity Charges (MRC)",
+            "Power Usage | Usage Model", "Power Usage | Multiplier",
+            "Power Usage | Uit rate Model (Fixed/Variable)",
+            "Power Usage | Unit Rate (per KW-HR)",
+            "Power Usage | No Of Units (KW-HR/ Month)",
+            "Seating Space | Subscription Model", "Seating Space | UoM",
+            "Seating Space | Subscription", "Seating Space | In Use",
+            "Seating Space | Yet to be given", "Seating Space | Billed",
+            "Seating Space | Reserved Capacity if any",
+            "Seating Space | Per Unit rate",
+            "Revenue | Space revenue including capacity",
+            "Revenue | Additional Capacity Revenue",
+            "Revenue | Power Usage revenue",
+            "Revenue | Seating Space", "Revenue | Any Other Items",
+            "Revenue | Total Revenue", "Revenue | Billing Frequency",
+            "Contract | Sales Order ref No",
+            "Contract | Contract Start Date",
+            "Contract | Term of Contract (No of Years)",
+            "Contract | Current Expiry Date",
+            "Contract | Remarks if any",
+        ],
+        "Rabale T1 T2": [
+            "Floor / Module", "Customer Name",
+            "Power Subscription Model (Rated/Subscribed)",
+            "Power Usage Model (Bundled / Metered)",
+            "Subscription Mode", "Caged /Uncaged",
+            "Space | UoM", "Space | Subscription", "Space | In Use",
+            "Space | Yet to be given/", "Space | Billed",
+            "Space | Reserved Capacity if any (Non-Billable)",
+            "Space | Per Unit rate (MRC)", "Space | ARC",
+            "Power Capacity | Subscription Model", "Power Capacity | UoM",
+            "Power Capacity | Total Capacity Purchased",
+            "Power Capacity | Capacity in Use",
+            "Power Capacity | Capacity to be given",
+            "Power Capacity | Reserved Capacity if any",
+            "Power Capacity | Subscribed Capacity to be given in KW",
+            "Power Capacity | Allocated Capacity in KW",
+            "Power Capacity | Usage in KW",
+            "Power Capacity | Billable Additional Capacity",
+            "Power Capacity | Additional Capacity Charges (MRC)",
+            "Power Usage | Usage Model", "Power Usage | Multiplier",
+            "Power Usage | Uit rate Model (Fixed/Variable)",
+            "Power Usage | Unit Rate (per KW-HR)",
+            "Power Usage | No Of Units (KW-HR/ Month)",
+            "Seating Space | Subscription Model", "Seating Space | UoM",
+            "Seating Space | Subscription", "Seating Space | In Use",
+            "Seating Space | Yet to be given", "Seating Space | Billed",
+            "Seating Space | Reserved Capacity if any",
+            "Seating Space | Per Unit rate",
+            "Revenue | Space revenue including capacity",
+            "Revenue | Additional Capacity Revenue",
+            "Revenue | Power Usage revenue",
+            "Revenue | Seating Space", "Revenue | Any Other Items",
+            "Revenue | Total Revenue (MRC)", "Revenue | ARC",
+            "Revenue | Billing Frequency",
+            "Contract | Sales Order ref No",
+            "Contract | Contract Start Date",
+            "Contract | Term of Contract (No of Years)",
+            "Contract | Current Expiry Date",
+            "Contract | Remarks if any",
+            "Analytics | Avg revenue /Rack /Month",
+            "Analytics | Avg revenue /KW /Month",
+            "Analytics | Net Revenue / Resvd KW",
+            "Analytics | Total Rev (Cap + Power)",
+            "Analytics | Capacity Revenue", "Analytics | Power Revenue",
+            "Analytics | Net Rev Total",
+            "Analytics | Power Surplus/Leakage",
+            "Analytics | Capacity Surplus/Leakage",
+            "Analytics | Total Surplus/Leakage",
+            "Power Usage (KW) | Maximum Usable Capacity",
+            "Power Usage (KW) | Current utilization",
+            "Power Usage (KW) | Committed (Based on Confirmed orders)",
+            "Power Usage (KW) | Total", "Power Usage (KW) | Balance",
+        ],
+        "Rabale Tower 4": [
+            "Floor / Module", "Customer Name",
+            "Power Subscription Model (Rated/Subscribed)",
+            "Power Usage Model (Bundled / Metered)",
+            "Subscription Mode", "Caged /Uncaged",
+            "Space | UoM",
+            "Space | Subscription(No. of Racks)", "Space | In Use(No. of Racks)",
+            "Power Capacity | UoM",
+            "Power Capacity | Total Capacity Purchased (KW)",
+            "Power Capacity | Capacity in Use (KW)",
+        ],
+        "Rabale Tower 5": [
+            "Floor", "Tower -5 (MUM - 03)",
+            "Space | Subscription Mode", "Space | UoM",
+            "Space | Occupied in Sqft",
+            "IT KW CAPACITY | Total Capacity - Server Hall",
+            "IT KW CAPACITY | Sold", "IT KW CAPACITY | Available",
+            "Remarks",
+        ],
+    }
+
+    # ── Operations map (all supported numeric operations) ─────────────────────
+    _SQ_ALL_OPS = {
+        "Sum":                   ("sum",      lambda s: s.sum()),
+        "Average (Mean)":        ("avg",      lambda s: s.mean()),
+        "Median":                ("median",   lambda s: s.median()),
+        "Min":                   ("min",      lambda s: s.min()),
+        "Max":                   ("max",      lambda s: s.max()),
+        "Count":                 ("count",    lambda s: float(len(s))),
+        "Count Non-Zero":        ("count_nz", lambda s: float((s != 0).sum())),
+        "Std Deviation":         ("std",      lambda s: s.std(ddof=1)),
+        "Variance":              ("var",      lambda s: s.var(ddof=1)),
+        "Range (Max − Min)":     ("range",    lambda s: s.max() - s.min()),
+        "Product (Multiply)":    ("prod",     lambda s: s.prod()),
+        "% of Grand Total":      ("pct",      lambda s: (s.sum() / s.sum() * 100) if s.sum() != 0 else 0.0),
+        "Cumulative Sum":        ("cumsum",   lambda s: s.cumsum().iloc[-1] if not s.empty else 0.0),
+        "Top 10 Values":         ("top10",    None),
+        "Bottom 10 Values":      ("bot10",    None),
+        "Show All Matching Rows": ("rows",   None),
+    }
+
+    def _sq_fuzzy_col(df_: pd.DataFrame, canonical: str) -> "str | None":
+        """Fuzzy-match a canonical column hint to a real column in df_."""
+        if canonical in df_.columns:
+            return canonical
+        c_lo = canonical.lower()
+        # Try progressively looser matches
+        # 1. Contains the full canonical name (case-insensitive)
+        for c in df_.columns:
+            if c_lo in c.lower() or c.lower() in c_lo:
+                return c
+        # 2. Strip pipe grouping — match sub-header part only
+        sub = c_lo.split("|")[-1].strip() if "|" in c_lo else c_lo
+        if len(sub) > 3:
+            for c in df_.columns:
+                if sub in c.lower():
+                    return c
+        # 3. All words match
+        words = [w for w in re.split(r"\W+", c_lo) if len(w) > 3]
+        for c in df_.columns:
+            if words and all(w in c.lower() for w in words):
+                return c
+        return None
+
+    # ── Mode selector ─────────────────────────────────────────────────────────
+    _sq_mode_opts = [
+        "🔍 Customer Name Search",
+        "📊 Column & Operations Query",
+    ]
+    _sq_mode = st.radio(
+        "Select Query Mode",
+        _sq_mode_opts,
+        horizontal=True,
+        key="sq_mode_select",
     )
 
     sq_locs = st.multiselect(
-        "📍 Restrict to locations (optional)",
+        "📍 Restrict to locations (optional — leave blank for all)",
         options=sorted(fdata.keys()),
         default=[],
-        key="sq_locs"
+        key="sq_locs",
     )
-
-    c_run, _ = st.columns([1, 6])
-    with c_run:
-        run_clicked = st.button("🚀 Run Query", key="sq_run")
 
     if "sq_results_history" not in st.session_state:
         st.session_state["sq_results_history"] = []
 
-    # ── Run ───────────────────────────────────────────────────────────────────
-    if run_clicked and query.strip():
-        if pool_base.empty:
-            st.error("No data loaded. Please check your Excel files.")
-        else:
-            pool = pool_base.copy()
-            if sq_locs and "_Location" in pool.columns:
-                pool = pool[pool["_Location"].isin(sq_locs)]
-            if pool.empty:
-                st.warning("No records for selected locations.")
-            else:
-                results = []
+    # ══════════════════════════════════════════════════════════════════════════
+    # MODE A — CUSTOMER NAME SEARCH
+    # Searches every file, every sheet for rows where Customer Name column
+    # contains the entered text (case-insensitive, partial match).
+    # Returns ALL columns for every matching row — zero hallucination.
+    # ══════════════════════════════════════════════════════════════════════════
+    if _sq_mode == "🔍 Customer Name Search":
+        st.markdown(
+            f'<div style="font-size:.82rem;color:{MUTED};margin-bottom:8px">'
+            f'Enter a customer name (or part of it) to search <b>all 10 Excel files</b> '
+            f'and <b>all sheets</b>. Every matching row with all its columns is returned.'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
-                # ── Step A: Customer name-wise full row search (merged) ────────
-                # Always search customer names across ALL 10 Excel files (full pool),
-                # not just the filtered sq_locs pool, for completeness.
-                _sq_merged_pool = combined_df(ALL)   # all 10 files, all sheets
-                _sq_cust_name, _sq_field_part = _sq_detect_customer_query(query.strip())
+        _cust_col1, _cust_col2 = st.columns([3, 1])
+        with _cust_col1:
+            _cust_input = st.text_input(
+                "👤 Customer Name",
+                placeholder="e.g.  Wipro  |  Oracle  |  YES BANK  |  CISCO  |  Tata",
+                key="sq_cust_input",
+            )
+        with _cust_col2:
+            _cust_match = st.selectbox(
+                "Match Mode",
+                ["Contains (partial)", "Exact", "Starts with"],
+                key="sq_cust_match",
+            )
 
-                # Also treat the whole query as a possible customer name
-                _sq_name_candidates = [_sq_cust_name] if _sq_cust_name else []
-                _pure_name = query.strip()
-                # If query has no spaces or is short / not an obvious AI query,
-                # try it as a customer name directly
-                _ai_keywords = {
-                    "sum", "total", "list", "show", "count", "average", "mean",
-                    "max", "min", "top", "bottom", "all", "get", "fetch", "display",
-                    "caged", "uncaged", "rated", "metered", "bundled", "subscribed",
-                }
-                _query_words = set(_pure_name.lower().split())
-                _looks_like_ai = bool(_query_words & _ai_keywords)
+        _cust_sheets_opts = sorted({
+            sn for loc in (sq_locs if sq_locs else fdata.keys())
+            for sn in fdata.get(loc, {})
+        })
+        _cust_sheets_sel = st.multiselect(
+            "📄 Filter by sheets (optional)",
+            options=_cust_sheets_opts,
+            default=[],
+            key="sq_cust_sheets",
+        )
 
-                if not _looks_like_ai and _pure_name not in _sq_name_candidates:
-                    _sq_name_candidates.append(_pure_name)
+        _cust_additional_col = st.multiselect(
+            "📋 Show only these columns in results (leave blank = show all columns)",
+            options=[c for c in pool_base.columns if not c.startswith("_")] if not pool_base.empty else [],
+            default=[],
+            key="sq_cust_cols",
+        )
 
-                _cnw_rows_all = pd.DataFrame()
-                _cnw_used_name = ""
-                for _cand in _sq_name_candidates:
-                    if not _cand.strip():
-                        continue
-                    _try_rows = _sk_find_customers_all(_cand.strip(), _sq_merged_pool)
-                    if not _try_rows.empty:
-                        _cnw_rows_all = _try_rows
-                        _cnw_used_name = _cand.strip()
-                        break
+        _crun_c, _ = st.columns([1, 6])
+        with _crun_c:
+            _cust_run_btn = st.button("🔍 Search Customer", key="sq_cust_run")
 
-                if not _cnw_rows_all.empty:
-                    _cnw_disp = _sk_canonical_name(_cnw_rows_all, _cnw_used_name)
-                    _cnw_n    = len(_cnw_rows_all)
-                    _cnw_files_found  = sorted(_cnw_rows_all["_Location"].unique().tolist()) if "_Location" in _cnw_rows_all.columns else []
-                    _cnw_sheets_found = sorted(_cnw_rows_all["_Sheet"].unique().tolist())    if "_Sheet"    in _cnw_rows_all.columns else []
+        if _cust_run_btn and _cust_input.strip():
+            _search_pool = combined_df(ALL)  # ALL files, ALL sheets
+            if sq_locs and "_Location" in _search_pool.columns:
+                _search_pool = _search_pool[_search_pool["_Location"].isin(sq_locs)]
+            if _cust_sheets_sel and "_Sheet" in _search_pool.columns:
+                _search_pool = _search_pool[_search_pool["_Sheet"].isin(_cust_sheets_sel)]
 
-                    # Show summary card
-                    st.markdown(
-                        f'<div style="background:{DARK2};border:2px solid {CYAN};'
-                        f'border-radius:14px;padding:20px 26px;margin:14px 0">'
-                        f'<div style="font-size:1.1rem;font-weight:900;color:{WHITE};margin-bottom:6px">'
-                        f'✅ Customer Found: {_cnw_disp}</div>'
-                        f'<div style="font-size:.85rem;color:{TEXT}">'
-                        f'<b style="color:{CYAN}">{_cnw_n}</b> row(s) matched across '
-                        f'<b style="color:{CYAN}">{len(_cnw_files_found)}</b> DC file(s) and '
-                        f'<b style="color:{CYAN}">{len(_cnw_sheets_found)}</b> sheet(s)</div>'
-                        f'<div style="margin-top:10px;font-size:.78rem;color:{MUTED}">Files: '
-                        + (", ".join(f'<span style="color:{GREEN}">{l}</span>' for l in _cnw_files_found) or "—")
-                        + f'</div><div style="font-size:.78rem;color:{MUTED};margin-top:4px">Sheets: '
-                        + (", ".join(f'<span style="color:{AMBER}">{s}</span>' for s in _cnw_sheets_found[:15]) or "—")
-                        + f'</div></div>',
-                        unsafe_allow_html=True,
-                    )
+            # Find customer name column
+            _cn_col = find_col(_search_pool, r"customer.*name|client.*name|^customer$")
+            if _cn_col is None:
+                # Also try bare "Customer" for Vashi
+                _cn_col = find_col(_search_pool, r"\bcustomer\b")
+            _srch = _cust_input.strip()
+            _srch_lo = _srch.lower()
 
-                    # Validation expander
-                    with st.expander("🔬 Validation — Row count per file & sheet", expanded=False):
-                        if "_Location" in _cnw_rows_all.columns and "_Sheet" in _cnw_rows_all.columns:
-                            _cnw_val_df = (
-                                _cnw_rows_all.groupby(["_Location", "_Sheet"])
-                                .size().reset_index(name="Row Count")
-                                .sort_values(["_Location", "_Sheet"])
-                            )
-                            _cnw_val_df.index = range(1, len(_cnw_val_df) + 1)
-                            st.dataframe(_cnw_val_df, use_container_width=True)
-
-                    # Full row display — all columns
-                    _cnw_meta_c = [c for c in ["_Location", "_Sheet"] if c in _cnw_rows_all.columns]
-                    _cnw_data_c = [c for c in _cnw_rows_all.columns if not c.startswith("_")]
-                    _cnw_disp_df = _cnw_rows_all[_cnw_meta_c + _cnw_data_c].copy()
-                    _cnw_disp_df.index = range(1, len(_cnw_disp_df) + 1)
-                    st.markdown(
-                        f'<div style="font-size:.8rem;color:{CYAN};font-weight:700;'
-                        f'text-transform:uppercase;letter-spacing:.05em;margin:16px 0 6px">'
-                        f'📋 All Columns — {_cnw_n} row(s) for "{_cnw_disp}"</div>',
-                        unsafe_allow_html=True,
-                    )
-                    st.dataframe(_cnw_disp_df, use_container_width=True)
-                    st.download_button(
-                        f"⬇️ Download All Columns CSV — {_cnw_disp[:30]}",
-                        _cnw_disp_df.to_csv(index=False).encode("utf-8"),
-                        f"customer_allcols_{_cnw_disp.replace(' ', '_')[:30]}.csv",
-                        "text/csv",
-                        key="sq_cnw_dl_all",
-                    )
-
-                    # Build customer profile result card for the AI results list
-                    _cust_profile_res = _sq_build_customer_profile(
-                        _cnw_rows_all, _cnw_used_name, _sq_field_part or ""
-                    )
-                    results = [_cust_profile_res]
-
-                # ── Step B: AI-powered structured query ───────────────────────
-                # Always run AI query — it handles aggregations, lists, counts etc.
-                with st.spinner("🤖 Parsing and executing AI query…"):
-                    ops_raw = parse_query_with_ai(query.strip())
-
-                if isinstance(ops_raw, tuple):
-                    err_type, err_msg = ops_raw
-                    st.error(f"**{'Config' if err_type == 'config_error' else 'Parse'} Error**: {err_msg}")
-                elif not ops_raw:
-                    if _cnw_rows_all.empty:
-                        st.warning("Could not parse query. Please try rephrasing.")
+            if _cn_col and _cn_col in _search_pool.columns:
+                _vals = _search_pool[_cn_col].astype(str)
+                if _cust_match == "Exact":
+                    _mask = _vals.str.lower() == _srch_lo
+                elif _cust_match == "Starts with":
+                    _mask = _vals.str.lower().str.startswith(_srch_lo)
                 else:
-                    if ops_raw and not isinstance(ops_raw, tuple):
-                        ai_results = _sq_execute_with_schema(ops_raw, pool)
-                        results = results + ai_results
+                    _mask = _vals.str.lower().str.contains(re.escape(_srch_lo), na=False)
+                _found = _search_pool[_mask].copy()
+            else:
+                # Fallback: search all text columns
+                _str_cols = [c for c in _search_pool.columns
+                             if not c.startswith("_") and _search_pool[c].dtype == object]
+                _mask2 = pd.Series(False, index=_search_pool.index)
+                for _sc in _str_cols:
+                    _mask2 |= _search_pool[_sc].astype(str).str.lower().str.contains(
+                        re.escape(_srch_lo), na=False)
+                _found = _search_pool[_mask2].copy()
 
-                if results:
+            if _found.empty:
+                st.warning(f"No rows found for customer **'{_srch}'** in the selected scope.")
+            else:
+                # Display summary card
+                _f_locs  = sorted(_found["_Location"].unique()) if "_Location" in _found.columns else []
+                _f_sheets = sorted(_found["_Sheet"].unique())   if "_Sheet"    in _found.columns else []
+                st.markdown(
+                    f'<div style="background:{DARK2};border:2px solid {CYAN};'
+                    f'border-radius:14px;padding:20px 26px;margin:14px 0">'
+                    f'<div style="font-size:1.05rem;font-weight:900;color:{WHITE}">'
+                    f'✅ Found: <span style="color:{CYAN}">{_srch}</span></div>'
+                    f'<div style="font-size:.84rem;color:{TEXT};margin-top:6px">'
+                    f'<b style="color:{CYAN}">{len(_found):,}</b> matching row(s) across '
+                    f'<b style="color:{CYAN}">{len(_f_locs)}</b> location(s) · '
+                    f'<b style="color:{CYAN}">{len(_f_sheets)}</b> sheet(s)</div>'
+                    f'<div style="margin-top:8px;font-size:.77rem;color:{MUTED}">Locations: '
+                    + (", ".join(f'<span style="color:{GREEN}">{l}</span>' for l in _f_locs) or "—")
+                    + f'</div><div style="font-size:.77rem;color:{MUTED};margin-top:3px">Sheets: '
+                    + (", ".join(f'<span style="color:{AMBER}">{s}</span>' for s in _f_sheets[:20]) or "—")
+                    + f'</div></div>',
+                    unsafe_allow_html=True,
+                )
+
+                # Row-count validation breakdown
+                with st.expander("🔬 Validation — row count per file & sheet", expanded=False):
+                    if "_Location" in _found.columns and "_Sheet" in _found.columns:
+                        _val_df = (
+                            _found.groupby(["_Location", "_Sheet"])
+                            .size().reset_index(name="Row Count")
+                            .sort_values(["_Location", "_Sheet"])
+                        )
+                        _val_df.index = range(1, len(_val_df) + 1)
+                        st.dataframe(_val_df, use_container_width=True)
+
+                # Build display dataframe
+                _meta_c = [c for c in ["_Location", "_Sheet"] if c in _found.columns]
+                _data_c = (
+                    _cust_additional_col
+                    if _cust_additional_col
+                    else [c for c in _found.columns if not c.startswith("_")]
+                )
+                _disp = _found[_meta_c + [c for c in _data_c if c in _found.columns]].copy()
+                _disp.index = range(1, len(_disp) + 1)
+
+                st.markdown(
+                    f'<div style="font-size:.8rem;color:{CYAN};font-weight:700;'
+                    f'text-transform:uppercase;letter-spacing:.05em;margin:14px 0 6px">'
+                    f'📋 All Data — {len(_found):,} row(s) for "{_srch}"</div>',
+                    unsafe_allow_html=True,
+                )
+                st.dataframe(_disp, use_container_width=True)
+                st.download_button(
+                    f"⬇️ Download CSV — {_srch[:40]}",
+                    _disp.to_csv(index=False).encode("utf-8"),
+                    f"customer_{_srch.replace(' ','_')[:40]}.csv",
+                    "text/csv",
+                    key="sq_cust_dl",
+                )
+
+                # Save to results history (table format compatible with display block)
+                _res_entry = {
+                    "type": "table", "label": f"Customer Search: {_srch}",
+                    "data": _disp, "row_count": len(_found),
+                }
+                st.session_state["sq_results_history"].append({
+                    "query":   f"Customer search: {_srch}",
+                    "source":  sq_src,
+                    "records": len(_found),
+                    "results": [_res_entry],
+                })
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # MODE B — COLUMN & OPERATIONS QUERY
+    # User selects: location → column (from real loaded columns, guided by
+    # locationheaders.txt) → operation → optional filters.
+    # 100 % accurate — executed directly on the real DataFrames. No AI/LLM.
+    # ══════════════════════════════════════════════════════════════════════════
+    else:
+        st.markdown(
+            f'<div style="font-size:.82rem;color:{MUTED};margin-bottom:8px">'
+            f'Select a location, column, and operation to run directly on the real Excel data. '
+            f'All columns listed are real sub-headers from the actual Excel files. '
+            f'No guessing — 100% accurate results.</div>',
+            unsafe_allow_html=True,
+        )
+
+        _op_r1, _op_r2 = st.columns([2, 3])
+        with _op_r1:
+            _op_loc = st.selectbox(
+                "📍 Location",
+                ["All Locations"] + sorted(fdata.keys()),
+                key="sq_op_loc",
+            )
+
+        # Build the working pool for this location
+        if _op_loc == "All Locations":
+            _op_pool = pool_base.copy()
+            if sq_locs and "_Location" in _op_pool.columns:
+                _op_pool = _op_pool[_op_pool["_Location"].isin(sq_locs)]
+        else:
+            _op_frames = []
+            for _sn, _df_loc in fdata.get(_op_loc, {}).items():
+                _tmp = _df_loc.copy()
+                _tmp.insert(0, "_Sheet", _sn)
+                _tmp.insert(0, "_Location", _op_loc)
+                _op_frames.append(_tmp)
+            _op_pool = pd.concat(_op_frames, ignore_index=True, sort=False) if _op_frames else pd.DataFrame()
+
+        # Real columns from loaded data
+        _op_real_cols = [c for c in _op_pool.columns if not c.startswith("_")] if not _op_pool.empty else []
+        _op_num_cols  = [c for c in _op_real_cols if pd.api.types.is_numeric_dtype(_op_pool[c])] if not _op_pool.empty else []
+        _op_txt_cols  = [c for c in _op_real_cols if c not in _op_num_cols]
+
+        with _op_r2:
+            _op_col_type = st.radio(
+                "Column type",
+                ["📊 Numeric columns", "📝 Text / Category columns"],
+                horizontal=True, key="sq_op_col_type",
+            )
+
+        _col_list = _op_num_cols if "Numeric" in _op_col_type else _op_txt_cols
+
+        _op_r3, _op_r4 = st.columns([3, 2])
+        with _op_r3:
+            # Search box to filter column list
+            _col_search = st.text_input(
+                "🔎 Search column (partial match)",
+                placeholder="e.g. Revenue | Capacity | Customer | Subscription",
+                key="sq_col_search",
+            )
+            _col_filtered = (
+                [c for c in _col_list if _col_search.strip().lower() in c.lower()]
+                if _col_search.strip() else _col_list
+            )
+            _sel_col = st.selectbox(
+                f"📋 Select Column — {len(_col_filtered)} available",
+                ["— pick a column —"] + _col_filtered,
+                key="sq_sel_col",
+            )
+        with _op_r4:
+            if "Numeric" in _op_col_type:
+                _sel_op_name = st.selectbox(
+                    "⚙️ Operation",
+                    list(_SQ_ALL_OPS.keys()),
+                    key="sq_sel_op",
+                )
+            else:
+                _sel_op_name = st.selectbox(
+                    "⚙️ Operation",
+                    ["Count (non-null)", "Unique Count", "Value Counts", "Show All Rows"],
+                    key="sq_sel_op",
+                )
+
+        # Optional filters row
+        _op_f1, _op_f2, _op_f3 = st.columns([2, 2, 1])
+        with _op_f1:
+            _op_cust_filter = st.text_input(
+                "👤 Customer Name Filter (optional)",
+                placeholder="e.g.  Wipro  |  Oracle",
+                key="sq_op_cust_filter",
+            )
+        with _op_f2:
+            _op_sheet_opts = sorted({
+                sn for loc in (sq_locs if sq_locs else (
+                    [_op_loc] if _op_loc != "All Locations" else fdata.keys()))
+                for sn in fdata.get(loc, {})
+            })
+            _op_sheets = st.multiselect(
+                "📄 Sheets (optional)",
+                options=_op_sheet_opts, default=[],
+                key="sq_op_sheets",
+            )
+        with _op_f3:
+            _op_grp_loc = st.checkbox("Group by Location", value=True, key="sq_op_grp")
+
+        _op_top_n = 10
+        if _sel_op_name in ("Top 10 Values", "Bottom 10 Values"):
+            _op_top_n = st.number_input(
+                "N", min_value=1, max_value=100, value=10, step=5, key="sq_op_top_n"
+            )
+
+        _run_op_c, _ = st.columns([1, 6])
+        with _run_op_c:
+            _op_run_btn = st.button("▶ Run Query", key="sq_op_run")
+
+        if _op_run_btn and _sel_col != "— pick a column —":
+            # Apply sheet filter
+            _work = _op_pool.copy()
+            if _op_sheets and "_Sheet" in _work.columns:
+                _work = _work[_work["_Sheet"].isin(_op_sheets)]
+
+            # Apply customer name filter
+            if _op_cust_filter.strip():
+                _cn_c2 = find_col(_work, r"customer.*name|client.*name|^customer$")
+                if _cn_c2 and _cn_c2 in _work.columns:
+                    _work = _work[
+                        _work[_cn_c2].astype(str).str.lower().str.contains(
+                            re.escape(_op_cust_filter.strip().lower()), na=False)
+                    ]
+
+            if _work.empty:
+                st.warning("No records match the applied filters.")
+            elif _sel_col not in _work.columns:
+                st.error(f"Column '{_sel_col}' not found in selected scope.")
+            else:
+                _q_label = (
+                    f"{_sel_op_name} of '{_sel_col}'"
+                    + (f" [Customer: {_op_cust_filter}]" if _op_cust_filter.strip() else "")
+                    + (f" [{_op_loc}]" if _op_loc != "All Locations" else " [All Locations]")
+                )
+
+                # ── Text column operations ─────────────────────────────────────
+                if "Numeric" not in _op_col_type:
+                    _tc_data = _work[_sel_col].dropna().astype(str)
+                    if _sel_op_name == "Count (non-null)":
+                        st.metric("Count (non-null)", f"{len(_tc_data):,}")
+                    elif _sel_op_name == "Unique Count":
+                        st.metric("Unique Values", f"{_tc_data.nunique():,}")
+                    elif _sel_op_name == "Value Counts":
+                        _vc = _tc_data.value_counts().reset_index()
+                        _vc.columns = [_sel_col, "Count"]
+                        _vc.index = range(1, len(_vc) + 1)
+                        st.dataframe(_vc, use_container_width=True)
+                    else:  # Show All Rows
+                        _meta_r = [c for c in ["_Location", "_Sheet"] if c in _work.columns]
+                        _disp_r = _work[_meta_r + [_sel_col]].copy()
+                        _disp_r.index = range(1, len(_disp_r) + 1)
+                        st.dataframe(_disp_r, use_container_width=True)
+                        st.download_button(
+                            "⬇️ Download CSV",
+                            _disp_r.to_csv(index=False).encode(),
+                            f"query_{_sel_col[:30]}.csv", "text/csv",
+                            key="sq_txt_dl",
+                        )
+                    _res_txt = {
+                        "type": "table", "label": _q_label,
+                        "data": _work[[c for c in ["_Location", "_Sheet", _sel_col] if c in _work.columns]],
+                        "row_count": len(_work),
+                    }
                     st.session_state["sq_results_history"].append({
-                        "query":   query.strip(),
-                        "source":  sq_src,
-                        "records": len(pool),
-                        "results": results,
+                        "query": _q_label, "source": sq_src,
+                        "records": len(_work), "results": [_res_txt],
                     })
+
+                # ── Numeric column operations ──────────────────────────────────
+                else:
+                    _num_s = _robust_to_numeric(_work[_sel_col]).dropna()
+                    _total_rows = len(_work)
+                    _valid_rows = len(_num_s)
+
+                    if _num_s.empty:
+                        st.warning(
+                            f"Column **'{_sel_col}'** has no numeric values in the current scope."
+                        )
+                    else:
+                        _op_key, _op_fn = _SQ_ALL_OPS[_sel_op_name][0], _SQ_ALL_OPS[_sel_op_name][1]
+                        _unit = _detect_unit(_sel_col)
+
+                        # Special handling: Top N / Bottom N / Show All Rows
+                        if _sel_op_name in ("Top 10 Values", "Bottom 10 Values", "Show All Matching Rows"):
+                            _meta_c2 = [c for c in ["_Location", "_Sheet"] if c in _work.columns]
+                            _cn_c3   = find_col(_work, r"customer.*name|client.*name|^customer$")
+                            _show_c  = _meta_c2 + ([_cn_c3] if _cn_c3 else []) + [_sel_col]
+                            _show_df = _work[[c for c in _show_c if c in _work.columns]].copy()
+                            _show_df[_sel_col] = _robust_to_numeric(_show_df[_sel_col])
+                            _show_df = _show_df.dropna(subset=[_sel_col])
+                            if _sel_op_name == "Top 10 Values":
+                                _show_df = _show_df.nlargest(int(_op_top_n), _sel_col)
+                            elif _sel_op_name == "Bottom 10 Values":
+                                _show_df = _show_df.nsmallest(int(_op_top_n), _sel_col)
+                            _show_df = _show_df.reset_index(drop=True)
+                            _show_df.index = range(1, len(_show_df) + 1)
+                            st.dataframe(_show_df, use_container_width=True)
+                            st.download_button(
+                                f"⬇️ Download {_sel_op_name} CSV",
+                                _show_df.to_csv(index=False).encode(),
+                                f"query_{_sel_op_name.replace(' ','_')[:20]}.csv",
+                                "text/csv", key="sq_topn_dl",
+                            )
+                            _res_e = {
+                                "type": "table", "label": _q_label,
+                                "data": _show_df, "row_count": len(_show_df),
+                            }
+                            st.session_state["sq_results_history"].append({
+                                "query": _q_label, "source": sq_src,
+                                "records": len(_work), "results": [_res_e],
+                            })
+
+                        elif _sel_op_name == "% of Grand Total":
+                            # Each location's share of the grand total
+                            _grand = _num_s.sum()
+                            if _op_grp_loc and "_Location" in _work.columns:
+                                _pct_rows = []
+                                for _ploc, _pgrp in _work.groupby("_Location"):
+                                    _ps = _robust_to_numeric(_pgrp[_sel_col]).dropna()
+                                    _pct_rows.append({
+                                        "Location": _ploc,
+                                        f"{_sel_col} (Sum)": round(_ps.sum(), 4),
+                                        "% of Grand Total": round(_ps.sum() / _grand * 100, 2) if _grand else 0,
+                                    })
+                                _pct_df = pd.DataFrame(_pct_rows).sort_values(
+                                    "% of Grand Total", ascending=False
+                                ).reset_index(drop=True)
+                                _pct_df.index = range(1, len(_pct_df) + 1)
+                                st.dataframe(_pct_df, use_container_width=True)
+                            else:
+                                st.metric(
+                                    f"Grand Total of '{_sel_col}'",
+                                    f"{_grand:,.2f} {_unit}".strip(),
+                                )
+                            _res_pct = {
+                                "type": "scalar", "label": _q_label,
+                                "value": float(_grand), "unit": _unit,
+                                "column": _sel_col, "col_reason": "sum for % calc",
+                                "row_count": _total_rows,
+                                "valid_count": _valid_rows,
+                                "operation": "pct", "loc_breakdown": None, "auto_loc": None,
+                            }
+                            st.session_state["sq_results_history"].append({
+                                "query": _q_label, "source": sq_src,
+                                "records": _total_rows, "results": [_res_pct],
+                            })
+
+                        elif _sel_op_name == "Cumulative Sum":
+                            _cum_df = pd.DataFrame({
+                                "Row #": range(1, len(_num_s) + 1),
+                                _sel_col: _num_s.values,
+                                "Cumulative Sum": _num_s.cumsum().values,
+                            })
+                            st.dataframe(_cum_df, use_container_width=True)
+                            _res_cum = {
+                                "type": "table", "label": _q_label,
+                                "data": _cum_df, "row_count": len(_cum_df),
+                            }
+                            st.session_state["sq_results_history"].append({
+                                "query": _q_label, "source": sq_src,
+                                "records": _total_rows, "results": [_res_cum],
+                            })
+
+                        else:
+                            # Standard scalar operation
+                            _val = float(_op_fn(_num_s))
+                            _pct_v = _valid_rows / _total_rows * 100 if _total_rows else 0
+
+                            # Format display value
+                            if _unit == "₹":
+                                if abs(_val) >= 1_00_00_000:
+                                    _val_disp = f"₹ {_val/1_00_00_000:,.2f} Cr"
+                                elif abs(_val) >= 1_00_000:
+                                    _val_disp = f"₹ {_val/1_00_000:,.2f} L"
+                                else:
+                                    _val_disp = f"₹ {_val:,.2f}"
+                            else:
+                                _val_disp = f"{_val:,.4f} {_unit}".strip() if abs(_val) < 1e10 else f"{_val:.4e}"
+
+                            st.markdown(f"""
+                            <div style="background:{DARK2};border:1px solid {BORD};
+                                 border-radius:14px;padding:22px 30px;margin:10px 0">
+                              <div style="font-size:.72rem;color:{MUTED};font-weight:700;
+                                   text-transform:uppercase;letter-spacing:.07em;
+                                   margin-bottom:8px">{_sel_op_name}</div>
+                              <div style="font-size:2.2rem;font-weight:900;color:{CYAN};
+                                   line-height:1.1">{_val_disp}</div>
+                              <div style="font-size:.74rem;color:{MUTED};margin-top:10px;
+                                   border-top:1px solid {BORD};padding-top:8px">
+                                📊 Column: <b style="color:{TEXT}">{_sel_col}</b><br>
+                                ✅ <b style="color:{GREEN}">{_valid_rows:,}</b> of
+                                <b style="color:{TEXT}">{_total_rows:,}</b> rows had numeric values
+                                ({_pct_v:.0f}%)
+                                {"⚠️ Many blank/text values — result may be partial" if _pct_v < 50 else ""}
+                              </div>
+                            </div>""", unsafe_allow_html=True)
+
+                            # Per-location breakdown
+                            if _op_grp_loc and "_Location" in _work.columns:
+                                _loc_rows_2 = []
+                                for _ll, _lg in _work.groupby("_Location"):
+                                    _ls = _robust_to_numeric(_lg[_sel_col]).dropna()
+                                    if not _ls.empty:
+                                        _lv = float(_op_fn(_ls))
+                                        _loc_rows_2.append({
+                                            "Location": _ll,
+                                            f"{_sel_op_name} of {_sel_col}": round(_lv, 4),
+                                            "Valid Rows": len(_ls),
+                                        })
+                                if _loc_rows_2:
+                                    _loc_df2 = pd.DataFrame(_loc_rows_2).sort_values(
+                                        f"{_sel_op_name} of {_sel_col}", ascending=False
+                                    ).reset_index(drop=True)
+                                    _loc_df2.index = range(1, len(_loc_df2) + 1)
+                                    with st.expander("📍 Per-location breakdown", expanded=True):
+                                        st.dataframe(_loc_df2, use_container_width=True)
+
+                            # Save to history
+                            _auto_loc2 = None
+                            if _op_grp_loc and "_Location" in _work.columns:
+                                _grp2b = _work.groupby("_Location")[_sel_col].apply(
+                                    lambda x: _robust_to_numeric(x).sum()
+                                ).reset_index()
+                                _grp2b.columns = ["Location", _sel_col]
+                                _grp2b = _grp2b.sort_values(_sel_col, ascending=False).reset_index(drop=True)
+                                _grp2b.index += 1
+                                _auto_loc2 = _grp2b
+                            _res_sc = {
+                                "type": "scalar", "label": _q_label,
+                                "value": _val, "unit": _unit,
+                                "column": _sel_col, "col_reason": "direct selection",
+                                "row_count": _total_rows,
+                                "valid_count": _valid_rows,
+                                "operation": _sel_op_name.lower(),
+                                "loc_breakdown": None, "auto_loc": _auto_loc2,
+                            }
+                            st.session_state["sq_results_history"].append({
+                                "query": _q_label, "source": sq_src,
+                                "records": _total_rows, "results": [_res_sc],
+                            })
+
+    run_clicked = False  # Compatibility — old AI path disabled in this mode
+
 
     # ── Display ───────────────────────────────────────────────────────────────
     if st.session_state.get("sq_results_history"):
