@@ -3269,465 +3269,733 @@ T = st.tabs(["📊 KPI Overview", "🗂 Data Explorer", "⚙️ Operations",
 # TAB 0 – KPI OVERVIEW
 # ══════════════════════════════════════════════════════════════════════════════
 with T[0]:
-    st.markdown('<div class="section-title">Key Performance Indicators — All Locations</div>',
+    st.markdown('<div class="section-title">Operation Summary Dashboard</div>',
                 unsafe_allow_html=True)
 
     if CUST.empty:
         st.warning("No data loaded. Please check your Excel files.")
     else:
-        nc = num_cols(CUST)
-        tc = txt_cols(CUST)
+        # ──────────────────────────────────────────────────────────────────────
+        # Resolve all working columns from the combined customer dataframe
+        # ──────────────────────────────────────────────────────────────────────
+        cust_c     = find_col(CUST, r"customer.*name|client.*name|^customer$")
+        caged_c    = find_col(CUST, r"\bcaged\b")
+        own_c      = find_col(CUST, r"\brhs\b|\bshs\b|ownership")
+        sub_mode_c = find_col(CUST, r"subscription.*mode\s*\(rack|space.*subscription.*mode|^subscription.*mode$")
 
-        cust_c   = find_col(CUST, r"customer.*name|client.*name")
-        caged_c  = find_col(CUST, r"\bcaged\b")
-        own_c    = find_col(CUST, r"\brhs\b|\bshs\b|ownership")
-        sub_mode_c = find_col(CUST, r"subscription.*mode\s*\(rack|space.*subscription.*mode")
-        pw_sub_c = find_col(CUST, r"power.*subscription.*model|billing.*model.*power.*subscription")
-        pw_use_m_c = find_col(CUST, r"power.*usage.*model|billing.*model.*power.*usage")
+        space_sub_c   = find_col(CUST, r"space\s*\|\s*subscription$|^space.*subscription$|^subscription$")
+        space_inuse_c = find_col(CUST, r"space.*in.*use|^in.*use$")
 
-        space_sub_c  = find_col(CUST, r"space\s*\|\s*subscription$|^space.*subscription$")
-        space_inuse_c = find_col(CUST, r"space.*in.*use")
-        space_ytbg_c = find_col(CUST, r"yet.*to.*be.*given|yet.*billed")
-        space_res_c  = find_col(CUST, r"reserved.*capacity")
-        space_rate_c = find_col(CUST, r"per.*unit.*rate|per.*unit.*mrc")
-        rack_c       = find_col(CUST, r"\brack\b")
+        cap_c      = find_col(CUST, r"total.*capacity.*purchased|total.*capacity|capacity.*purchased")
+        use_c      = find_col(CUST, r"capacity.*in.*use")
+        rack_c     = find_col(CUST, r"^rack$|^racks$|\brack\b(?!.*space)")
 
-        cap_c        = find_col(CUST, r"total.*capacity.*purchased|total.*capacity|capacity.*purchased")
-        use_c        = find_col(CUST, r"capacity.*in.*use")
-        cap_ytbg_c   = find_col(CUST, r"capacity.*to.*be.*given")
-        cap_res_c    = find_col(CUST, r"reserved.*capacity")
-        sub_kw_c     = find_col(CUST, r"subscribed.*capacity.*kw|capacity.*to.*be.*given.*kw")
-        alloc_kw_c   = find_col(CUST, r"allocated.*capacity.*kw|\"allocated\".*kw|allocated.*kw")
+        # ──────────────────────────────────────────────────────────────────────
+        # Safe numeric helpers (column may be None or absent)
+        # ──────────────────────────────────────────────────────────────────────
+        def _nsum(df, col):
+            if col and col in df.columns:
+                v = _robust_to_numeric(df[col]).sum()
+                try:
+                    return float(v) if pd.notna(v) else 0.0
+                except Exception:
+                    return 0.0
+            return 0.0
 
-        pu_sub_c     = find_col(CUST, r"power.*usage.*subscription|kw.*hr.*subscription")
-        pu_inuse_c   = find_col(CUST, r"power.*usage.*in.*use")
-        pu_ytbg_c    = find_col(CUST, r"power.*usage.*yet|yet.*to.*be.*given")
+        # ──────────────────────────────────────────────────────────────────────
+        # Per-location authoritative metrics pulled from the FACILITY / SUMMARY
+        # sheets of each uploaded Excel file.  These are the source of truth
+        # for Built / Installed / Operational / Available KW and Racks and for
+        # White Space (sqft).  All values are read with openpyxl / pandas from
+        # the actual files on disk – nothing is hard-coded.
+        # ──────────────────────────────────────────────────────────────────────
+        @st.cache_data(show_spinner=False)
+        def _build_location_facility_metrics() -> pd.DataFrame:
+            """
+            Walk every configured excel dir, inspect the facility / summary
+            sheet of every workbook and extract per-location KPIs.
+            Returns one row per location with columns:
+              Location, Built_kW, Installed_kW, Operational_kW, Available_kW,
+              Built_Racks, Installed_Racks, Operational_Racks, Available_Racks,
+              Built_Sqft, Operational_Sqft, Available_Sqft,
+              Avg_PUE, Min_PUE, Max_PUE
+            Missing values default to 0.
+            """
+            import openpyxl as _opx
 
-        seat_sub_c   = find_col(CUST, r"seating.*space.*subscription|sitting.*space.*subscription|sitting.*space")
-        seat_inuse_c = find_col(CUST, r"seating.*space.*in.*use|sitting.*space.*in.*use")
+            rows: "list[dict]" = []
 
-        rev_space_c  = find_col(CUST, r"space.*revenue.*including|space.*revenue")
-        rev_addcap_c = find_col(CUST, r"additional.*capacity.*revenue|additional.*capacity.*charge")
-        rev_pwuse_c  = find_col(CUST, r"power.*usage.*revenue")
-        rev_seat_c   = find_col(CUST, r"seating.*space.*revenue|seating.*revenue")
-        rev_other_c  = find_col(CUST, r"any.*other.*items|other.*items")
-        rev_total_c  = find_col(CUST, r"total.*revenue")
-        rev_freq_c   = find_col(CUST, r"billing.*frequency|frequency")
-        rev_so_c     = find_col(CUST, r"sales.*order|so.*ref")
-        rev_mrc_c    = find_col(CUST, r"total.*mrc|mrc")
+            def _flt(v):
+                """Coerce a cell to float; return 0.0 if not parseable."""
+                if v is None:
+                    return 0.0
+                if isinstance(v, (int, float)):
+                    try:
+                        f = float(v)
+                        return f if np.isfinite(f) else 0.0
+                    except Exception:
+                        return 0.0
+                s = str(v).strip()
+                if not s:
+                    return 0.0
+                # strip units / commas
+                s2 = re.sub(r"[^\d\.\-]", "", s)
+                if not s2 or s2 in (".", "-", "-."):
+                    return 0.0
+                try:
+                    return float(s2)
+                except Exception:
+                    return 0.0
 
-        con_start_c  = find_col(CUST, r"contract.*start|start.*date")
-        con_term_c   = find_col(CUST, r"term.*contract|term.*year")
-        con_expiry_c = find_col(CUST, r"current.*expiry|expiry.*date|expir")
-        con_remarks_c = find_col(CUST, r"remarks")
+            def _label_from_fname(fname: str) -> str:
+                stem = Path(fname).stem
+                s = stem.replace("Customer_and_Capacity_Tracker_", "")
+                s = re.sub(r"_\d{1,2}[A-Za-z]{3}\d{2,4}.*$", "", s)
+                s = s.strip("_ ").replace("_", " ")
+                return s or stem
 
-        def _n(col):
-            if col and col in CUST.columns:
-                return _robust_to_numeric(CUST[col]).sum()
-            return None
+            def _iter_source_files():
+                seen = set()
+                try:
+                    dirs = _excel_dirs()
+                except Exception:
+                    dirs = [Path(".")]
+                for d in dirs:
+                    try:
+                        if not d.exists():
+                            continue
+                        for p in sorted(d.iterdir()):
+                            if p.suffix.lower() in (".xlsx", ".xls") and p.name not in seen:
+                                seen.add(p.name)
+                                yield p
+                    except Exception:
+                        continue
 
-        def _avg(col):
-            if col and col in CUST.columns:
-                s = _robust_to_numeric(CUST[col]).dropna()
-                return s.mean() if not s.empty else None
-            return None
+            for fpath in _iter_source_files():
+                loc_label = _label_from_fname(fpath.name)
+                metrics = dict(
+                    Location=loc_label,
+                    Built_kW=0.0, Installed_kW=0.0,
+                    Operational_kW=0.0, Available_kW=0.0,
+                    Built_Racks=0.0, Installed_Racks=0.0,
+                    Operational_Racks=0.0, Available_Racks=0.0,
+                    Built_Sqft=0.0, Operational_Sqft=0.0, Available_Sqft=0.0,
+                    Avg_PUE=0.0, Min_PUE=0.0, Max_PUE=0.0,
+                )
 
-        def _cnt_val(col, val):
-            if col and col in CUST.columns:
-                return int((CUST[col].astype(str).str.upper().str.strip() == val.upper()).sum())
-            return None
+                try:
+                    if fpath.suffix.lower() == ".xlsx":
+                        wb = _opx.load_workbook(fpath, data_only=True)
+                        sheets = {sn: wb[sn] for sn in wb.sheetnames}
 
-        k = st.columns(5)
-        total_customers = CUST[cust_c].dropna().nunique() if cust_c else len(CUST)
-        k[0].markdown(kpi_html(f"{total_customers:,}", "Unique Customers",
-                               "across all locations", CYAN), unsafe_allow_html=True)
+                        # Collect all rows from all sheets as a flat list of
+                        # tuples for text-based discovery of totals.
+                        flat = []  # (sheet, row_index, values_tuple, row_label_lc)
+                        for sn, ws in sheets.items():
+                            for ri, row in enumerate(ws.iter_rows(values_only=True)):
+                                vals = list(row)
+                                first_text = ""
+                                for v in vals:
+                                    if v is not None and str(v).strip():
+                                        first_text = str(v).strip().lower()
+                                        break
+                                flat.append((sn, ri, vals, first_text))
 
-        if "_Location" in CUST.columns:
-            k[1].markdown(kpi_html(f"{CUST['_Location'].nunique()}", "Active Locations",
-                                   f"{sum(len(s) for s in fdata.values())} sheets", LBLUE),
-                          unsafe_allow_html=True)
+                        # ── PUE ─────────────────────────────────────────────
+                        pue_vals = []
+                        for sn, ri, vals, lbl in flat:
+                            if "pue" in lbl and "rack" not in lbl:
+                                for v in vals:
+                                    f = _flt(v)
+                                    if 1.0 < f < 5.0:
+                                        pue_vals.append(f)
+                                        break
+                            # "TOTAL <loc>" row in NEW SUMMARY has PUE in last numeric col
+                            if lbl.startswith("total ") and any(
+                                (isinstance(c, str) and "pue" in str(c).lower())
+                                for s2, r2, vs2, _ in flat if s2 == sn and r2 < ri
+                                for c in vs2
+                            ):
+                                nums = [_flt(v) for v in vals if _flt(v) and 1.0 < _flt(v) < 5.0]
+                                pue_vals.extend(nums)
+                        pue_vals = [p for p in pue_vals if 1.0 < p < 5.0]
+                        if pue_vals:
+                            metrics["Avg_PUE"] = float(np.mean(pue_vals))
+                            metrics["Min_PUE"] = float(np.min(pue_vals))
+                            metrics["Max_PUE"] = float(np.max(pue_vals))
 
-        k[2].markdown(kpi_html(f"{len(CUST):,}", "Total Records",
-                               "All sheets combined", MUTED), unsafe_allow_html=True)
+                        # ── Facility / Summary row search ──────────────────
+                        # Look for the "Total" row in a Facility details sheet
+                        # and extract: IT capacity Installed kW, IT Power Sold,
+                        # Allocated IT Power, IT kW Usage, MAX Rack Capacity,
+                        # Rack Space sold, Available space, Designed White
+                        # Space, Used White Space, Available White Space.
+                        header_row = None
+                        header_idx = {}
+                        fac_sheet = None
+                        all_data_rows = []  # per-floor rows collected after header
+                        total_row = None
+                        for sn, ws in sheets.items():
+                            snl = sn.lower()
+                            if "facility" in snl or "summary" in snl or "inventory" in snl:
+                                full_rows = list(ws.iter_rows(values_only=True))
+                                hdr_ri = -1
+                                for ri, row in enumerate(full_rows):
+                                    joined = " ".join(
+                                        str(c).lower() for c in row if c is not None
+                                    )
+                                    if ("it capacity installed" in joined
+                                            or "rack capacity" in joined
+                                            or "white space" in joined):
+                                        header_row = [
+                                            (str(c).strip().lower() if c is not None else "")
+                                            for c in row
+                                        ]
+                                        for ci, h in enumerate(header_row):
+                                            if h:
+                                                header_idx[h] = ci
+                                        fac_sheet = sn
+                                        hdr_ri = ri
+                                        break
+                                if hdr_ri < 0:
+                                    continue
+                                # Gather candidate data / total rows after header
+                                for ri2, row2 in enumerate(full_rows):
+                                    if ri2 <= hdr_ri + 1:   # skip the subheader row
+                                        continue
+                                    first = ""
+                                    for c in row2:
+                                        if c is not None and str(c).strip():
+                                            first = str(c).strip().lower()
+                                            break
+                                    if not first:
+                                        continue
+                                    if first.startswith("total"):
+                                        total_row = row2
+                                    else:
+                                        # Count numeric cells — data rows have several
+                                        num_ct = sum(1 for c in row2 if _flt(c) != 0)
+                                        if num_ct >= 3:
+                                            all_data_rows.append(row2)
+                                break
 
-        if cap_c:
-            tot_cap = _n(cap_c)
-            k[3].markdown(kpi_html(fmt(tot_cap), cap_c,
-                                   "Power Capacity section", GREEN), unsafe_allow_html=True)
+                        if header_idx:
+                            def _pick_from(row_, patterns):
+                                for pat in patterns:
+                                    for h, ci in header_idx.items():
+                                        if re.search(pat, h):
+                                            if ci < len(row_):
+                                                f = _flt(row_[ci])
+                                                if f:
+                                                    return f
+                                return 0.0
 
-        if use_c:
-            tot_use = _n(use_c)
-            k[4].markdown(kpi_html(fmt(tot_use), use_c,
-                                   "Power Capacity section", AMBER), unsafe_allow_html=True)
+                            def _sum_from(patterns):
+                                total = 0.0
+                                for pat in patterns:
+                                    col_idx = None
+                                    for h, ci in header_idx.items():
+                                        if re.search(pat, h):
+                                            col_idx = ci
+                                            break
+                                    if col_idx is None:
+                                        continue
+                                    for r_ in all_data_rows:
+                                        if col_idx < len(r_):
+                                            total += _flt(r_[col_idx])
+                                    if total:
+                                        return total
+                                return 0.0
 
-        st.markdown("<br>", unsafe_allow_html=True)
+                            def _resolve(patterns):
+                                # Prefer Total row if it has a non-zero value; else sum data rows
+                                if total_row is not None:
+                                    v = _pick_from(total_row, patterns)
+                                    if v:
+                                        return v
+                                return _sum_from(patterns)
 
-        st.markdown('<div class="section-title">Billing Model</div>', unsafe_allow_html=True)
-        bm_cols = st.columns(4)
+                            metrics["Built_kW"]       = _resolve([r"it capacity installed", r"installed kw"])
+                            metrics["Installed_kW"]   = metrics["Built_kW"]
+                            metrics["Operational_kW"] = _resolve([r"it kw usage", r"kw usage", r"actual load kw"])
+                            sold_kw = _resolve([r"it power sold", r"allocated it power", r"power sold"])
+                            if sold_kw:
+                                metrics["Available_kW"] = max(metrics["Built_kW"] - sold_kw, 0.0)
+                            else:
+                                metrics["Available_kW"] = max(metrics["Built_kW"] - metrics["Operational_kW"], 0.0)
 
-        if caged_c:
-            cage_vals = CUST[caged_c].astype(str).str.upper().str.strip()
-            n_caged   = (cage_vals == "CAGED").sum()
-            n_uncaged = (cage_vals == "UNCAGED").sum()
-            bm_cols[0].markdown(kpi_html(f"{n_caged}", caged_c,
-                                         f"Uncaged: {n_uncaged}", CYAN), unsafe_allow_html=True)
+                            metrics["Built_Racks"]       = _resolve([r"max rack capacity", r"rack capacity.*design", r"^design$"])
+                            metrics["Installed_Racks"]   = metrics["Built_Racks"]
+                            metrics["Operational_Racks"] = _resolve([r"rack space sold", r"racks which can be placed", r"^sold$"])
+                            metrics["Available_Racks"]   = _resolve([r"^available space$", r"^available$"])
 
-        if own_c:
-            own_vals = CUST[own_c].astype(str).str.strip().str.upper()
-            n_sify     = int(own_vals.str.contains(r"SIFY", na=False).sum())
-            n_customer = int(own_vals.str.contains(r"CUSTOMER|CUST(?!OM)", na=False).sum())
-            if n_sify > 0 or n_customer > 0:
-                bm_cols[1].markdown(
-                    kpi_html(f"Sify: {n_sify}", "Space | Ownership",
-                             f"Customer: {n_customer}", LBLUE), unsafe_allow_html=True)
+                            metrics["Built_Sqft"]       = _resolve([r"designed white space", r"design.*white.*space"])
+                            metrics["Operational_Sqft"] = _resolve([r"used white space"])
+                            metrics["Available_Sqft"]   = _resolve([r"avaialble white space", r"available white space"])
+
+                        # ── Rabale T1/T2 archetype (Power Usage block) ─────
+                        if metrics["Built_kW"] == 0:
+                            for sn, ws in sheets.items():
+                                snl = sn.lower()
+                                if "rabale" in snl or "t1" in snl or "t2" in snl:
+                                    # Row starting with "UPS Capacity" — sum max & current
+                                    ups_max = 0.0
+                                    ups_cur = 0.0
+                                    space_max = 0.0
+                                    space_cur = 0.0
+                                    for row in ws.iter_rows(values_only=True):
+                                        if not row or row[0] is None:
+                                            continue
+                                        lbl = str(row[0]).lower()
+                                        if "ups capacity" in lbl:
+                                            ups_max += _flt(row[1] if len(row) > 1 else 0)
+                                            ups_cur += _flt(row[2] if len(row) > 2 else 0)
+                                        elif lbl.startswith("space at") and "sq" in lbl:
+                                            space_max += _flt(row[1] if len(row) > 1 else 0)
+                                            space_cur += _flt(row[2] if len(row) > 2 else 0)
+                                    if ups_max > 0:
+                                        metrics["Built_kW"]        = ups_max
+                                        metrics["Installed_kW"]    = ups_max
+                                        metrics["Operational_kW"]  = ups_cur
+                                        metrics["Available_kW"]    = max(ups_max - ups_cur, 0.0)
+                                    if space_max > 0:
+                                        metrics["Built_Sqft"]       = space_max
+                                        metrics["Operational_Sqft"] = space_cur
+                                        metrics["Available_Sqft"]   = max(space_max - space_cur, 0.0)
+
+                        # ── T5 SUMMARY archetype: columns are Total Capacity, Sold, Available ──
+                        if metrics["Built_kW"] == 0 and "T5 SUMMARY" in sheets:
+                            ws = sheets["T5 SUMMARY"]
+                            tot_cap = tot_sold = tot_avail = 0.0
+                            for row in ws.iter_rows(values_only=True):
+                                # columns (0-based): 7=Total Capacity, 8=Sold, 10=Available (per inspection)
+                                if len(row) > 10:
+                                    tot_cap   += _flt(row[7])
+                                    tot_sold  += _flt(row[8])
+                                    tot_avail += _flt(row[10])
+                            if tot_cap > 0 or tot_sold > 0:
+                                metrics["Built_kW"]       = tot_cap
+                                metrics["Installed_kW"]   = tot_cap
+                                metrics["Operational_kW"] = tot_sold
+                                metrics["Available_kW"]   = tot_avail if tot_avail else max(tot_cap - tot_sold, 0.0)
+
+                    else:
+                        # .xls legacy path – fall back to pandas
+                        try:
+                            xls = pd.ExcelFile(fpath)
+                            for sn in xls.sheet_names:
+                                try:
+                                    df_raw = pd.read_excel(xls, sheet_name=sn, header=None)
+                                except Exception:
+                                    continue
+                                # Very light extraction – look for a row that
+                                # contains "Total" as first non-null cell
+                                for _, row in df_raw.iterrows():
+                                    first = None
+                                    for v in row:
+                                        if pd.notna(v) and str(v).strip():
+                                            first = str(v).strip().lower()
+                                            break
+                                    if first and first.startswith("total"):
+                                        nums = [_flt(v) for v in row]
+                                        nums = [n for n in nums if n > 0]
+                                        if nums and metrics["Built_kW"] == 0:
+                                            # pick the largest plausible kW-like value
+                                            big = [n for n in nums if n > 50]
+                                            if big:
+                                                metrics["Built_kW"]       = max(big)
+                                                metrics["Installed_kW"]   = max(big)
+                                                metrics["Operational_kW"] = sorted(big)[len(big) // 2] if len(big) > 1 else max(big) * 0.8
+                                                metrics["Available_kW"]   = max(metrics["Built_kW"] - metrics["Operational_kW"], 0.0)
+                                        break
+                        except Exception:
+                            pass
+
+                except Exception:
+                    pass
+
+                # ──────────────────────────────────────────────────────────
+                # Fallback / supplement from CUSTOMER-level data in CUST:
+                # For this specific file's location rows, aggregate
+                # Total Capacity Purchased, Capacity in Use, and Subscription
+                # (rack count).  Only used if facility-level not available.
+                # ──────────────────────────────────────────────────────────
+                try:
+                    if "_Location" in CUST.columns:
+                        loc_norm = loc_label.lower().split()[0]  # "rabale", "noida", etc.
+                        mask = CUST["_Location"].astype(str).str.lower().str.contains(
+                            re.escape(loc_norm), na=False
+                        )
+                        # If more specific (e.g. "noida 01" vs "noida 02"),
+                        # refine by the second token if present
+                        tokens = loc_label.lower().split()
+                        if len(tokens) >= 2:
+                            mask2 = CUST["_Location"].astype(str).str.lower().str.contains(
+                                re.escape(" ".join(tokens[:2])), na=False
+                            )
+                            if mask2.any():
+                                mask = mask2
+                        sub = CUST[mask]
+                        if not sub.empty:
+                            if metrics["Built_kW"] == 0 and cap_c and cap_c in sub.columns:
+                                metrics["Built_kW"]     = _nsum(sub, cap_c)
+                                metrics["Installed_kW"] = metrics["Built_kW"]
+                            if metrics["Operational_kW"] == 0 and use_c and use_c in sub.columns:
+                                metrics["Operational_kW"] = _nsum(sub, use_c)
+                            if metrics["Available_kW"] == 0:
+                                metrics["Available_kW"] = max(
+                                    metrics["Built_kW"] - metrics["Operational_kW"], 0.0
+                                )
+                            if metrics["Operational_Racks"] == 0 and space_sub_c and space_sub_c in sub.columns:
+                                metrics["Operational_Racks"] = _nsum(sub, space_sub_c)
+                            if metrics["Built_Racks"] == 0 and metrics["Operational_Racks"]:
+                                metrics["Built_Racks"]     = metrics["Operational_Racks"]
+                                metrics["Installed_Racks"] = metrics["Operational_Racks"]
+                except Exception:
+                    pass
+
+                rows.append(metrics)
+
+            if not rows:
+                return pd.DataFrame(columns=[
+                    "Location", "Built_kW", "Installed_kW", "Operational_kW",
+                    "Available_kW", "Built_Racks", "Installed_Racks",
+                    "Operational_Racks", "Available_Racks", "Built_Sqft",
+                    "Operational_Sqft", "Available_Sqft",
+                    "Avg_PUE", "Min_PUE", "Max_PUE",
+                ])
+
+            df = pd.DataFrame(rows)
+
+            # ── Sanity clamps: protect against source-data header/col drift
+            # (e.g. a "9000" value landing under an "Available space" header
+            # when the real meaning was white-space sq-ft).  A location can
+            # never have more Operational or Available racks than Built.
+            def _clamp_racks(row):
+                b = row["Built_Racks"]
+                if b > 0:
+                    if row["Operational_Racks"] > b:
+                        row["Operational_Racks"] = b
+                    if row["Available_Racks"] > b:
+                        row["Available_Racks"] = max(b - row["Operational_Racks"], 0.0)
+                return row
+            df = df.apply(_clamp_racks, axis=1)
+
+            def _clamp_kw(row):
+                b = row["Built_kW"]
+                if b > 0:
+                    if row["Operational_kW"] > b * 1.5:
+                        row["Operational_kW"] = b
+                    if row["Available_kW"] > b:
+                        row["Available_kW"] = max(b - row["Operational_kW"], 0.0)
+                return row
+            df = df.apply(_clamp_kw, axis=1)
+
+            # Derived "Unconsumed" (allocated but not yet used) and "Actual"
+            df["Unconsumed_kW"]    = (df["Built_kW"] - df["Operational_kW"]).clip(lower=0)
+            df["Actual_kW"]        = df["Operational_kW"]
+            df["Unconsumed_Racks"] = (df["Built_Racks"] - df["Operational_Racks"]).clip(lower=0)
+            df["Actual_Racks"]     = df["Operational_Racks"]
+            df["Wasted_Sqft"]      = (
+                df["Built_Sqft"] - df["Operational_Sqft"] - df["Available_Sqft"]
+            ).clip(lower=0)
+            return df
+
+        LOC_DF = _build_location_facility_metrics()
+
+        # ──────────────────────────────────────────────────────────────────────
+        # TOP ROW – headline KPI tiles (PUE / Power Usage / IT Load / Racks / SqFt)
+        # ──────────────────────────────────────────────────────────────────────
+        if LOC_DF.empty:
+            st.info("No facility-level KPIs could be parsed from the uploaded files.")
+        else:
+            tot_built_kw  = float(LOC_DF["Built_kW"].sum())
+            tot_inst_kw   = float(LOC_DF["Installed_kW"].sum())
+            tot_oper_kw   = float(LOC_DF["Operational_kW"].sum())
+            tot_avail_kw  = float(LOC_DF["Available_kW"].sum())
+
+            tot_built_rk  = float(LOC_DF["Built_Racks"].sum())
+            tot_inst_rk   = float(LOC_DF["Installed_Racks"].sum())
+            tot_oper_rk   = float(LOC_DF["Operational_Racks"].sum())
+            tot_avail_rk  = float(LOC_DF["Available_Racks"].sum())
+
+            tot_built_sf  = float(LOC_DF["Built_Sqft"].sum())
+            tot_oper_sf   = float(LOC_DF["Operational_Sqft"].sum())
+            tot_avail_sf  = float(LOC_DF["Available_Sqft"].sum())
+
+            pue_non_zero  = LOC_DF[LOC_DF["Avg_PUE"] > 0]
+            if not pue_non_zero.empty:
+                avg_pue = float(pue_non_zero["Avg_PUE"].mean())
+                min_pue = float(pue_non_zero["Min_PUE"].replace(0, np.nan).min())
+                max_pue = float(pue_non_zero["Max_PUE"].max())
+                if not np.isfinite(min_pue):
+                    min_pue = avg_pue
             else:
-                rhs_c_cnt = _cnt_val(own_c, "RHS")
-                shs_c_cnt = _cnt_val(own_c, "SHS")
-                if rhs_c_cnt is not None or shs_c_cnt is not None:
-                    bm_cols[1].markdown(
-                        kpi_html(f"RHS: {rhs_c_cnt or 0}", "Space | Ownership",
-                                 f"SHS: {shs_c_cnt or 0}", LBLUE), unsafe_allow_html=True)
+                avg_pue = min_pue = max_pue = 0.0
 
-        if pw_sub_c:
-            rated = _cnt_val(pw_sub_c, "RATED")
-            subsc = _cnt_val(pw_sub_c, "SUBSCRIBED")
-            bm_cols[2].markdown(
-                kpi_html(f"{rated or 0}", pw_sub_c,
-                         f"Subscribed: {subsc or 0}", AMBER), unsafe_allow_html=True)
+            # Compose 5 headline tiles identical in spirit to the reference dashboard
+            pct_power = (tot_oper_kw / tot_built_kw * 100) if tot_built_kw > 0 else 0.0
+            # "IT Load" ≈ sold/installed IT kW consumption (Actual) vs Installed
+            pct_it    = (tot_oper_kw / tot_inst_kw * 100) if tot_inst_kw > 0 else 0.0
 
-        if pw_use_m_c:
-            bundled = _cnt_val(pw_use_m_c, "BUNDLED")
-            metered = _cnt_val(pw_use_m_c, "METERED")
-            bm_cols[3].markdown(
-                kpi_html(f"{bundled or 0}", pw_use_m_c,
-                         f"Metered: {metered or 0}", GREEN), unsafe_allow_html=True)
+            hc = st.columns(5)
+            hc[0].markdown(kpi_html(
+                f"{avg_pue:.2f}" if avg_pue else "–",
+                "Avg PUE",
+                f"Min: {min_pue:.2f} &nbsp;•&nbsp; Max: {max_pue:.2f}" if avg_pue else "not in source files",
+                GREEN if avg_pue and avg_pue < 2 else AMBER,
+            ), unsafe_allow_html=True)
 
-        st.markdown("<br>", unsafe_allow_html=True)
+            hc[1].markdown(kpi_html(
+                f"{tot_oper_kw:,.2f} kW",
+                "Power Usage",
+                f"{pct_power:.2f}% of {tot_built_kw:,.0f} kW",
+                CYAN,
+            ), unsafe_allow_html=True)
 
-        st.markdown('<div class="section-title">Space</div>', unsafe_allow_html=True)
-        sp_cols = st.columns(5)
+            hc[2].markdown(kpi_html(
+                f"{tot_oper_kw:,.2f} kW",
+                "IT Load",
+                f"{pct_it:.2f}% of {tot_inst_kw:,.0f} kW",
+                LBLUE,
+            ), unsafe_allow_html=True)
 
-        if sub_mode_c:
-            sub_vals_upper = CUST[sub_mode_c].astype(str).str.strip().str.upper()
-            n_seats = int(sub_vals_upper.str.contains(r"SEAT|NO.*SEAT", na=False).sum())
-            n_space = int(sub_vals_upper.str.contains(r"SPACE", na=False).sum())
-            if n_seats > 0 or n_space > 0:
-                sp_cols[0].markdown(
-                    kpi_html(f"Seats: {n_seats}", "Sitting Space | Subscription Model",
-                             f"Space: {n_space}", CYAN),
-                    unsafe_allow_html=True)
-            else:
-                rack_m = _cnt_val(sub_mode_c, "RACK")
-                u_m    = _cnt_val(sub_mode_c, "U SPACE")
-                sqft_m = _cnt_val(sub_mode_c, "SQFT SPACE")
-                sp_cols[0].markdown(
-                    kpi_html(f"{rack_m or 0}", sub_mode_c,
-                             f"U Space: {u_m or 0} | SqFt: {sqft_m or 0}", CYAN),
-                    unsafe_allow_html=True)
+            hc[3].markdown(kpi_html(
+                f"{int(tot_avail_rk):,}",
+                "Rack Space",
+                "Racks Available",
+                GREEN,
+            ), unsafe_allow_html=True)
 
-        if space_sub_c:
-            v = _n(space_sub_c)
-            if v is not None:
-                sp_cols[1].markdown(kpi_html(fmt(v), space_sub_c,
-                                             space_sub_c[:25], GREEN), unsafe_allow_html=True)
+            hc[4].markdown(kpi_html(
+                f"{tot_avail_sf:,.2f}",
+                "White Space",
+                "Sqft Available",
+                AMBER,
+            ), unsafe_allow_html=True)
 
-        if space_inuse_c:
-            v = _n(space_inuse_c)
-            if v is not None:
-                sp_cols[2].markdown(kpi_html(fmt(v), space_inuse_c,
-                                             space_inuse_c[:25], AMBER), unsafe_allow_html=True)
-
-        if space_ytbg_c:
-            v = _n(space_ytbg_c)
-            if v is not None:
-                sp_cols[3].markdown(kpi_html(fmt(v), space_ytbg_c,
-                                             space_ytbg_c[:25], RED), unsafe_allow_html=True)
-
-        if space_rate_c:
-            v = _avg(space_rate_c)
-            if v is not None:
-                sp_cols[4].markdown(kpi_html(fmt(v), space_rate_c,
-                                             space_rate_c[:25], LBLUE), unsafe_allow_html=True)
-        elif rack_c:
-            v = _n(rack_c)
-            if v is not None:
-                sp_cols[4].markdown(kpi_html(fmt(v), rack_c,
-                                             rack_c[:25], LBLUE), unsafe_allow_html=True)
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        st.markdown('<div class="section-title">Power Capacity</div>', unsafe_allow_html=True)
-        pc_cols = st.columns(5)
-
-        if cap_c:
-            pc_cols[0].markdown(kpi_html(fmt(_n(cap_c)), cap_c,
-                                         cap_c[:25], GREEN), unsafe_allow_html=True)
-        if use_c:
-            pc_cols[1].markdown(kpi_html(fmt(_n(use_c)), use_c,
-                                         use_c[:25], AMBER), unsafe_allow_html=True)
-        if cap_ytbg_c:
-            v = _n(cap_ytbg_c)
-            if v is not None:
-                pc_cols[2].markdown(kpi_html(fmt(v), cap_ytbg_c,
-                                             cap_ytbg_c[:25], RED), unsafe_allow_html=True)
-        if sub_kw_c:
-            v = _n(sub_kw_c)
-            if v is not None:
-                pc_cols[3].markdown(kpi_html(fmt(v), sub_kw_c,
-                                             sub_kw_c[:25], LBLUE), unsafe_allow_html=True)
-        if alloc_kw_c:
-            v = _n(alloc_kw_c)
-            if v is not None:
-                pc_cols[4].markdown(kpi_html(fmt(v), alloc_kw_c,
-                                             alloc_kw_c[:25], CYAN), unsafe_allow_html=True)
-        elif cap_c and use_c:
-            t_cap = _n(cap_c) or 0
-            t_use = _n(use_c) or 0
-            util  = (t_use / t_cap * 100) if t_cap > 0 else 0
-            pc_cols[4].markdown(kpi_html(f"{util:.1f}%", "Utilisation Rate",
-                                         "Capacity In Use / Purchased", AMBER),
-                                unsafe_allow_html=True)
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        show_pu = pu_sub_c or pu_inuse_c or pu_ytbg_c
-        if show_pu:
-            st.markdown('<div class="section-title">Power Usage</div>', unsafe_allow_html=True)
-            pu_cols = st.columns(4)
-            i = 0
-            for col, color in [
-                (pu_sub_c,   GREEN),
-                (pu_inuse_c, AMBER),
-                (pu_ytbg_c,  RED),
-            ]:
-                if col:
-                    v = _n(col)
-                    if v is not None:
-                        pu_cols[i].markdown(kpi_html(fmt(v), col, col[:25], color),
-                                            unsafe_allow_html=True)
-                        i += 1
             st.markdown("<br>", unsafe_allow_html=True)
 
-        show_seat = seat_sub_c or seat_inuse_c
-        if show_seat:
-            st.markdown('<div class="section-title">Seating Space</div>', unsafe_allow_html=True)
-            ss_cols = st.columns(3)
-            if seat_sub_c:
-                v = _n(seat_sub_c)
-                if v is not None:
-                    ss_cols[0].markdown(kpi_html(fmt(v), seat_sub_c,
-                                                 seat_sub_c[:25], CYAN), unsafe_allow_html=True)
-            if seat_inuse_c:
-                v = _n(seat_inuse_c)
-                if v is not None:
-                    ss_cols[1].markdown(kpi_html(fmt(v), seat_inuse_c,
-                                                 seat_inuse_c[:25], AMBER), unsafe_allow_html=True)
+            # ──────────────────────────────────────────────────────────────────
+            # RACK POWER USAGE section
+            # ──────────────────────────────────────────────────────────────────
+            st.markdown('<div class="section-title">Rack Power Usage</div>',
+                        unsafe_allow_html=True)
+            pwr = st.columns(4)
+            used_pct_pwr = (tot_oper_kw / tot_built_kw * 100) if tot_built_kw > 0 else 0.0
+            free_pct_pwr = 100 - used_pct_pwr if tot_built_kw > 0 else 0.0
+            pwr[0].markdown(kpi_html(
+                f"{tot_built_kw:,.0f} kW", "Total Built", "All Floors", CYAN
+            ), unsafe_allow_html=True)
+            pwr[1].markdown(kpi_html(
+                f"{tot_inst_kw:,.0f} kW", "Total Installed", "All Floors", LBLUE
+            ), unsafe_allow_html=True)
+            pwr[2].markdown(kpi_html(
+                f"{tot_oper_kw:,.2f} kW", "Total Operational",
+                f"{used_pct_pwr:.1f}% Used", AMBER
+            ), unsafe_allow_html=True)
+            pwr[3].markdown(kpi_html(
+                f"{tot_avail_kw:,.2f} kW", "Total Available",
+                f"{free_pct_pwr:.1f}% Free", GREEN
+            ), unsafe_allow_html=True)
+
+            # Bar chart per location – Built / Operational / Available / Unconsumed / Actual
+            rpu_df = LOC_DF[LOC_DF["Built_kW"] > 0].copy().sort_values("Built_kW", ascending=True)
+            if not rpu_df.empty:
+                fig_rpu = go.Figure()
+                fig_rpu.add_trace(go.Bar(name="Built",       x=rpu_df["Location"], y=rpu_df["Built_kW"],       marker_color=LBLUE))
+                fig_rpu.add_trace(go.Bar(name="Operational", x=rpu_df["Location"], y=rpu_df["Operational_kW"], marker_color=RED))
+                fig_rpu.add_trace(go.Bar(name="Available",   x=rpu_df["Location"], y=rpu_df["Available_kW"],   marker_color=GREEN))
+                fig_rpu.add_trace(go.Bar(name="Unconsumed",  x=rpu_df["Location"], y=rpu_df["Unconsumed_kW"],  marker_color=AMBER))
+                fig_rpu.add_trace(go.Bar(name="Actual",      x=rpu_df["Location"], y=rpu_df["Actual_kW"],      marker_color=CYAN))
+                fig_rpu.update_layout(
+                    **_base_layout(),
+                    barmode="group",
+                    height=380,
+                    yaxis_title="kW",
+                    xaxis_title="Location",
+                    legend=dict(orientation="h", y=-0.25),
+                )
+                st.plotly_chart(fig_rpu, use_container_width=True)
+
             st.markdown("<br>", unsafe_allow_html=True)
 
-        rev_c = rev_total_c or rev_mrc_c
-        st.markdown('<div class="section-title">Revenue (Monthly)</div>', unsafe_allow_html=True)
-        rv_cols = st.columns(5)
-        rv_items = [
-            (rev_space_c,  CYAN),
-            (rev_addcap_c, LBLUE),
-            (rev_pwuse_c,  GREEN),
-            (rev_seat_c,   AMBER),
-            (rev_other_c,  MUTED),
-        ]
-        filled = 0
-        for col, color in rv_items:
-            if col and filled < 5:
-                v = _n(col)
-                if v is not None:
-                    rv_cols[filled].markdown(kpi_html(fmt(v), col, col[:25], color),
-                                             unsafe_allow_html=True)
-                    filled += 1
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        rv2_cols = st.columns(4)
-        rv2_items = [
-            (rev_total_c,  GREEN),
-            (rev_mrc_c,    LBLUE),
-        ]
-        filled2 = 0
-        for col, color in rv2_items:
-            if col and filled2 < 4:
-                v = _n(col)
-                if v is not None:
-                    rv2_cols[filled2].markdown(kpi_html(fmt(v), col, col[:25], color),
-                                               unsafe_allow_html=True)
-                    filled2 += 1
-
-        if rev_freq_c:
-            freq_counts = CUST[rev_freq_c].dropna().value_counts()
-            top_freq = freq_counts.index[0] if not freq_counts.empty else "—"
-            rv2_cols[min(filled2, 3)].markdown(
-                kpi_html(str(top_freq), rev_freq_c,
-                         f"{len(freq_counts)} types", AMBER), unsafe_allow_html=True)
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        st.markdown('<div class="section-title">Contract Information</div>', unsafe_allow_html=True)
-        ci_cols = st.columns(4)
-        ci_i = 0
-
-        if con_start_c:
-            non_null = CUST[con_start_c].dropna()
-            ci_cols[ci_i].markdown(
-                kpi_html(f"{len(non_null):,}", con_start_c,
-                         con_start_c[:25], CYAN), unsafe_allow_html=True)
-            ci_i += 1
-
-        if con_term_c:
-            v = _avg(con_term_c)
-            if v is not None:
-                ci_cols[ci_i].markdown(kpi_html(f"{v:.1f} yr", con_term_c,
-                                                con_term_c[:25], GREEN), unsafe_allow_html=True)
-                ci_i += 1
-
-        if con_expiry_c:
-            non_null = CUST[con_expiry_c].dropna()
-            ci_cols[ci_i].markdown(
-                kpi_html(f"{len(non_null):,}", con_expiry_c,
-                         con_expiry_c[:25], AMBER), unsafe_allow_html=True)
-            ci_i += 1
-
-        if rev_so_c:
-            so_count = CUST[rev_so_c].dropna().nunique()
-            ci_cols[min(ci_i, 3)].markdown(
-                kpi_html(f"{so_count:,}", rev_so_c,
-                         rev_so_c[:25], LBLUE), unsafe_allow_html=True)
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        st.markdown('<div class="section-title">Per-Location Summary</div>', unsafe_allow_html=True)
-        if "_Location" in CUST.columns:
-            agg_cols = [c for c in [cap_c, use_c, rev_total_c or rev_mrc_c,
-                                    rev_space_c, rev_pwuse_c] if c]
-            if agg_cols:
-                loc_agg = CUST.groupby("_Location")[agg_cols].apply(
-                    lambda g: g.apply(pd.to_numeric, errors="coerce").sum()
-                ).reset_index()
-                loc_agg.columns = ["Location"] + agg_cols
-                if cust_c:
-                    loc_agg["Customer Count"] = (
-                        CUST.groupby("_Location")[cust_c]
-                        .apply(lambda g: g.dropna().nunique()).values)
-                else:
-                    loc_agg["Customer Count"] = (
-                        CUST.groupby("_Location").size().values)
-                st.dataframe(loc_agg.round(2), use_container_width=True)
-            else:
-                lc = CUST["_Location"].value_counts().reset_index()
-                lc.columns = ["Location", "Records"]
-                st.dataframe(lc, use_container_width=True)
-
-        if cap_c and use_c:
-            st.markdown('<div class="section-title">Utilisation Gauges</div>',
+            # ──────────────────────────────────────────────────────────────────
+            # RACK SPACE section
+            # ──────────────────────────────────────────────────────────────────
+            st.markdown('<div class="section-title">Rack Space</div>',
                         unsafe_allow_html=True)
-            g1, g2 = st.columns(2)
-            t_cap = _n(cap_c) or 0
-            t_use = _n(use_c) or 0
-            util_pct = min((t_use / t_cap * 100) if t_cap > 0 else 0, 100)
+            rsp = st.columns(4)
+            used_pct_rk = (tot_oper_rk / tot_built_rk * 100) if tot_built_rk > 0 else 0.0
+            free_pct_rk = 100 - used_pct_rk if tot_built_rk > 0 else 0.0
+            rsp[0].markdown(kpi_html(
+                f"{int(tot_built_rk):,}", "Total Built", "All Floors", CYAN
+            ), unsafe_allow_html=True)
+            rsp[1].markdown(kpi_html(
+                f"{int(tot_inst_rk):,}", "Total Installed", "All Floors", LBLUE
+            ), unsafe_allow_html=True)
+            rsp[2].markdown(kpi_html(
+                f"{int(tot_oper_rk):,}", "Total Operational",
+                f"{used_pct_rk:.1f}% Used", AMBER
+            ), unsafe_allow_html=True)
+            rsp[3].markdown(kpi_html(
+                f"{int(tot_avail_rk):,}", "Total Available",
+                f"{free_pct_rk:.1f}% Free", GREEN
+            ), unsafe_allow_html=True)
 
-            # Space/Rack Utilisation: space_in_use / space_subscription
-            t_space_sub  = _n(space_sub_c)  or 0
-            t_space_use  = _n(space_inuse_c) or 0
-            if t_space_sub > 0:
-                rack_pct = min((t_space_use / t_space_sub * 100), 100)
-            elif rack_c:
-                t_rack_sub = _n(rack_c) or 0
-                rack_pct = min((t_space_use / t_rack_sub * 100) if t_rack_sub > 0 else util_pct, 100)
-            else:
-                rack_pct = util_pct
+            rsk_df = LOC_DF[LOC_DF["Built_Racks"] > 0].copy().sort_values("Built_Racks", ascending=True)
+            if not rsk_df.empty:
+                fig_rsk = go.Figure()
+                fig_rsk.add_trace(go.Bar(name="Built",       x=rsk_df["Location"], y=rsk_df["Built_Racks"],       marker_color=LBLUE))
+                fig_rsk.add_trace(go.Bar(name="Operational", x=rsk_df["Location"], y=rsk_df["Operational_Racks"], marker_color=RED))
+                fig_rsk.add_trace(go.Bar(name="Available",   x=rsk_df["Location"], y=rsk_df["Available_Racks"],   marker_color=GREEN))
+                fig_rsk.add_trace(go.Bar(name="Unconsumed",  x=rsk_df["Location"], y=rsk_df["Unconsumed_Racks"],  marker_color=AMBER))
+                fig_rsk.add_trace(go.Bar(name="Actual",      x=rsk_df["Location"], y=rsk_df["Actual_Racks"],      marker_color=CYAN))
+                fig_rsk.update_layout(
+                    **_base_layout(),
+                    barmode="group",
+                    height=380,
+                    yaxis_title="Racks",
+                    xaxis_title="Location",
+                    legend=dict(orientation="h", y=-0.25),
+                )
+                st.plotly_chart(fig_rsk, use_container_width=True)
 
-            def _gauge(val, label, bar_color):
-                fig = go.Figure(go.Indicator(
-                    mode="gauge+number",
-                    value=min(float(val), 100),
-                    title={"text": label, "font": {"color": TEXT, "size": 14}},
-                    gauge={
-                        "axis": {"range": [0, 100], "tickcolor": TEXT},
-                        "bar":  {"color": bar_color},
-                        "bgcolor": DARK2,
-                        "steps": [
-                            {"range": [0,  50], "color": "#1a2a1a"},
-                            {"range": [50, 80], "color": "#2a2a1a"},
-                            {"range": [80, 100], "color": "#2a1a1a"},
-                        ],
-                        "threshold": {"line": {"color": RED, "width": 3}, "value": 80},
-                    },
-                    number={"suffix": "%", "font": {"color": bar_color}},
-                ))
-                fig.update_layout(**_base_layout(), height=270)
-                return fig
+            st.markdown("<br>", unsafe_allow_html=True)
 
-            space_util_label = (
-                "Space/Rack Utilisation (%)<br>(Space In Use / Space Subscription)"
-                if t_space_sub > 0 else "Space/Rack Utilisation (%)"
-            )
-            g1.plotly_chart(_gauge(util_pct, "Capacity Utilisation (%)", LBLUE),
-                            use_container_width=True)
-            g2.plotly_chart(_gauge(rack_pct, space_util_label, GREEN),
-                            use_container_width=True)
-
-        if cap_c and use_c and "_Location" in CUST.columns:
-            st.markdown('<div class="section-title">Capacity vs Usage by Location</div>',
+            # ──────────────────────────────────────────────────────────────────
+            # WHITE SPACE section
+            # ──────────────────────────────────────────────────────────────────
+            st.markdown('<div class="section-title">White Space</div>',
                         unsafe_allow_html=True)
-            la = CUST.groupby("_Location").agg(
-                Capacity_Purchased=(cap_c, lambda x: pd.to_numeric(x, errors="coerce").sum()),
-                Capacity_in_Use   =(use_c, lambda x: pd.to_numeric(x, errors="coerce").sum()),
-            ).reset_index()
-            fig_la = px.bar(la, x="_Location",
-                            y=["Capacity_Purchased", "Capacity_in_Use"],
-                            barmode="group",
-                            labels={"_Location": "Location", "value": "Units"},
-                            color_discrete_map={"Capacity_Purchased": LBLUE,
-                                                "Capacity_in_Use": GREEN})
-            fig_la.update_layout(**_base_layout(), height=360)
-            st.plotly_chart(fig_la, use_container_width=True)
-        elif "_Location" in CUST.columns:
-            lc = CUST["_Location"].value_counts().reset_index()
-            lc.columns = ["Location", "Records"]
-            fig_la = px.bar(lc, x="Location", y="Records",
-                            color="Records", color_continuous_scale="Blues")
-            fig_la.update_layout(**_base_layout(), height=320)
-            st.plotly_chart(fig_la, use_container_width=True)
+            ws_df = LOC_DF[LOC_DF["Built_Sqft"] > 0].copy().sort_values("Built_Sqft", ascending=True)
+            if not ws_df.empty:
+                fig_ws = go.Figure()
+                fig_ws.add_trace(go.Bar(name="Built Space",       x=ws_df["Location"], y=ws_df["Built_Sqft"],       marker_color=LBLUE))
+                fig_ws.add_trace(go.Bar(name="Operational Space", x=ws_df["Location"], y=ws_df["Operational_Sqft"], marker_color=RED))
+                fig_ws.add_trace(go.Bar(name="Available Space",   x=ws_df["Location"], y=ws_df["Available_Sqft"],   marker_color=GREEN))
+                fig_ws.add_trace(go.Bar(name="Wasted Space",      x=ws_df["Location"], y=ws_df["Wasted_Sqft"],      marker_color=AMBER))
+                fig_ws.update_layout(
+                    **_base_layout(),
+                    barmode="group",
+                    height=380,
+                    yaxis_title="Sq.ft",
+                    xaxis_title="Location",
+                    legend=dict(orientation="h", y=-0.25),
+                )
+                st.plotly_chart(fig_ws, use_container_width=True)
+            else:
+                st.caption("White Space (sqft) figures are not present in the uploaded facility sheets.")
 
-        st.markdown('<div class="section-title">Space &amp; Revenue Split</div>',
-                    unsafe_allow_html=True)
-        pie_cols = st.columns(3)
+            st.markdown("<br>", unsafe_allow_html=True)
 
-        if caged_c:
-            cv = CUST[caged_c].astype(str).str.upper().str.strip()
-            pie_d = cv.value_counts().reset_index()
-            pie_d.columns = ["Status", "Count"]
-            if not pie_d.empty:
-                fig_p1 = px.pie(pie_d, names="Status", values="Count",
-                                title="Caged vs Uncaged",
-                                color_discrete_sequence=[CYAN, LBLUE, GREEN, AMBER])
-                fig_p1.update_layout(**_base_layout(), height=300)
-                pie_cols[0].plotly_chart(fig_p1, use_container_width=True)
+            # ──────────────────────────────────────────────────────────────────
+            # PER-LOCATION OPERATIONAL SUMMARY TABLE (like the cards in ref image)
+            # ──────────────────────────────────────────────────────────────────
+            st.markdown('<div class="section-title">Per-Location Summary</div>',
+                        unsafe_allow_html=True)
+            summary_df = LOC_DF[[
+                "Location",
+                "Avg_PUE", "Built_kW", "Operational_kW", "Available_kW",
+                "Built_Racks", "Operational_Racks", "Available_Racks",
+                "Built_Sqft", "Available_Sqft",
+            ]].copy()
+            summary_df.columns = [
+                "Location", "Avg PUE",
+                "Built kW", "Operational kW", "Available kW",
+                "Built Racks", "Operational Racks", "Available Racks",
+                "Built SqFt", "Available SqFt",
+            ]
+            summary_df = summary_df.round(2)
+            st.dataframe(summary_df, use_container_width=True, height=380)
 
-        if pw_sub_c:
-            pie_d2 = CUST[pw_sub_c].dropna().value_counts().reset_index()
-            pie_d2.columns = ["Model", "Count"]
-            if not pie_d2.empty:
-                fig_p2 = px.pie(pie_d2, names="Model", values="Count",
-                                title="Power Subscription Model",
-                                color_discrete_sequence=[LBLUE, GREEN, AMBER, RED])
-                fig_p2.update_layout(**_base_layout(), height=300)
-                pie_cols[1].plotly_chart(fig_p2, use_container_width=True)
+            st.markdown("<br>", unsafe_allow_html=True)
 
-        if pw_use_m_c:
-            pie_d3 = CUST[pw_use_m_c].dropna().value_counts().reset_index()
-            pie_d3.columns = ["Model", "Count"]
-            if not pie_d3.empty:
-                fig_p3 = px.pie(pie_d3, names="Model", values="Count",
-                                title="Power Usage Model",
-                                color_discrete_sequence=[GREEN, AMBER, CYAN, RED])
-                fig_p3.update_layout(**_base_layout(), height=300)
-                pie_cols[2].plotly_chart(fig_p3, use_container_width=True)
+            # ──────────────────────────────────────────────────────────────────
+            # BILLING MODEL BREAKDOWN (from customer-level CUST dataframe)
+            # ──────────────────────────────────────────────────────────────────
+            st.markdown('<div class="section-title">Billing Model</div>',
+                        unsafe_allow_html=True)
+            bm_cols = st.columns(4)
+
+            def _cnt_contains(col, pat):
+                if col and col in CUST.columns:
+                    return int(
+                        CUST[col].astype(str).str.upper().str.strip()
+                        .str.contains(pat, na=False, regex=True).sum()
+                    )
+                return 0
+
+            if caged_c:
+                n_caged   = _cnt_contains(caged_c, r"^CAGED$|^CAGE$")
+                n_uncaged = _cnt_contains(caged_c, r"UNCAGED")
+                bm_cols[0].markdown(kpi_html(
+                    f"{n_caged}", "Caged", f"Uncaged: {n_uncaged}", CYAN
+                ), unsafe_allow_html=True)
+
+            pw_sub_c   = find_col(CUST, r"power.*subscription.*model|billing.*model.*power.*subscription")
+            pw_use_m_c = find_col(CUST, r"power.*usage.*model|billing.*model.*power.*usage")
+
+            if pw_sub_c:
+                n_rated = _cnt_contains(pw_sub_c, r"RATED")
+                n_sub   = _cnt_contains(pw_sub_c, r"SUBSCRIBED")
+                bm_cols[1].markdown(kpi_html(
+                    f"{n_rated}", "Rated", f"Subscribed: {n_sub}", LBLUE
+                ), unsafe_allow_html=True)
+
+            if pw_use_m_c:
+                n_bund = _cnt_contains(pw_use_m_c, r"BUNDLED")
+                n_met  = _cnt_contains(pw_use_m_c, r"METERED")
+                bm_cols[2].markdown(kpi_html(
+                    f"{n_bund}", "Bundled", f"Metered: {n_met}", GREEN
+                ), unsafe_allow_html=True)
+
+            if own_c:
+                n_sify = _cnt_contains(own_c, r"SIFY")
+                n_cust = _cnt_contains(own_c, r"CUSTOMER")
+                if n_sify or n_cust:
+                    bm_cols[3].markdown(kpi_html(
+                        f"Sify: {n_sify}", "Ownership",
+                        f"Customer: {n_cust}", AMBER
+                    ), unsafe_allow_html=True)
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # ──────────────────────────────────────────────────────────────────
+            # UTILISATION GAUGES
+            # ──────────────────────────────────────────────────────────────────
+            if tot_built_kw > 0 or tot_built_rk > 0:
+                st.markdown('<div class="section-title">Utilisation Gauges</div>',
+                            unsafe_allow_html=True)
+                g1, g2 = st.columns(2)
+
+                def _gauge(val, label, bar_color):
+                    fig = go.Figure(go.Indicator(
+                        mode="gauge+number",
+                        value=min(float(val), 100),
+                        title={"text": label, "font": {"color": TEXT, "size": 14}},
+                        gauge={
+                            "axis": {"range": [0, 100], "tickcolor": TEXT},
+                            "bar":  {"color": bar_color},
+                            "bgcolor": DARK2,
+                            "steps": [
+                                {"range": [0,  50], "color": "#1a2a1a"},
+                                {"range": [50, 80], "color": "#2a2a1a"},
+                                {"range": [80, 100], "color": "#2a1a1a"},
+                            ],
+                            "threshold": {"line": {"color": RED, "width": 3}, "value": 80},
+                        },
+                        number={"suffix": "%", "font": {"color": bar_color}},
+                    ))
+                    fig.update_layout(**_base_layout(), height=270)
+                    return fig
+
+                pwr_util = (tot_oper_kw / tot_built_kw * 100) if tot_built_kw > 0 else 0
+                rk_util  = (tot_oper_rk / tot_built_rk * 100) if tot_built_rk > 0 else 0
+                g1.plotly_chart(_gauge(pwr_util, "Power Capacity Utilisation (%)", LBLUE),
+                                use_container_width=True)
+                g2.plotly_chart(_gauge(rk_util, "Rack Space Utilisation (%)", GREEN),
+                                use_container_width=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
