@@ -2055,12 +2055,13 @@ with T[0]:
 
         def _n(col):
             if col and col in CUST.columns:
-                return pd.to_numeric(CUST[col], errors="coerce").sum()
+                return _robust_to_numeric(CUST[col]).sum()
             return None
 
         def _avg(col):
             if col and col in CUST.columns:
-                return pd.to_numeric(CUST[col], errors="coerce").mean()
+                s = _robust_to_numeric(CUST[col]).dropna()
+                return s.mean() if not s.empty else None
             return None
 
         def _cnt_val(col, val):
@@ -2083,12 +2084,12 @@ with T[0]:
 
         if cap_c:
             tot_cap = _n(cap_c)
-            k[3].markdown(kpi_html(fmt(tot_cap), "Total Capacity Purchased",
+            k[3].markdown(kpi_html(fmt(tot_cap), cap_c,
                                    "Power Capacity section", GREEN), unsafe_allow_html=True)
 
         if use_c:
             tot_use = _n(use_c)
-            k[4].markdown(kpi_html(fmt(tot_use), "Capacity In Use",
+            k[4].markdown(kpi_html(fmt(tot_use), use_c,
                                    "Power Capacity section", AMBER), unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -2100,7 +2101,7 @@ with T[0]:
             cage_vals = CUST[caged_c].astype(str).str.upper().str.strip()
             n_caged   = (cage_vals == "CAGED").sum()
             n_uncaged = (cage_vals == "UNCAGED").sum()
-            bm_cols[0].markdown(kpi_html(f"{n_caged}", "Caged",
+            bm_cols[0].markdown(kpi_html(f"{n_caged}", caged_c,
                                          f"Uncaged: {n_uncaged}", CYAN), unsafe_allow_html=True)
 
         if own_c:
@@ -2108,21 +2109,21 @@ with T[0]:
             shs_c = _cnt_val(own_c, "SHS")
             if rhs_c is not None or shs_c is not None:
                 bm_cols[1].markdown(
-                    kpi_html(f"{rhs_c or 0}", "RHS",
+                    kpi_html(f"{rhs_c or 0}", own_c,
                              f"SHS: {shs_c or 0}", LBLUE), unsafe_allow_html=True)
 
         if pw_sub_c:
             rated = _cnt_val(pw_sub_c, "RATED")
             subsc = _cnt_val(pw_sub_c, "SUBSCRIBED")
             bm_cols[2].markdown(
-                kpi_html(f"{rated or 0}", "Power Sub: Rated",
+                kpi_html(f"{rated or 0}", pw_sub_c,
                          f"Subscribed: {subsc or 0}", AMBER), unsafe_allow_html=True)
 
         if pw_use_m_c:
             bundled = _cnt_val(pw_use_m_c, "BUNDLED")
             metered = _cnt_val(pw_use_m_c, "METERED")
             bm_cols[3].markdown(
-                kpi_html(f"{bundled or 0}", "Power Usage: Bundled",
+                kpi_html(f"{bundled or 0}", pw_use_m_c,
                          f"Metered: {metered or 0}", GREEN), unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -2135,37 +2136,37 @@ with T[0]:
             u_m    = _cnt_val(sub_mode_c, "U SPACE")
             sqft_m = _cnt_val(sub_mode_c, "SQFT SPACE")
             sp_cols[0].markdown(
-                kpi_html(f"{rack_m or 0}", "Subscription Mode: Rack",
+                kpi_html(f"{rack_m or 0}", sub_mode_c,
                          f"U Space: {u_m or 0} | SqFt: {sqft_m or 0}", CYAN),
                 unsafe_allow_html=True)
 
         if space_sub_c:
             v = _n(space_sub_c)
             if v is not None:
-                sp_cols[1].markdown(kpi_html(fmt(v), "Space Subscription",
+                sp_cols[1].markdown(kpi_html(fmt(v), space_sub_c,
                                              space_sub_c[:25], GREEN), unsafe_allow_html=True)
 
         if space_inuse_c:
             v = _n(space_inuse_c)
             if v is not None:
-                sp_cols[2].markdown(kpi_html(fmt(v), "Space In Use",
+                sp_cols[2].markdown(kpi_html(fmt(v), space_inuse_c,
                                              space_inuse_c[:25], AMBER), unsafe_allow_html=True)
 
         if space_ytbg_c:
             v = _n(space_ytbg_c)
             if v is not None:
-                sp_cols[3].markdown(kpi_html(fmt(v), "Yet To Be Given / Billed",
+                sp_cols[3].markdown(kpi_html(fmt(v), space_ytbg_c,
                                              space_ytbg_c[:25], RED), unsafe_allow_html=True)
 
         if space_rate_c:
             v = _avg(space_rate_c)
             if v is not None:
-                sp_cols[4].markdown(kpi_html(fmt(v), "Avg Per Unit Rate (MRC)",
+                sp_cols[4].markdown(kpi_html(fmt(v), space_rate_c,
                                              space_rate_c[:25], LBLUE), unsafe_allow_html=True)
         elif rack_c:
             v = _n(rack_c)
             if v is not None:
-                sp_cols[4].markdown(kpi_html(fmt(v), "Total Racks / Space",
+                sp_cols[4].markdown(kpi_html(fmt(v), rack_c,
                                              rack_c[:25], LBLUE), unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -2174,25 +2175,25 @@ with T[0]:
         pc_cols = st.columns(5)
 
         if cap_c:
-            pc_cols[0].markdown(kpi_html(fmt(_n(cap_c)), "Total Capacity Purchased",
+            pc_cols[0].markdown(kpi_html(fmt(_n(cap_c)), cap_c,
                                          cap_c[:25], GREEN), unsafe_allow_html=True)
         if use_c:
-            pc_cols[1].markdown(kpi_html(fmt(_n(use_c)), "Capacity In Use",
+            pc_cols[1].markdown(kpi_html(fmt(_n(use_c)), use_c,
                                          use_c[:25], AMBER), unsafe_allow_html=True)
         if cap_ytbg_c:
             v = _n(cap_ytbg_c)
             if v is not None:
-                pc_cols[2].markdown(kpi_html(fmt(v), "Capacity To Be Given",
+                pc_cols[2].markdown(kpi_html(fmt(v), cap_ytbg_c,
                                              cap_ytbg_c[:25], RED), unsafe_allow_html=True)
         if sub_kw_c:
             v = _n(sub_kw_c)
             if v is not None:
-                pc_cols[3].markdown(kpi_html(fmt(v), "Subscribed Cap. To Give (KW)",
+                pc_cols[3].markdown(kpi_html(fmt(v), sub_kw_c,
                                              sub_kw_c[:25], LBLUE), unsafe_allow_html=True)
         if alloc_kw_c:
             v = _n(alloc_kw_c)
             if v is not None:
-                pc_cols[4].markdown(kpi_html(fmt(v), "Allocated Capacity KW",
+                pc_cols[4].markdown(kpi_html(fmt(v), alloc_kw_c,
                                              alloc_kw_c[:25], CYAN), unsafe_allow_html=True)
         elif cap_c and use_c:
             t_cap = _n(cap_c) or 0
@@ -2209,15 +2210,15 @@ with T[0]:
             st.markdown('<div class="section-title">Power Usage</div>', unsafe_allow_html=True)
             pu_cols = st.columns(4)
             i = 0
-            for col, label, color in [
-                (pu_sub_c,   "KW-HR/Month Subscription", GREEN),
-                (pu_inuse_c, "Power Usage In Use",        AMBER),
-                (pu_ytbg_c,  "Power Usage Yet To Give",   RED),
+            for col, color in [
+                (pu_sub_c,   GREEN),
+                (pu_inuse_c, AMBER),
+                (pu_ytbg_c,  RED),
             ]:
                 if col:
                     v = _n(col)
                     if v is not None:
-                        pu_cols[i].markdown(kpi_html(fmt(v), label, col[:25], color),
+                        pu_cols[i].markdown(kpi_html(fmt(v), col, col[:25], color),
                                             unsafe_allow_html=True)
                         i += 1
             st.markdown("<br>", unsafe_allow_html=True)
@@ -2229,12 +2230,12 @@ with T[0]:
             if seat_sub_c:
                 v = _n(seat_sub_c)
                 if v is not None:
-                    ss_cols[0].markdown(kpi_html(fmt(v), "Sitting Space Subscription",
+                    ss_cols[0].markdown(kpi_html(fmt(v), seat_sub_c,
                                                  seat_sub_c[:25], CYAN), unsafe_allow_html=True)
             if seat_inuse_c:
                 v = _n(seat_inuse_c)
                 if v is not None:
-                    ss_cols[1].markdown(kpi_html(fmt(v), "Sitting Space In Use",
+                    ss_cols[1].markdown(kpi_html(fmt(v), seat_inuse_c,
                                                  seat_inuse_c[:25], AMBER), unsafe_allow_html=True)
             st.markdown("<br>", unsafe_allow_html=True)
 
@@ -2242,33 +2243,33 @@ with T[0]:
         st.markdown('<div class="section-title">Revenue (Monthly)</div>', unsafe_allow_html=True)
         rv_cols = st.columns(5)
         rv_items = [
-            (rev_space_c,  "Space Revenue (incl. Capacity)", CYAN),
-            (rev_addcap_c, "Additional Capacity Revenue",    LBLUE),
-            (rev_pwuse_c,  "Power Usage Revenue",            GREEN),
-            (rev_seat_c,   "Seating Space Revenue",          AMBER),
-            (rev_other_c,  "Any Other Items",                MUTED),
+            (rev_space_c,  CYAN),
+            (rev_addcap_c, LBLUE),
+            (rev_pwuse_c,  GREEN),
+            (rev_seat_c,   AMBER),
+            (rev_other_c,  MUTED),
         ]
         filled = 0
-        for col, label, color in rv_items:
+        for col, color in rv_items:
             if col and filled < 5:
                 v = _n(col)
                 if v is not None:
-                    rv_cols[filled].markdown(kpi_html(fmt(v), label, col[:25], color),
+                    rv_cols[filled].markdown(kpi_html(fmt(v), col, col[:25], color),
                                              unsafe_allow_html=True)
                     filled += 1
 
         st.markdown("<br>", unsafe_allow_html=True)
         rv2_cols = st.columns(4)
         rv2_items = [
-            (rev_total_c,  "Total Revenue",     GREEN),
-            (rev_mrc_c,    "Total MRC",         LBLUE),
+            (rev_total_c,  GREEN),
+            (rev_mrc_c,    LBLUE),
         ]
         filled2 = 0
-        for col, label, color in rv2_items:
+        for col, color in rv2_items:
             if col and filled2 < 4:
                 v = _n(col)
                 if v is not None:
-                    rv2_cols[filled2].markdown(kpi_html(fmt(v), label, col[:25], color),
+                    rv2_cols[filled2].markdown(kpi_html(fmt(v), col, col[:25], color),
                                                unsafe_allow_html=True)
                     filled2 += 1
 
@@ -2276,7 +2277,7 @@ with T[0]:
             freq_counts = CUST[rev_freq_c].dropna().value_counts()
             top_freq = freq_counts.index[0] if not freq_counts.empty else "—"
             rv2_cols[min(filled2, 3)].markdown(
-                kpi_html(str(top_freq), "Top Billing Frequency",
+                kpi_html(str(top_freq), rev_freq_c,
                          f"{len(freq_counts)} types", AMBER), unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -2288,28 +2289,28 @@ with T[0]:
         if con_start_c:
             non_null = CUST[con_start_c].dropna()
             ci_cols[ci_i].markdown(
-                kpi_html(f"{len(non_null):,}", "Contracts With Start Date",
+                kpi_html(f"{len(non_null):,}", con_start_c,
                          con_start_c[:25], CYAN), unsafe_allow_html=True)
             ci_i += 1
 
         if con_term_c:
             v = _avg(con_term_c)
             if v is not None:
-                ci_cols[ci_i].markdown(kpi_html(f"{v:.1f} yr", "Avg Contract Term",
+                ci_cols[ci_i].markdown(kpi_html(f"{v:.1f} yr", con_term_c,
                                                 con_term_c[:25], GREEN), unsafe_allow_html=True)
                 ci_i += 1
 
         if con_expiry_c:
             non_null = CUST[con_expiry_c].dropna()
             ci_cols[ci_i].markdown(
-                kpi_html(f"{len(non_null):,}", "Contracts With Expiry Date",
+                kpi_html(f"{len(non_null):,}", con_expiry_c,
                          con_expiry_c[:25], AMBER), unsafe_allow_html=True)
             ci_i += 1
 
         if rev_so_c:
             so_count = CUST[rev_so_c].dropna().nunique()
             ci_cols[min(ci_i, 3)].markdown(
-                kpi_html(f"{so_count:,}", "Unique Sales Orders",
+                kpi_html(f"{so_count:,}", rev_so_c,
                          rev_so_c[:25], LBLUE), unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -2706,9 +2707,730 @@ with T[3]:
             st.plotly_chart(fig, use_container_width=True)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 4 – SMART QUERY  (Structured AI parse → real data execution)
-# ══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+# SMART QUERY — ENHANCED DATA INGESTION + ACCURATE SCHEMA MAPPING  (additive)
+# These functions are used ONLY by the Smart Query tab (T[4]).
+# All other tabs and all existing functions/globals remain completely unchanged.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Comprehensive field-hint → column pattern registry ─────────────────────────
+# Covers every real column name variant observed across all 10 DC Excel files.
+_SQ_FIELD_PATTERNS: dict = {
+    # Power / Capacity ─────────────────────────────────────────────────────────
+    "total capacity purchased": [
+        r"Power Capacity\s*\|\s*Total Capacity Purchased",
+        r"^Total Capacity Purchased",
+        r"Total Capacity Purchased \(KW\)",
+        r"capacity.*purchased",
+        r"subscribed.*kw|kw.*subscribed",
+    ],
+    "power in use": [
+        r"Power Capacity\s*\|\s*Capacity in Use",
+        r"Power Capacity\s*\|\s*Usage in KW",
+        r"Capacity in Use \(KW\)",
+        r"^Capacity in Use$",
+        r"capacity\s+in\s+use",
+        r"usage\s+in\s+kw",
+    ],
+    "power allocated": [
+        r'Power Capacity\s*\|\s*"?Allocated"?\s*Capacity',
+        r"allocated.*capacity.*kw",
+        r"allocated.*kw",
+    ],
+    "power usage kw": [
+        r"Power Capacity\s*\|\s*Usage in KW",
+        r"Power Usage.*Raw Power",
+        r"Power Usage \(All in KW\)",
+        r"usage\s+in\s+kw",
+        r"actual.*usage.*kw",
+        r"Actual Load KVA",
+    ],
+    "subscribed capacity kw": [
+        r"Power Capacity\s*\|\s*Subscribed Capacity to be given in KW",
+        r"subscribed.*capacity.*to.*be.*given",
+        r"capacity.*to.*be.*given.*kw",
+    ],
+    "capacity to be given": [
+        r"Power Capacity\s*\|\s*Capacity to be given",
+        r"capacity.*to.*be.*given",
+    ],
+    "reserved capacity": [
+        r"Power Capacity\s*\|\s*Reserved Capacity",
+        r"reserved.*capacity",
+        r"Seating Space\s*\|\s*Reserved Capacity",
+    ],
+    "additional capacity charges": [
+        r"Power Capacity\s*\|\s*Additional Capacity Charges",
+        r"Power Capacity\s*\|\s*Billable Additional Capacity",
+        r"additional.*capacity.*charges",
+        r"billable.*additional.*capacity",
+    ],
+    # Space / Racks ─────────────────────────────────────────────────────────────
+    "total space": [
+        r"^Space \| Subscription$",
+        r"Space\s*\|\s*Subscription",
+        r"Sitting Space \(Subscription\)",
+        r"space.*subscription",
+        r"Subscription\(No\. of Racks\)",
+    ],
+    "space in use": [
+        r"^Space \| In Use$",
+        r"Space\s*\|\s*In Use",
+        r"In Use\(No\. of Racks\)",
+        r"space.*in.*use",
+    ],
+    "space billed": [
+        r"^Space \| Billed$",
+        r"Space\s*\|\s*Billed",
+        r"space.*billed",
+        r"Seating Space\s*\|\s*Billed",
+    ],
+    "space yet to be given": [
+        r"Space\s*\|\s*Yet to be given",
+        r"yet.*to.*be.*given",
+        r"Seating Space\s*\|\s*Yet to be given",
+    ],
+    "seating subscription": [
+        r"^Seating Space \| Subscription$",
+        r"Seating Space\s*\|\s*Subscription",
+        r"seating.*space.*subscription",
+        r"sitting.*space.*subscription",
+    ],
+    "seating in use": [
+        r"^Seating Space \| In Use$",
+        r"Seating Space\s*\|\s*In Use",
+        r"seating.*space.*in.*use",
+    ],
+    # Revenue ───────────────────────────────────────────────────────────────────
+    "total revenue": [
+        r"Revenue \(Monthly\s*\)\s*\|\s*Total Revenue",
+        r"Revenue.*\|\s*Total Revenue",
+        r"^Total Revenue$",
+        r"total.*revenue",
+        r"total.*mrc",
+        r"Total Rev \(Cap \+ Power\)",
+        r"Total\s*\|\s*\d",   # summary total rows
+    ],
+    "space revenue": [
+        r"Revenue \(Monthly\s*\)\s*\|\s*Space revenue",
+        r"Revenue.*\|\s*Space revenue",
+        r"space.*revenue.*including",
+        r"space.*revenue",
+    ],
+    "power revenue": [
+        r"Revenue \(Monthly\s*\)\s*\|\s*Power Usage revenue",
+        r"Revenue.*\|\s*Power Usage revenue",
+        r"Contract Information\s*\|\s*Power Revenue",
+        r"power.*usage.*revenue",
+        r"power.*revenue",
+    ],
+    "additional capacity revenue": [
+        r"Revenue \(Monthly\s*\)\s*\|\s*Additional Capacity Revenue",
+        r"Revenue.*\|\s*Additional Capacity Revenue",
+        r"additional.*capacity.*revenue",
+        r"Contract Information\s*\|\s*Capacity Revenue",
+    ],
+    "seating revenue": [
+        r"Revenue \(Monthly\s*\)\s*\|\s*Seating Space",
+        r"Revenue.*\|\s*Seating Space",
+        r"seating.*space.*revenue",
+        r"seating.*revenue",
+    ],
+    "net revenue": [
+        r"Contract Information\s*\|\s*Net Rev Total",
+        r"Contract Information\s*\|\s*Total Rev \(Cap \+ Power\)",
+        r"net.*rev.*total",
+        r"net.*revenue",
+        r"Total Rev \(Cap \+ Power\)",
+    ],
+    # Rate ──────────────────────────────────────────────────────────────────────
+    "per unit rate": [
+        r"Power Usage\s*\|\s*Unit Rate \(per KW-HR\)",
+        r"Power Usage\s*\|\s*Unit rate.*KW",
+        r"Space\s*\|\s*Per Unit rate",
+        r"Seating Space\s*\|\s*Per Unit rate",
+        r"per.*unit.*rate",
+        r"unit.*rate.*kw",
+    ],
+    # Contract ──────────────────────────────────────────────────────────────────
+    "contract start": [
+        r"Contract Information\s*\|\s*Contract Start",
+        r"contract.*start",
+        r"start.*date",
+    ],
+    "contract expiry": [
+        r"Contract Information\s*\|\s*Current Ex[ip]iry Date",
+        r"expiry.*date",
+        r"current.*expiry",
+    ],
+    "contract term": [
+        r"Contract Information\s*\|\s*Term of Contract",
+        r"term.*of.*contract",
+        r"contract.*term",
+        r"no.*of.*years",
+    ],
+}
+
+# Extended phrase → field key aliases (checked before _HINT_SEMANTIC)
+_SQ_HINT_ALIASES: list = [
+    # Power
+    ("total capacity purchased",     "total capacity purchased"),
+    ("total power purchased",        "total capacity purchased"),
+    ("total kw purchased",           "total capacity purchased"),
+    ("total kva purchased",          "total capacity purchased"),
+    ("power purchased",              "total capacity purchased"),
+    ("capacity purchased",           "total capacity purchased"),
+    ("subscribed capacity",          "total capacity purchased"),
+    ("total capacity",               "total capacity purchased"),
+    ("power capacity",               "total capacity purchased"),
+    ("sum of power",                 "total capacity purchased"),
+    ("total power",                  "total capacity purchased"),
+    ("power kw",                     "total capacity purchased"),
+    ("total kw",                     "total capacity purchased"),
+    ("power in use",                 "power in use"),
+    ("capacity in use",              "power in use"),
+    ("power used",                   "power in use"),
+    ("power usage",                  "power in use"),
+    ("usage in kw",                  "power in use"),
+    ("kw in use",                    "power in use"),
+    ("power usage kw",               "power usage kw"),
+    ("actual usage",                 "power usage kw"),
+    ("raw power",                    "power usage kw"),
+    ("power allocated",              "power allocated"),
+    ("allocated capacity",           "power allocated"),
+    ("allocated kw",                 "power allocated"),
+    ("capacity to be given",         "capacity to be given"),
+    ("subscribed capacity kw",       "subscribed capacity kw"),
+    ("reserved capacity",            "reserved capacity"),
+    ("additional capacity charges",  "additional capacity charges"),
+    # Space
+    ("total space",                  "total space"),
+    ("space subscription",           "total space"),
+    ("space subscribed",             "total space"),
+    ("space purchased",              "total space"),
+    ("sitting space subscription",   "total space"),
+    ("total racks",                  "total space"),
+    ("number of racks",              "total space"),
+    ("space in use",                 "space in use"),
+    ("space used",                   "space in use"),
+    ("racks in use",                 "space in use"),
+    ("space billed",                 "space billed"),
+    ("space yet to be given",        "space yet to be given"),
+    ("seating subscription",         "seating subscription"),
+    ("seating space subscription",   "seating subscription"),
+    ("seating in use",               "seating in use"),
+    ("seating space in use",         "seating in use"),
+    # Revenue
+    ("total revenue",                "total revenue"),
+    ("total mrc",                    "total revenue"),
+    ("total monthly revenue",        "total revenue"),
+    ("sum of revenue",               "total revenue"),
+    ("sum revenue",                  "total revenue"),
+    ("revenue total",                "total revenue"),
+    ("mrc",                          "total revenue"),
+    ("space revenue",                "space revenue"),
+    ("revenue from space",           "space revenue"),
+    ("space including capacity",     "space revenue"),
+    ("power revenue",                "power revenue"),
+    ("power usage revenue",          "power revenue"),
+    ("revenue from power",           "power revenue"),
+    ("additional capacity revenue",  "additional capacity revenue"),
+    ("seating revenue",              "seating revenue"),
+    ("net revenue",                  "net revenue"),
+    ("net rev",                      "net revenue"),
+    ("total rev",                    "net revenue"),
+    # Rate
+    ("per unit rate",                "per unit rate"),
+    ("unit rate",                    "per unit rate"),
+    ("tariff",                       "per unit rate"),
+    ("rate per kw",                  "per unit rate"),
+]
+
+
+def _sq_resolve_field(df: "pd.DataFrame", field_hint: str) -> "tuple[str|None, str]":
+    """
+    Enhanced column resolver for Smart Query tab only.
+    Priority order:
+      1. Extended _SQ_FIELD_PATTERNS via _SQ_HINT_ALIASES (covers all DC Excel column variants)
+      2. Original _HINT_SEMANTIC / _SEMANTIC_COLS (legacy fallback)
+      3. Fuzzy multi-word match across ALL columns (not just dtype-numeric)
+      4. First numeric column
+    Returns (column_name, reason_string).
+    """
+    hint_lower = (field_hint or "").lower().strip()
+    nc = num_cols(df)
+
+    # ── 1. Extended pattern registry ──────────────────────────────────────────
+    resolved_key = None
+    for alias, key in _SQ_HINT_ALIASES:
+        if alias in hint_lower:
+            resolved_key = key
+            break
+    if resolved_key is None:
+        for key in _SQ_FIELD_PATTERNS:
+            if key in hint_lower or hint_lower in key:
+                resolved_key = key
+                break
+
+    if resolved_key and resolved_key in _SQ_FIELD_PATTERNS:
+        for pat in _SQ_FIELD_PATTERNS[resolved_key]:
+            for c in df.columns:
+                if re.search(pat, c, re.I):
+                    return c, f"extended schema: '{resolved_key}' via «{pat}»"
+
+    # ── 2. Original _HINT_SEMANTIC / _SEMANTIC_COLS ───────────────────────────
+    for kw, sem_key in _HINT_SEMANTIC:
+        if kw in hint_lower:
+            pattern, _ = _SEMANTIC_COLS[sem_key]
+            for c in df.columns:
+                if re.search(pattern, c, re.I):
+                    return c, f"original semantic: '{kw}' → '{sem_key}'"
+
+    # ── 3. Fuzzy word match across all columns ────────────────────────────────
+    hint_words = [w for w in re.split(r"\W+", hint_lower) if len(w) > 2]
+    best_col, best_score = None, 0
+    for c in df.columns:
+        c_lower = c.lower()
+        score = sum(1 for w in hint_words if w in c_lower)
+        if score > best_score:
+            best_score, best_col = score, c
+    if best_col and best_score > 0:
+        return best_col, f"fuzzy match ({hint_words}, score={best_score})"
+
+    # ── 4. Fallback ───────────────────────────────────────────────────────────
+    if nc:
+        return nc[0], "fallback: first numeric column"
+    return None, "no column found"
+
+
+# Known non-customer row patterns for ingestion filter
+_SQ_JUNK_NAMES: frozenset = frozenset({
+    "customer name", "sr. no", "sno", "s.no", "no.", "sl. no",
+    "total", "sub total", "subtotal", "grand total", "summary",
+    "description", "floor", "module", "floor / module",
+    "power summary", "nan", "none", "", "remark", "remarks",
+    "total bangalore", "total kolkata", "total noida", "total chennai",
+    "total vashi", "total airoli", "total rabale", "total mumbai",
+    "uom", "uom (kva/kw)", "value",
+})
+
+
+def _sq_preprocess_pool(df: "pd.DataFrame") -> "pd.DataFrame":
+    """
+    Data ingestion enrichment for Smart Query pool (additive — does NOT
+    alter any global state or other tabs).
+
+    Step 1 — Remove non-customer rows:
+        Rows whose customer-name cell is blank, a section header, a serial
+        number, or a known aggregate label are dropped.
+
+    Step 2 — Promote object columns to float64:
+        Columns whose names suggest numeric content (power, revenue, capacity,
+        space, rack, rate …) are run through _robust_to_numeric().  A column
+        is only replaced if ≥ 20 % of its non-null values parse successfully —
+        this keeps genuinely categorical columns untouched while converting
+        columns that happen to contain "₹ 1,234.56" or "1,23,456.78" strings.
+    """
+    if df.empty:
+        return df
+
+    result = df.copy()
+
+    # ── Step 1: Remove non-customer rows ─────────────────────────────────────
+    cust_col = find_col(result, r"customer.*name|client.*name|DEMARC.*Customer Name")
+    if cust_col:
+        def _is_real_customer(v):
+            s = str(v).strip()
+            if not s or s.lower() in _SQ_JUNK_NAMES:
+                return False
+            if re.fullmatch(r"\d+", s):      # pure serial number
+                return False
+            if re.fullmatch(r"[-–—]+", s):   # dash placeholder
+                return False
+            if len(s) < 2:
+                return False
+            return True
+
+        valid_mask = result[cust_col].apply(_is_real_customer)
+        if valid_mask.sum() > 0:
+            result = result[valid_mask].reset_index(drop=True)
+
+    # ── Step 2: Promote suspected numeric columns to float64 ─────────────────
+    _NUMERIC_KW = {
+        "subscription", "in use", "billed", "reserved", "capacity",
+        "purchased", "allocated", "revenue", "mrc", "rate", "charge",
+        "kw", "kva", "rack", "space", "seat", "sitting", "kwhr",
+        "quantity", "qty", "amount", "total", "yet to be given",
+        "subscribed", "usage", "consumption", "additional",
+    }
+    metadata_cols = {c for c in result.columns if c.startswith("_")}
+
+    for col in result.columns:
+        if col in metadata_cols:
+            continue
+        if pd.api.types.is_numeric_dtype(result[col]):
+            continue                           # already float/int — skip
+        col_lower = col.lower()
+        if not any(kw in col_lower for kw in _NUMERIC_KW):
+            continue                           # not a candidate — skip
+
+        converted = _robust_to_numeric(result[col])
+        non_null  = result[col].notna().sum()
+        parsed_ok = converted.notna().sum()
+        if non_null > 0 and parsed_ok / max(non_null, 1) >= 0.20:
+            result[col] = converted            # promote to numeric
+
+    return result
+
+
+def _sq_execute_with_schema(ops_raw: list, pool: "pd.DataFrame") -> list:
+    """
+    Wrapper around execute_ai_operations that temporarily substitutes the
+    enhanced column resolver _sq_resolve_field for _resolve_col_by_semantic
+    so that all 10 DC Excel column name variants are correctly matched.
+    Restores the original resolver after execution.
+    """
+    import sys as _sys
+    _mod = _sys.modules[__name__]
+    _orig = getattr(_mod, "_resolve_col_by_semantic", None)
+    try:
+        # Patch global resolver with the enhanced version
+        _mod._resolve_col_by_semantic = _sq_resolve_field
+        results = execute_ai_operations(ops_raw, pool)
+    finally:
+        # Always restore original, even on exception
+        if _orig is not None:
+            _mod._resolve_col_by_semantic = _orig
+    return results
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SMART QUERY: CUSTOMER-WISE LOOKUP HELPERS  (additive — T[4] only)
+# No existing functions, globals, or other tabs are changed.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Profile metadata columns shown in the customer card
+_SQ_CUST_PROFILE_PATS: list = [
+    (r"\bfloor\b|\bmodule\b",                                         "Floor / Module"),
+    (r"\bSH\b|sub.*hall",                                             "Sub-Hall"),
+    (r"caged.*uncaged|caged",                                         "Caged / Uncaged"),
+    (r"ownership.*sify.*cust|ownership",                              "Ownership"),
+    (r"subscription.*mode|space.*subscription.*mode",                 "Subscription Mode"),
+    (r"power.*subscription.*model|billing.*model.*power.*subscr",     "Power Subscription Model"),
+    (r"power.*usage.*model|billing.*model.*power.*usage",             "Power Usage Model"),
+    (r"uom.*kva|uom",                                                 "UoM (KW/KVA)"),
+    (r"billing.*frequency|frequency",                                 "Billing Frequency"),
+]
+
+# Data column patterns to include in the customer metrics table (in display order)
+_SQ_CUST_DATA_PATS: list = [
+    (r"Power Capacity.*Total Capacity Purchased|Total Capacity Purchased", "Power Capacity Purchased"),
+    (r"Power Capacity.*Capacity in Use|^Capacity in Use$",                 "Power Capacity in Use"),
+    (r"Power Capacity.*Usage in KW|Usage in KW",                           "Power Usage (KW)"),
+    (r'Power Capacity.*"?Allocated"?.*Capacity',                           "Allocated Capacity (KW)"),
+    (r"Power Capacity.*Subscribed Capacity.*KW",                           "Subscribed Capacity to be Given (KW)"),
+    (r"Power Capacity.*Capacity to be given",                              "Capacity to be Given"),
+    (r"Power Capacity.*Reserved Capacity",                                 "Reserved Capacity"),
+    (r"Power Capacity.*Additional Capacity Charges",                       "Additional Capacity Charges (₹)"),
+    (r"^Space \| Subscription$|Space.*Subscription",                       "Space Subscription"),
+    (r"^Space \| In Use$|Space.*In Use",                                   "Space In Use"),
+    (r"^Space \| Billed$|Space.*Billed",                                   "Space Billed"),
+    (r"^Space \| Yet to be given",                                         "Space Yet to be Given"),
+    (r"Seating Space.*Subscription",                                        "Seating Subscription"),
+    (r"Seating Space.*In Use",                                              "Seating In Use"),
+    (r"Revenue.*Space revenue|Space revenue",                               "Revenue — Space (₹)"),
+    (r"Revenue.*Power Usage revenue",                                       "Revenue — Power (₹)"),
+    (r"Revenue.*Additional Capacity Revenue",                               "Revenue — Add. Capacity (₹)"),
+    (r"Revenue.*Seating Space",                                             "Revenue — Seating (₹)"),
+    (r"Revenue.*Total Revenue|Total Revenue",                               "Total Revenue (₹)"),
+    (r"Contract Information.*Net Rev Total",                                "Net Revenue Total (₹)"),
+    (r"Contract Information.*Total Rev.*Cap.*Power",                        "Total Rev (Cap + Power) (₹)"),
+    (r"Power Usage.*Unit Rate|Per Unit rate",                               "Per Unit Rate (₹/kWh)"),
+    (r"Contract Information.*Term of Contract",                             "Contract Term (Years)"),
+    (r"Contract Information.*Contract Start",                               "Contract Start Date"),
+    (r"Contract Information.*Current Ex",                                   "Contract Expiry Date"),
+    (r"Contract Information.*Sales Order",                                  "Sales Order Ref"),
+]
+
+
+def _sq_detect_customer_query(query: str) -> "tuple[str, str]":
+    """
+    Extract customer name from a natural-language query.
+    Returns (customer_name, remaining_field_hint).
+    Returns ("", query) when no customer name pattern is detected.
+
+    Patterns recognised:
+      "power capacity purchased for Oracle"         → ("Oracle", "power capacity purchased")
+      "Oracle's power capacity"                     → ("Oracle", "power capacity")
+      "show data for CISCO SYSTEMS"                 → ("CISCO SYSTEMS", "show data")
+      "total revenue of Wipro"                      → ("Wipro", "total revenue")
+      "customer Mahindra capacity in use"           → ("Mahindra", "capacity in use")
+    """
+    q = query.strip()
+
+    # Pattern 1: "... for <CustomerName>" — most common natural phrasing
+    m = re.search(
+        r"\bfor\s+([A-Za-z][\w\s&().,'\"/-]{2,60}?)(?:\s+(?:at|in|across|from|by|across)\b|\s*$)",
+        q, re.I
+    )
+    if m:
+        cust = m.group(1).strip().rstrip(",.?")
+        field = re.sub(r"\bfor\s+" + re.escape(cust), "", q, flags=re.I).strip()
+        return cust, field
+
+    # Pattern 2: "<CustomerName>'s <field>"
+    m = re.search(r"^([A-Za-z][\w\s&().,'/-]{1,60}?)\s*[''`]s\s+(.+)$", q, re.I)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+
+    # Pattern 3: "customer <CustomerName>"
+    m = re.search(r"\bcustomer\s+([A-Z][\w\s&().,'/-]{1,60}?)(?:\s+and\b|\s*$)", q, re.I)
+    if m:
+        cust = m.group(1).strip().rstrip(",.?")
+        field = re.sub(r"\bcustomer\s+" + re.escape(cust), "", q, flags=re.I).strip()
+        return cust, field
+
+    # Pattern 4: "... of <CapitalisedCustomer>" (only if capitalised, avoids "sum of power")
+    m = re.search(
+        r"\bof\s+([A-Z][A-Za-z][\w\s&().,'/-]{1,60}?)(?:\s+(?:at|in|across|from|and|for)\b|\s*$)",
+        q
+    )
+    if m:
+        cust = m.group(1).strip().rstrip(",.?")
+        if len(cust) > 3:
+            field = re.sub(r"\bof\s+" + re.escape(cust), "", q, flags=re.I).strip()
+            return cust, field
+
+    return "", q
+
+
+def _sq_find_customers(search: str, df: "pd.DataFrame") -> "pd.DataFrame":
+    """
+    Return all rows in df whose customer-name column contains `search`
+    (case-insensitive substring).  Tries DEMARC | Customer Name first,
+    then any column matching customer.*name.
+    """
+    cust_col = find_col(df,
+        r"DEMARC.*Customer Name",
+        r"customer.*name",
+        r"client.*name",
+    )
+    if not cust_col or not search.strip():
+        return pd.DataFrame()
+    mask = df[cust_col].astype(str).str.lower().str.contains(
+        re.escape(search.strip().lower()), na=False
+    )
+    return df[mask].copy().reset_index(drop=True)
+
+
+def _sq_build_customer_profile(rows: "pd.DataFrame",
+                                customer_search: str,
+                                field_hint: str) -> dict:
+    """
+    Build a richly structured result dict for a customer-wise lookup.
+    Keys:
+      type, label, customer, row_count,
+      profile_df   — metadata profile table
+      focus_col    — specifically requested column (if field_hint given)
+      focus_val    — sum of that column for this customer
+      focus_unit   — unit string
+      metrics_df   — all numeric data columns with values
+      raw_df       — full detail table for download
+    """
+    cust_col = find_col(rows,
+        r"DEMARC.*Customer Name", r"customer.*name", r"client.*name")
+
+    # ── Canonical customer display name ──────────────────────────────────────
+    if cust_col:
+        names = rows[cust_col].dropna().astype(str).str.strip().unique()
+        names = [n for n in names if n and n.lower() not in ("none","nan","")]
+        display_name = names[0] if names else customer_search
+    else:
+        display_name = customer_search
+
+    # ── Profile card ─────────────────────────────────────────────────────────
+    profile_rows = []
+    if "_Location" in rows.columns:
+        locs = rows["_Location"].unique().tolist()
+        profile_rows.append({"Field": "Location(s)", "Value": ", ".join(locs)})
+    if "_Sheet" in rows.columns:
+        sheets = rows["_Sheet"].unique().tolist()
+        profile_rows.append({"Field": "Sheet(s)", "Value": ", ".join(sheets)})
+    profile_rows.append({"Field": "Matched Rows", "Value": str(len(rows))})
+
+    for pat, label in _SQ_CUST_PROFILE_PATS:
+        c = find_col(rows, pat)
+        if c and c in rows.columns:
+            vals = rows[c].dropna().astype(str).str.strip().unique()
+            vals = [v for v in vals if v and v.lower() not in ("none","nan","")]
+            if vals:
+                profile_rows.append({"Field": label, "Value": ", ".join(vals[:5])})
+
+    profile_df = pd.DataFrame(profile_rows) if profile_rows else pd.DataFrame()
+
+    # ── Metrics table (all numeric data columns) ──────────────────────────────
+    metric_rows = []
+    seen_cols: set = set()
+    for pat, metric_label in _SQ_CUST_DATA_PATS:
+        c = find_col(rows, pat)
+        if not c or c in seen_cols or c.startswith("_"):
+            continue
+        seen_cols.add(c)
+        series = _robust_to_numeric(rows[c])
+        valid = series.dropna()
+        if valid.empty:
+            continue
+        total_val = valid.sum()
+        unit = _detect_unit(c)
+        display_val = (
+            f"₹ {total_val:,.2f}" if unit == "₹"
+            else f"{_fmt_decimal(total_val)} {unit}".strip()
+        )
+        metric_rows.append({
+            "Metric":  metric_label,
+            "Value":   display_val,
+            "_raw_val": total_val,
+            "_col":    c,
+            "_unit":   unit,
+            "_n_rows": f"{len(valid)}/{len(rows)}",
+        })
+
+    metrics_df = (
+        pd.DataFrame(metric_rows).drop(columns=["_raw_val","_col","_unit","_n_rows"])
+        if metric_rows else pd.DataFrame()
+    )
+    # Keep the raw detail separately for the focus value lookup
+    _metric_detail = metric_rows
+
+    # ── Focus column (specifically requested metric) ──────────────────────────
+    focus_col, focus_reason, focus_val, focus_unit = None, "", None, ""
+    if field_hint.strip():
+        focus_col, focus_reason = _sq_resolve_field(rows, field_hint)
+        if focus_col and focus_col in rows.columns:
+            _s = _robust_to_numeric(rows[focus_col]).dropna()
+            focus_val  = float(_s.sum()) if not _s.empty else None
+            focus_unit = _detect_unit(focus_col)
+
+    # ── Full raw detail table ─────────────────────────────────────────────────
+    meta_c = [c for c in ["_Location", "_Sheet"] if c in rows.columns]
+    data_c = [c for c in rows.columns if not c.startswith("_")]
+    raw_df = rows[meta_c + data_c].reset_index(drop=True)
+    raw_df.index += 1
+
+    return {
+        "type":         "customer_lookup",
+        "label":        f"Customer: {display_name}",
+        "customer":     display_name,
+        "row_count":    len(rows),
+        "profile_df":   profile_df,
+        "metrics_df":   metrics_df,
+        "focus_col":    focus_col,
+        "focus_val":    focus_val,
+        "focus_unit":   focus_unit,
+        "focus_reason": focus_reason,
+        "raw_df":       raw_df,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SHAKTISHIV — ENHANCED CUSTOMER LOOKUP HELPERS (additive only, T[4])
+# Fixes multi-column customer name detection (DEMARC | Customer Name vs
+# Customer Name) so Airoli, Bangalore, Kolkata, Noida etc. are all found.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# All column name patterns that can hold a customer/client name across all DCs
+_SK_CUST_COL_PATS = [
+    r"DEMARC.*Customer Name",
+    r"^Customer Name$",
+    r"^Customer Name\b",
+    r"customer.*name",
+    r"client.*name",
+]
+
+
+def _sk_all_customer_cols(df: "pd.DataFrame") -> list:
+    """Return every column in df whose name matches any customer-name pattern."""
+    hits = []
+    for pat in _SK_CUST_COL_PATS:
+        for col in df.columns:
+            if re.search(pat, col, re.I) and col not in hits:
+                hits.append(col)
+    return hits
+
+
+def _sk_find_customers_all(search: str, df: "pd.DataFrame") -> "pd.DataFrame":
+    """
+    Case-insensitive substring search across ALL customer-name columns in df.
+    Combines results so rows from Airoli (DEMARC | Customer Name), Bangalore,
+    Kolkata, Noida (Customer Name) are all returned together.
+    Deduplicates by original index.
+    """
+    if not search.strip() or df.empty:
+        return pd.DataFrame()
+    term  = search.strip().lower()
+    cols  = _sk_all_customer_cols(df)
+    if not cols:
+        return pd.DataFrame()
+    combined_idx: set = set()
+    for col in cols:
+        mask = df[col].astype(str).str.lower().str.contains(
+            re.escape(term), na=False
+        )
+        combined_idx.update(df.index[mask].tolist())
+    if not combined_idx:
+        return pd.DataFrame()
+    return df.loc[sorted(combined_idx)].copy().reset_index(drop=True)
+
+
+def _sk_canonical_name(rows: "pd.DataFrame", fallback: str) -> str:
+    """Return the most common canonical customer name from the matched rows."""
+    cols = _sk_all_customer_cols(rows)
+    for col in cols:
+        if col in rows.columns:
+            vals = rows[col].dropna().astype(str).str.strip().unique()
+            vals = [v for v in vals if v and v.lower() not in ("none","nan","")]
+            if vals:
+                return vals[0]
+    return fallback
+
+
+def _sk_build_per_loc_metrics(gdf: "pd.DataFrame") -> "pd.DataFrame":
+    """Build a metrics table for a single location/sheet group of rows."""
+    rows_ = []
+    seen_ : set = set()
+    for pat, label in _SQ_CUST_DATA_PATS:
+        col = find_col(gdf, pat)
+        if not col or col in seen_ or col.startswith("_"):
+            continue
+        seen_.add(col)
+        s = _robust_to_numeric(gdf[col]).dropna()
+        if s.empty:
+            continue
+        v    = float(s.sum())
+        unit = _detect_unit(col)
+        disp = (f"₹ {v:,.2f}" if unit == "₹"
+                else f"{_fmt_decimal(v)} {unit}".strip())
+        rows_.append({"Metric": label, "Value": disp})
+    return pd.DataFrame(rows_) if rows_ else pd.DataFrame()
+
+
+def _sk_build_per_loc_profile(gdf: "pd.DataFrame") -> "pd.DataFrame":
+    """Build a profile card for a single location/sheet group of rows."""
+    rows_ = []
+    for pat, label in _SQ_CUST_PROFILE_PATS:
+        col = find_col(gdf, pat)
+        if not col or col.startswith("_"):
+            continue
+        vals = gdf[col].dropna().astype(str).str.strip().unique().tolist()
+        vals = [v for v in vals if v and v.lower() not in ("none","nan","")]
+        if vals:
+            rows_.append({"Field": label, "Value": ", ".join(vals[:4])})
+    return pd.DataFrame(rows_) if rows_ else pd.DataFrame()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAB 4 – SMART QUERY
+# ─────────────────────────────────────────────────────────────────────────────
 with T[4]:
     st.markdown('<div class="section-title">🧠 Smart Query — AI-Powered Structured Query Engine</div>',
                 unsafe_allow_html=True)
@@ -2718,7 +3440,7 @@ with T[4]:
     sq_src = st.selectbox("📂 Query data source", sq_src_opts, key="sq_src")
 
     if sq_src == "All Locations & All Sheets":
-        pool_base = CUST.copy()
+        pool_base = _sq_preprocess_pool(CUST.copy())
     else:
         loc_frames = []
         for sn, df_loc in fdata.get(sq_src, {}).items():
@@ -2726,17 +3448,46 @@ with T[4]:
             tmp.insert(0, "_Sheet", sn)
             tmp.insert(0, "_Location", sq_src)
             loc_frames.append(tmp)
-        pool_base = pd.concat(loc_frames, ignore_index=True, sort=False) if loc_frames else pd.DataFrame()
+        _raw_pool = pd.concat(loc_frames, ignore_index=True, sort=False) if loc_frames else pd.DataFrame()
+        pool_base = _sq_preprocess_pool(_raw_pool)
 
     if not pool_base.empty:
         n_locs   = pool_base["_Location"].nunique() if "_Location" in pool_base.columns else 1
         n_sheets = pool_base["_Sheet"].nunique()    if "_Sheet"    in pool_base.columns else 1
+        # Count how many columns were promoted to numeric by pre-processing
+        _nc_after = num_cols(pool_base)
         st.markdown(
-            f'<div style="font-size:.78rem;color:{MUTED};margin-bottom:10px">'
+            f'<div style="font-size:.78rem;color:{MUTED};margin-bottom:6px">'
             f'Query pool: <b style="color:{CYAN}">{len(pool_base):,}</b> records · '
             f'<b style="color:{CYAN}">{n_locs}</b> location(s) · '
-            f'<b style="color:{CYAN}">{n_sheets}</b> sheet(s)</div>',
+            f'<b style="color:{CYAN}">{n_sheets}</b> sheet(s) · '
+            f'<b style="color:{CYAN}">{len(_nc_after)}</b> numeric columns available</div>',
             unsafe_allow_html=True)
+
+        # ── Schema awareness panel ────────────────────────────────────────────
+        with st.expander("📐 Data Schema — available columns & field hints", expanded=False):
+            _schema_cols = [c for c in pool_base.columns if not c.startswith("_")]
+            _num_set = set(_nc_after)
+            _schema_rows = []
+            for c in _schema_cols:
+                dtype  = "numeric" if c in _num_set else "text"
+                sample = pool_base[c].dropna()
+                s_val  = str(sample.iloc[0])[:40] if not sample.empty else "—"
+                _schema_rows.append({"Column": c, "Type": dtype, "Sample value": s_val})
+            if _schema_rows:
+                st.dataframe(pd.DataFrame(_schema_rows), use_container_width=True)
+            st.markdown(
+                f'<div style="font-size:.76rem;color:{MUTED};margin-top:8px">'
+                f'<b>Key field hints for Smart Query:</b><br>'
+                f'<code>total capacity purchased</code> · '
+                f'<code>power in use</code> · '
+                f'<code>total revenue</code> · '
+                f'<code>space in use</code> · '
+                f'<code>per unit rate</code> · '
+                f'<code>seating subscription</code> · '
+                f'<code>net revenue</code>'
+                f'</div>',
+                unsafe_allow_html=True)
 
     # ── Query input ───────────────────────────────────────────────────────────
     query = st.text_area(
@@ -2783,7 +3534,19 @@ with T[4]:
                 elif not ops_raw:
                     st.warning("Could not parse query. Please try rephrasing.")
                 else:
-                    results = execute_ai_operations(ops_raw, pool)
+                    results = _sq_execute_with_schema(ops_raw, pool)
+
+                    # ── Customer-wise lookup: detect & prepend (additive) ────
+                    _sq_cust_name, _sq_field_part = _sq_detect_customer_query(query.strip())
+                    if _sq_cust_name:
+                        _sq_cust_rows = _sq_find_customers(_sq_cust_name, pool)
+                        if not _sq_cust_rows.empty:
+                            _sq_cust_res = _sq_build_customer_profile(
+                                _sq_cust_rows, _sq_cust_name, _sq_field_part
+                            )
+                            results = [_sq_cust_res] + results
+                    # ────────────────────────────────────────────────────────
+
                     st.session_state["sq_results_history"].append({
                         "query":   query.strip(),
                         "source":  sq_src,
@@ -2891,6 +3654,79 @@ with T[4]:
                 elif rtype == "error":
                     st.warning(f"**{label}**: {res['message']}")
 
+                # ── Customer lookup result (additive) ─────────────────────
+                elif rtype == "customer_lookup":
+                    cust_disp = res["customer"]
+                    n_rows    = res["row_count"]
+                    st.markdown(
+                        f'<div style="background:{DARK2};border:2px solid {CYAN};'
+                        f'border-radius:14px;padding:20px 24px;margin:12px 0">'
+                        f'<div style="font-size:1.1rem;font-weight:900;color:{WHITE};'
+                        f'margin-bottom:4px">👤 {cust_disp}</div>'
+                        f'<div style="font-size:.8rem;color:{MUTED}">'
+                        f'{n_rows} matching row(s) across all locations</div></div>',
+                        unsafe_allow_html=True
+                    )
+
+                    # Focus metric (the specifically requested value)
+                    if res.get("focus_col") and res.get("focus_val") is not None:
+                        _fval  = res["focus_val"]
+                        _funit = res.get("focus_unit","")
+                        _fcol  = res["focus_col"].split("|")[-1].strip() if "|" in res["focus_col"] else res["focus_col"]
+                        _fdisplay = (
+                            f"₹ {_fval:,.2f}" if _funit == "₹"
+                            else f"{_fmt_decimal(_fval)} {_funit}".strip()
+                        )
+                        st.markdown(
+                            f'<div style="background:{CARD};border:1px solid {BORD};'
+                            f'border-radius:12px;padding:20px 28px;margin:8px 0;'
+                            f'display:inline-block;min-width:260px">'
+                            f'<div style="font-size:.75rem;color:{MUTED};font-weight:700;'
+                            f'text-transform:uppercase;letter-spacing:.06em">{_fcol}</div>'
+                            f'<div class="result-big">{_fdisplay}</div>'
+                            f'<div style="font-size:.72rem;color:{CYAN};margin-top:6px">'
+                            f'for {cust_disp}</div></div>',
+                            unsafe_allow_html=True
+                        )
+
+                    # Two-column layout: profile + metrics
+                    _pc1, _pc2 = st.columns([1, 2])
+                    with _pc1:
+                        if not res["profile_df"].empty:
+                            st.markdown(
+                                f'<div style="font-size:.78rem;color:{CYAN};font-weight:700;'
+                                f'text-transform:uppercase;letter-spacing:.06em;'
+                                f'margin:10px 0 4px">📋 Profile</div>',
+                                unsafe_allow_html=True
+                            )
+                            _pf = res["profile_df"].copy()
+                            _pf.index = [""] * len(_pf)
+                            st.dataframe(_pf, use_container_width=True, hide_index=True)
+
+                    with _pc2:
+                        if not res["metrics_df"].empty:
+                            st.markdown(
+                                f'<div style="font-size:.78rem;color:{CYAN};font-weight:700;'
+                                f'text-transform:uppercase;letter-spacing:.06em;'
+                                f'margin:10px 0 4px">📊 Metrics</div>',
+                                unsafe_allow_html=True
+                            )
+                            _mf = res["metrics_df"].copy()
+                            _mf.index = [""] * len(_mf)
+                            st.dataframe(_mf, use_container_width=True, hide_index=True)
+
+                    # Full detail table in expander
+                    with st.expander(f"🔎 Full detail table — {n_rows} row(s)", expanded=False):
+                        st.dataframe(res["raw_df"], use_container_width=True)
+                        st.download_button(
+                            "⬇ Download CSV",
+                            res["raw_df"].to_csv(index=False).encode(),
+                            f"customer_{cust_disp.replace(' ','_')[:30]}.csv",
+                            "text/csv",
+                            key=f"dl_cust_{hash(cust_disp)}",
+                        )
+                # ── End customer lookup ────────────────────────────────────
+
             st.markdown(f"<hr style='border-color:{BORD};margin:10px 0 16px'>",
                         unsafe_allow_html=True)
 
@@ -2914,7 +3750,344 @@ with T[4]:
           </div>
         </div>""", unsafe_allow_html=True)
 
+    # ══════════════════════════════════════════════════════════════════════════
+    # SHAMBHUSHIV — ENHANCED CUSTOMER LOOKUP
+    # • Searches ALL 10 DC Excel files and ALL sheets regardless of the
+    #   "Query data source" dropdown above (which only affects Smart Query).
+    # • _sk_full_pool is built fresh from ALL (the global dict of all loaded
+    #   Excel files) so every location/sheet is always searchable.
+    # • Location dropdown shows ALL locations from all 10 Excel files.
+    # • Sheet dropdown is dynamically populated from selected locations.
+    # • Results are shown location-wise AND sheet-wise with per-group metrics.
+    # • "Not found" summary shown for locations where customer is absent.
+    # ══════════════════════════════════════════════════════════════════════════
 
+    # ── Build the full search pool directly from ALL — all 10 Excel files,
+    #    all sheets — independent of sq_src and the sidebar sel_locs/sel_sheets.
+    #    We use combined_df(ALL) here (no preprocessing) so that every location
+    #    and sheet from attached Excel files is always represented.
+    _sk_full_pool = combined_df(ALL)   # has _Location and _Sheet columns
+
+    st.markdown(f"<hr style='border-color:{BORD};margin:32px 0 20px'>",
+                unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-title">👤 Customer Lookup — Name-Based Data Retrieval</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div style="font-size:.85rem;color:{MUTED};margin-bottom:16px">'
+        f'Search any customer by name across <b>all 10 DC Excel files and all sheets</b>. '
+        f'Works even when the same customer appears in multiple locations. '
+        f'Type part of the name — partial match, case-insensitive '
+        f'(e.g. <b style="color:{CYAN}">Wipro</b> finds WIPRO LIMITED, Wipro Nabard, etc.). '
+        f'Use the filters below to narrow to a specific DC file or sheet.</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Location + Sheet filter options — taken directly from ALL dict
+    #    so ALL 10 Excel files and ALL their sheets are always listed,
+    #    regardless of whether any rows survived preprocessing.
+    _sk_all_locs = sorted(ALL.keys())
+    _sk_loc_sheet_map: dict = {
+        _sk_l: sorted(ALL[_sk_l].keys()) for _sk_l in _sk_all_locs
+    }
+
+    _sk_fr1, _sk_fr2 = st.columns([3, 2])
+    with _sk_fr1:
+        _sk_sel_locs = st.multiselect(
+            "🏢 Filter by DC Location (leave empty = ALL)",
+            options=_sk_all_locs,
+            default=[],
+            key="sk_sel_locs",
+        )
+    with _sk_fr2:
+        _sk_sheet_options = []
+        if _sk_sel_locs:
+            for _l in _sk_sel_locs:
+                _sk_sheet_options += _sk_loc_sheet_map.get(_l, [])
+            _sk_sheet_options = sorted(set(_sk_sheet_options))
+        else:
+            for _l in _sk_all_locs:
+                _sk_sheet_options += _sk_loc_sheet_map.get(_l, [])
+            _sk_sheet_options = sorted(set(_sk_sheet_options))
+        _sk_sel_sheets = st.multiselect(
+            "📄 Filter by Sheet (leave empty = ALL sheets)",
+            options=_sk_sheet_options,
+            default=[],
+            key="sk_sel_sheets",
+        )
+
+    # ── Customer name + metric + button ───────────────────────────────────────
+    _sk_r1, _sk_r2, _sk_r3 = st.columns([2, 2, 1])
+    with _sk_r1:
+        _sk_cust_input = st.text_input(
+            "🔍 Customer Name (partial match)",
+            placeholder="e.g. Wipro, Oracle, Cisco, TATA, YES BANK …",
+            key="sk_cust_input",
+        )
+    with _sk_r2:
+        _sk_field_input = st.text_input(
+            "📐 Metric to highlight (optional)",
+            placeholder="e.g. power capacity purchased, total revenue …",
+            key="sk_field_input",
+        )
+    with _sk_r3:
+        st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
+        _sk_run = st.button("Find Customer", key="sk_run", use_container_width=True)
+
+    # ── Live autocomplete: show matching names as typed ────────────────────────
+    # Uses _sk_full_pool (all 10 Excel files) so autocomplete is always complete
+    if _sk_cust_input.strip() and not _sk_run:
+        _sk_hint_rows = _sk_find_customers_all(_sk_cust_input.strip(), _sk_full_pool)
+        _sk_hint_cols = _sk_all_customer_cols(_sk_hint_rows)
+        _sk_hint_names: list = []
+        for _hc in _sk_hint_cols:
+            if _hc in _sk_hint_rows.columns:
+                vals = (_sk_hint_rows[_hc].dropna().astype(str)
+                        .str.strip().unique().tolist())
+                _sk_hint_names += [
+                    v for v in vals
+                    if v and v.lower() not in ("none","nan","")
+                ]
+        _sk_hint_names = sorted(set(_sk_hint_names))
+        if _sk_hint_names:
+            st.markdown(
+                f'<div style="font-size:.77rem;color:{CYAN};font-weight:700;'
+                f'margin:4px 0 2px">Matching customers ({len(_sk_hint_names)}) '
+                f'across all files:</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                " &nbsp; ".join(
+                    f'<span class="badge">{n[:55]}</span>'
+                    for n in _sk_hint_names[:25]
+                ),
+                unsafe_allow_html=True,
+            )
+
+    # ── Execute lookup ─────────────────────────────────────────────────────────
+    if _sk_run:
+        if not _sk_cust_input.strip():
+            st.warning("Please enter a customer name.")
+        elif _sk_full_pool.empty:
+            st.error("No data loaded. Please check your Excel files.")
+        else:
+            # Build the search pool: start with _sk_full_pool (all 10 Excel files)
+            # so that customer lookup is ALWAYS across all locations/sheets,
+            # independent of the sidebar or the sq_src dropdown above.
+            _sk_pool = _sk_full_pool.copy()
+            # Apply own location filter (if user selected specific locations)
+            if _sk_sel_locs and "_Location" in _sk_pool.columns:
+                _sk_pool = _sk_pool[_sk_pool["_Location"].isin(_sk_sel_locs)]
+            # Apply own sheet filter (if user selected specific sheets)
+            if _sk_sel_sheets and "_Sheet" in _sk_pool.columns:
+                _sk_pool = _sk_pool[_sk_pool["_Sheet"].isin(_sk_sel_sheets)]
+
+            # Search ALL customer-name columns across the pool
+            _sk_rows = _sk_find_customers_all(_sk_cust_input.strip(), _sk_pool)
+
+            if _sk_rows.empty:
+                st.warning(
+                    f"**'{_sk_cust_input}'** not found in "
+                    f"{'selected locations/sheets' if (_sk_sel_locs or _sk_sel_sheets) else 'any DC file'}. "
+                    f"Try a shorter or different name."
+                )
+            else:
+                # Canonical display name from actual data
+                _sk_cust_disp = _sk_canonical_name(_sk_rows, _sk_cust_input.strip())
+                _sk_n_rows    = len(_sk_rows)
+
+                # Build (location, sheet) groups
+                _sk_has_loc   = "_Location" in _sk_rows.columns
+                _sk_has_sheet = "_Sheet"    in _sk_rows.columns
+
+                if _sk_has_loc and _sk_has_sheet:
+                    _sk_groups = list(_sk_rows.groupby(
+                        ["_Location", "_Sheet"], sort=True
+                    ))
+                elif _sk_has_loc:
+                    _sk_groups = [
+                        ((loc, ""), g)
+                        for loc, g in _sk_rows.groupby("_Location", sort=True)
+                    ]
+                else:
+                    _sk_groups = [("(All)", _sk_rows)]
+
+                _sk_found_locs   = sorted({k[0] for k, _ in _sk_groups})
+                _sk_found_sheets = sorted({k[1] for k, _ in _sk_groups if k[1]})
+                _sk_n_files      = len(_sk_found_locs)
+                _sk_n_sheets_    = len(_sk_groups)
+
+                # ── Top summary card ──────────────────────────────────────
+                st.markdown(
+                    f'<div style="background:{DARK2};border:2px solid {CYAN};'
+                    f'border-radius:14px;padding:20px 26px;margin:14px 0">'
+                    f'<div style="font-size:1.1rem;font-weight:900;color:{WHITE};'
+                    f'margin-bottom:6px">👤 {_sk_cust_disp}</div>'
+                    f'<div style="font-size:.82rem;color:{TEXT}">'
+                    f'<b style="color:{CYAN}">{_sk_n_rows}</b> matching row(s) '
+                    f'found in <b style="color:{CYAN}">{_sk_n_files}</b> DC location(s) '
+                    f'across <b style="color:{CYAN}">{_sk_n_sheets_}</b> sheet(s)</div>'
+                    f'<div style="margin-top:10px">'
+                    + " &nbsp; ".join(
+                        f'<span class="badge">{k[0]}'
+                        + (f' — {k[1]}' if k[1] else '')
+                        + '</span>'
+                        for k, _ in _sk_groups
+                    )
+                    + f'</div></div>',
+                    unsafe_allow_html=True,
+                )
+
+                # ── Focus metric (overall, across all matched rows) ───────
+                if _sk_field_input.strip():
+                    _sk_focus_col, _ = _sq_resolve_field(_sk_rows, _sk_field_input.strip())
+                    if _sk_focus_col and _sk_focus_col in _sk_rows.columns:
+                        _sk_fs  = _robust_to_numeric(_sk_rows[_sk_focus_col]).dropna()
+                        if not _sk_fs.empty:
+                            _sk_fv   = float(_sk_fs.sum())
+                            _sk_fu   = _detect_unit(_sk_focus_col)
+                            _sk_fd   = (f"₹ {_sk_fv:,.2f}" if _sk_fu == "₹"
+                                        else f"{_fmt_decimal(_sk_fv)} {_sk_fu}".strip())
+                            _sk_fcol = (_sk_focus_col.split("|")[-1].strip()
+                                        if "|" in _sk_focus_col else _sk_focus_col)
+                            st.markdown(
+                                f'<div style="background:{CARD};border:1px solid {BORD};'
+                                f'border-radius:12px;padding:22px 32px;margin:10px 0;'
+                                f'display:inline-block;min-width:280px">'
+                                f'<div style="font-size:.75rem;color:{MUTED};font-weight:700;'
+                                f'text-transform:uppercase;letter-spacing:.06em">'
+                                f'{_sk_fcol} (all locations combined)</div>'
+                                f'<div class="result-big">{_sk_fd}</div>'
+                                f'<div style="font-size:.72rem;color:{CYAN};margin-top:6px">'
+                                f'for {_sk_cust_disp}</div></div>',
+                                unsafe_allow_html=True,
+                            )
+
+                # ── Overall download ──────────────────────────────────────
+                _sk_dl_meta  = [c for c in ["_Location","_Sheet"] if c in _sk_rows.columns]
+                _sk_dl_data  = [c for c in _sk_rows.columns if not c.startswith("_")]
+                _sk_dl_df    = _sk_rows[_sk_dl_meta + _sk_dl_data].copy()
+                _sk_dl_df.index = range(1, len(_sk_dl_df) + 1)
+                with st.expander(
+                    f"⬇ Download all {_sk_n_rows} matching rows (all locations combined)",
+                    expanded=False,
+                ):
+                    st.dataframe(_sk_dl_df, use_container_width=True)
+                    st.download_button(
+                        "⬇ Download combined CSV",
+                        _sk_dl_df.to_csv(index=False).encode(),
+                        f"customer_{_sk_cust_disp.replace(' ','_')[:40]}_ALL.csv",
+                        "text/csv",
+                        key="sk_dl_all",
+                    )
+
+                # ── Per-location / per-sheet cards ────────────────────────
+                st.markdown(
+                    f"<hr style='border-color:{BORD};margin:24px 0 16px'>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    '<div class="section-title">'
+                    '📂 Results by DC Location &amp; Sheet'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
+
+                for _sk_gi, (_sk_gkey, _sk_gdf) in enumerate(_sk_groups):
+                    _sk_loc_n   = _sk_gkey[0] if isinstance(_sk_gkey, tuple) else str(_sk_gkey)
+                    _sk_sheet_n = _sk_gkey[1] if isinstance(_sk_gkey, tuple) else ""
+                    _sk_gdf     = _sk_gdf.reset_index(drop=True)
+                    _sk_g_n     = len(_sk_gdf)
+                    _sk_g_name  = _sk_canonical_name(_sk_gdf, _sk_cust_disp)
+
+                    # Location card header
+                    st.markdown(
+                        f'<div style="background:{DARK2};border-left:4px solid {BLUE};'
+                        f'border-radius:0 12px 12px 0;padding:14px 20px;margin:18px 0 8px">'
+                        f'<span style="font-size:1rem;font-weight:800;color:{WHITE}">'
+                        f'🏢 {_sk_loc_n}</span>'
+                        + (f'&nbsp;<span style="font-size:.82rem;color:{CYAN};'
+                           f'font-weight:600"> — {_sk_sheet_n}</span>'
+                           if _sk_sheet_n else "")
+                        + f'<br><span style="font-size:.76rem;color:{MUTED}">'
+                        f'{_sk_g_n} row(s) &nbsp;·&nbsp; '
+                        f'<span style="color:{GREEN}">{_sk_g_name}</span>'
+                        f'</span></div>',
+                        unsafe_allow_html=True,
+                    )
+
+                    # Per-group metrics & profile
+                    _sk_gmetrics = _sk_build_per_loc_metrics(_sk_gdf)
+                    _sk_gprofile = _sk_build_per_loc_profile(_sk_gdf)
+
+                    _sk_ga, _sk_gb = st.columns([1, 2])
+                    with _sk_ga:
+                        if not _sk_gprofile.empty:
+                            st.markdown(
+                                f'<div style="font-size:.72rem;color:{CYAN};font-weight:700;'
+                                f'text-transform:uppercase;margin-bottom:4px">'
+                                f'📋 Profile</div>',
+                                unsafe_allow_html=True,
+                            )
+                            _gpf = _sk_gprofile.copy(); _gpf.index = [""] * len(_gpf)
+                            st.dataframe(_gpf, use_container_width=True, hide_index=True)
+
+                    with _sk_gb:
+                        if not _sk_gmetrics.empty:
+                            st.markdown(
+                                f'<div style="font-size:.72rem;color:{CYAN};font-weight:700;'
+                                f'text-transform:uppercase;margin-bottom:4px">'
+                                f'📊 Metrics</div>',
+                                unsafe_allow_html=True,
+                            )
+                            _gmf = _sk_gmetrics.copy(); _gmf.index = [""] * len(_gmf)
+                            st.dataframe(_gmf, use_container_width=True, hide_index=True)
+                        else:
+                            st.caption("No numeric metrics in this sheet for this customer.")
+
+                    # Row detail expander for this group
+                    _sk_g_meta = [c for c in ["_Location","_Sheet"] if c in _sk_gdf.columns]
+                    _sk_g_data = [c for c in _sk_gdf.columns if not c.startswith("_")]
+                    _sk_g_show = _sk_gdf[_sk_g_meta + _sk_g_data].copy()
+                    _sk_g_show.index = range(1, len(_sk_g_show) + 1)
+                    _sk_g_title = (
+                        f"All columns — {_sk_loc_n}"
+                        + (f" / {_sk_sheet_n}" if _sk_sheet_n else "")
+                        + f"  ({_sk_g_n} row(s))"
+                    )
+                    with st.expander(_sk_g_title, expanded=(_sk_n_files == 1)):
+                        st.dataframe(_sk_g_show, use_container_width=True)
+                        _sk_g_fn = (
+                            f"customer_{_sk_cust_disp.replace(' ','_')[:25]}"
+                            f"_{_sk_loc_n.replace(' ','_')[:20]}.csv"
+                        )
+                        st.download_button(
+                            "⬇ Download this sheet's CSV",
+                            _sk_g_show.to_csv(index=False).encode(),
+                            _sk_g_fn, "text/csv",
+                            key=f"sk_dl_{_sk_gi}",
+                        )
+
+                # ── "Not found" summary for remaining locations ────────────
+                _sk_absent = [
+                    loc for loc in _sk_all_locs
+                    if loc not in _sk_found_locs
+                    and (not _sk_sel_locs or loc in _sk_sel_locs)
+                ]
+                if _sk_absent:
+                    st.markdown(
+                        f'<div style="background:{DARK2};border:1px dashed {BORD};'
+                        f'border-radius:10px;padding:12px 18px;margin:20px 0;'
+                        f'font-size:.8rem;color:{MUTED}">'
+                        f'<b>Not found in:</b> '
+                        + ", ".join(
+                            f'<span style="color:{AMBER}">{l}</span>'
+                            for l in _sk_absent
+                        )
+                        + "</div>",
+                        unsafe_allow_html=True,
+                    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
