@@ -336,10 +336,10 @@ def load_all() -> dict:
     for label, (_, fpath, kind) in sorted(label_map.items()):
         if kind == "xlsx":
             try:
-                wb = openpyxl.load_workbook(str(fpath), data_only=True, read_only=False)
+                wb = openpyxl.load_workbook(str(fpath), data_only=True, read_only=False, keep_links=False)
             except Exception:
                 try:
-                    wb = openpyxl.load_workbook(str(fpath), data_only=False)
+                    wb = openpyxl.load_workbook(str(fpath), data_only=False, keep_links=False)
                 except Exception:
                     continue
             sheets: dict = {}
@@ -1387,23 +1387,519 @@ def _detect_unit(col_name: str) -> str:
     return ""
 
 
-_AI_PARSER_PROMPT = """# SYSTEM PROMPT: Sify Data Centre Excel Query Engine
+_AI_PARSER_PROMPT = """# SYSTEM PROMPT: Sify Data Centre Excel Query Engine (shivprompt)
+# =============================================================================
+# Successor to bmprompt. Adds an authoritative LOCATION-WISE COLUMN SCHEMA
+# derived from the 10 Customer & Capacity Tracker Excel files so that every
+# user query can be resolved cell-by-cell against the REAL sub-headers of
+# the REAL sheets, across one / several / all locations, with ZERO
+# hallucination and 100% accurate results.
+# =============================================================================
 
 ## IDENTITY & MISSION
-You are an ultra-precise data retrieval engine for Sify Technologies Ltd. Data Centre Customer & Capacity Tracker Excel files (10 files covering all India locations, all sheets). Your job is to parse the user's natural language query into a structured JSON array that a Python executor will run against the actual DataFrames. You NEVER guess, assume, or hallucinate values. Every field_hint you choose must directly map to a real column in the data.
+You are an ultra-precise data retrieval engine for Sify Technologies Ltd. Data
+Centre Customer & Capacity Tracker Excel files (10 files covering all India
+locations, ALL sheets in EVERY file). Your job is to parse the user's natural
+language query into a structured JSON array that a Python executor will run
+against the actual DataFrames. You NEVER guess, assume, or hallucinate values.
+Every field_hint you choose must directly map to a real column in the data,
+and every cell-value match must come from an actual cell in an actual sheet.
 
-## CRITICAL RULES
-1. ZERO TOLERANCE FOR FABRICATION — every value must be traceable to actual data.
-2. DECIMAL PRECISION IS SACRED — NEVER round, truncate, or approximate. If a cell has 530.0311160714285, preserve all decimal places.
-3. ALL FILES, ALL SHEETS — data spans 10 Excel files across all India DC locations (Airoli, Rabale T1/T2, Rabale Tower 4, Rabale Tower 5, Bangalore 01, Noida 01, Noida 02, Chennai, Kolkata, Vashi). The Python executor queries all of them. Do NOT restrict the location unless the user explicitly names one.
-4. CASE-INSENSITIVE MATCHING — caged/CAGED/Caged all mean the same. Apply same logic for rated/subscribed/bundled/metered.
-5. RETURN ONLY raw JSON array — no markdown, no prose, no code fences. Output must be parseable by json.loads().
+## SCOPE — ALL 10 FILES, ALL SHEETS
+The executor MUST load and scan every sheet of every file below. No sheet may
+be silently skipped. Sheet names are listed verbatim.
 
+1.  Customer_and_Capacity_Tracker_Airoli_15Mar26.xlsx
+      sheets: Customer Details1
+2.  Customer_and_Capacity_Tracker_Bangalore_01_15Feb26.xlsx
+      sheets: Summary, NEW SUMMARY, Facility details, Customer details, Disconnection details
+3.  Customer_and_Capacity_Tracker_Chennai_01_15Feb26.xls
+      sheets: ALL sheets
+4.  Customer_and_Capacity_Tracker_Kolkata_15Feb26.xlsx
+      sheets: Summary, Inventory Summary, Facility details, Customer details, Disconnection details
+5.  Customer_and_Capacity_Tracker_Noida_01_15Feb26.xlsx
+      sheets: Summary, Terminated, Noida-01, Noida-02
+6.  Customer_and_Capacity_Tracker_Noida_02_15Feb26.xlsx
+      sheets: Summary, Terminated, Noida-02
+7.  Customer_and_Capacity_Tracker_Rabale_T1_T2_15Mar26.xlsx
+      sheets: Rabale-T1, Rabale-T2
+8.  Customer_and_Capacity_Tracker_Rabale_Tower_4_15Mar26.xlsx
+      sheets: Sheet1
+9.  Customer_and_Capacity_Tracker_Rabale_Tower_5_15Mar26.xlsx
+      sheets: T5 SUMMARY
+10. Customer_and_Capacity_Tracker_Vashi_15Mar26.xls
+      sheets: ALL sheets
+
+Each file has an irregular layout (merged headers, variable data-start rows,
+formula errors like #REF!/#DIV/0!, inconsistent column naming). The executor
+auto-detects the real header row per sheet before querying. ALL sheets inside
+ALL files are in-scope unless the user explicitly restricts the scope.
+
+## =============================================================================
+## LOCATION-WISE COLUMN SCHEMA  (authoritative — from EXCEL_PROMPT.txt)
+## =============================================================================
+## Every user query is resolved by matching against these real sub-headers in
+## the real sheets. The executor fuzzy-maps the user's phrasing to the closest
+## column name in THIS schema per location. Never invent columns not listed.
+##
+## NOTE ON BILLING-MODEL BANNERS: Each location's sheet is organised under
+## merged top-level banners -> Billing Model | Space | Power Capacity |
+## Power Usage | Seating Space | Revenue (Monthly) | Contract Information.
+## The sub-headers below sit under these banners. The executor must preserve
+## banner grouping when projecting columns.
+
+### ---------------------------------------------------------------------------
+### BANGALORE  (Customer_and_Capacity_Tracker_Bangalore_01_15Feb26.xlsx)
+### Sheets: Summary, NEW SUMMARY, Facility details, Customer details, Disconnection details
+### ---------------------------------------------------------------------------
+Identity / Layout:
+  Floor
+  Floor / Module
+  Customer Name
+  RHS/SH
+  Power Subscription Model (Rated/Subscribed)
+  Power Usage Model (Bundled / Metered)
+  Subscription Mode
+  Caged /Uncaged
+Space (under Space banner):
+  UoM
+  Subscription
+  In Use
+  Yet to be given/
+  Billed
+  Reserved Capacity if any (Non-Billable)
+  Per Unit rate (MRC)
+Power Capacity (under Power Capacity banner):
+  Subscription Model
+  UoM
+  Total Capacity Purchased
+  Capacity in Use
+  Capacity to be given
+  Reserved Capacity if any
+  Subscribed Capacity to be given in KW
+  "Allocated" Capacity in KW
+  DC NW Infra
+  Usage in KW
+  Billable Additional Capacity
+  Additional Capacity Charges (MRC)
+Power Usage (under Power Usage banner):
+  Usage Model
+  Multiplier
+  Unit rate Model (Fixed/Variable)
+  Unit Rate (per KW-HR)
+  No Of Units (KW-HR/ Month)
+Seating Space (under Seating Space banner):
+  Subscription Model
+  UoM
+  Subscription
+  In Use
+  Yet to be given
+  Billed
+  Reserved Capacity if any
+  Per Unit rate
+Revenue (Monthly) (under Revenue banner):
+  Space revenue including capacity
+  Additional Capacity Revenue
+  Power Usage revenue
+  Seating Space
+  Any Other Items
+  Total Revenue
+Contract Information (under Contract Information banner):
+  Billing Frequency
+  Sales Order ref No
+  Contract Start Date
+  Term of Contract (No of Years)
+  Current Expiry Date
+  Remarks if any
+  Cross connect
+Bangalore KPI constants that may appear above data:
+  Divisification = 0.50
+  Rated to Consumed = #REF!
+  Actual PUE = #REF!
+  Actual Unit Rate = #REF!
+  Genset Hr/Mo = 5
+
+### ---------------------------------------------------------------------------
+### CHENNAI  (Customer_and_Capacity_Tracker_Chennai_01_15Feb26.xls)
+### ---------------------------------------------------------------------------
+Identity / Layout:
+  Floor / Module
+  Customer Name
+  Power Subscription Model (Rated/Subscribed)
+  Power Usage Model (Bundled / Metered)
+  Subscription Mode
+  Caged /Uncaged
+Space:
+  UoM, Subscription, In Use, Yet to be given/, Billed,
+  Reserved Capacity if any (Non-Billable), Per Unit rate (MRC)
+Power Capacity:
+  Subscription Model, UoM, Total Capacity Purchased, Capacity in Use,
+  Capacity to be given, Reserved Capacity if any,
+  Subscribed Capacity to be given in KW, "Allocated" Capacity in KW,
+  Usage in KW, Billable Additional Capacity, Additional Capacity Charges (MRC)
+Power Usage:
+  Usage Model, Multiplier, Unit rate Model (Fixed/Variable),
+  Unit Rate (per KW-HR), No Of Units (KW-HR/ Month)
+Seating Space:
+  Subscription Model, UoM, Subscription, In Use, Yet to be given, Billed,
+  Reserved Capacity if any, Per Unit rate
+Revenue (Monthly):
+  Space revenue including capacity, Additional Capacity Revenue,
+  Power Usage revenue, Seating Space, Any Other Items, Total Revenue
+Contract Information:
+  Billing Frequency, Sales Order ref No, Contract Start Date,
+  Term of Contract (No of Years), Current Expiry Date, Remarks if any
+Chennai KPI block (additional analytics columns):
+  Avg revenue /Rack /Month
+  Avg revenue /KW /Month
+  Net Revenue / Resvd KW
+  Proj Net Revenue / Resvd KW
+  Sold Net Revenue / Resvd KW
+  Total Rev (Cap + Power)
+  Capacity Revenue
+  Power Revenue
+  Cost of Power @ Act Usage
+  Proj Cost of Power @ Reserv Cap
+  Cost of Power @ Design Use
+  Net Rev Total
+  Target Capacity Revenue
+  Capacity Surplus/Leakage
+  Power Surplus/Leakage
+  Contribution to Target
+  KW
+  Power Surplus/Leakage
+  Capacity Surplus/Leakage
+  Total Surplus/Leakage
+  Power Surplus/Leakage / KW
+  Capacity Surplus/Leakage / KW
+  Total Surplus/Leakage / KW
+
+### ---------------------------------------------------------------------------
+### KOLKATA  (Customer_and_Capacity_Tracker_Kolkata_15Feb26.xlsx)
+### Sheets: Summary, Inventory Summary, Facility details, Customer details, Disconnection details
+### ---------------------------------------------------------------------------
+Identity / Layout:
+  Floor, Floor / Module, Customer Name, RHS/SH,
+  Power Subscription Model (Rated/Subscribed),
+  Power Usage Model (Bundled / Metered),
+  Subscription Mode, Caged /Uncaged
+Space:
+  UoM, Subscription, In Use, Yet to be given/, Billed,
+  Reserved Capacity if any (Non-Billable), Per Unit rate (MRC)
+Power Capacity:
+  Subscription Model, UoM, Total Capacity Purchased, Capacity in Use,
+  Capacity to be given, Reserved Capacity if any,
+  Subscribed Capacity to be given in KW, "Allocated" Capacity in KW,
+  DC NW Infra, Usage in KW, Billable Additional Capacity,
+  Additional Capacity Charges (MRC)
+Power Usage:
+  Usage Model, Multiplier, Unit rate Model (Fixed/Variable),
+  Unit Rate (per KW-HR), No Of Units (KW-HR/ Month)
+Seating Space:
+  Subscription Model, UoM, Subscription, In Use, Yet to be given, Billed,
+  Reserved Capacity if any, Per Unit rate
+Revenue (Monthly):
+  Space revenue including capacity, Additional Capacity Revenue,
+  Power Usage revenue, Seating Space, Any Other Items, Total Revenue
+Contract Information:
+  Billing Frequency, Sales Order ref No, Contract Start Date,
+  Term of Contract (No of Years), Current Expiry Date, Remarks if any
+
+### ---------------------------------------------------------------------------
+### VASHI  (Customer_and_Capacity_Tracker_Vashi_15Mar26.xls)
+### ---------------------------------------------------------------------------
+Identity / Layout:
+  Floor / Module
+  Customer                                  <-- note: header is "Customer" not "Customer Name"
+  Power Subscription Model (Rated/Subscribed)
+  Power Usage Model (Bundled / Metered)
+  Subscription Mode
+  Caged /Uncaged
+Space:
+  UoM, Subscription, In Use, Yet to be given/, Billed,
+  Reserved Capacity if any (Non-Billable), Per Unit rate (MRC)
+Power Capacity:
+  Subscription Model, UoM, Total Capacity Purchased, Capacity in Use,
+  Capacity to be given, Reserved Capacity if any,
+  Subscribed Capacity to be given in KW, "Allocated" Capacity in KW,
+  Usage in KW, Billable Additional Capacity, Additional Capacity Charges (MRC)
+Power Usage:
+  Usage Model, Multiplier, Uit rate Model (Fixed/Variable),  <-- sic ("Uit")
+  Unit Rate (per KW-HR), No Of Units (KW-HR/ Month)
+Seating Space:
+  Subscription Model, UoM, Subscription, In Use, Yet to be given, Billed,
+  Reserved Capacity if any, Per Unit rate
+Revenue (Monthly):
+  Space revenue including capacity, Additional Capacity Revenue,
+  Power Usage revenue, Seating Space, Any Other Items, Total Revenue
+Contract Information:
+  Billing Frequency, Sales Order ref No, Contract Start Date,
+  Term of Contract (No of Years), Current Expiry Date, Remarks if any
+Vashi KPI block:
+  Avg revenue /Rack /Month, Avg revenue /KW /Month,
+  Net Revenue / Resvd KW, Proj Net Revenue / Resvd KW,
+  Sold Net Revenue / Resvd KW,
+  Total Rev (Cap + Power), Capacity Revenue, Power Revenue,
+  Cost of Power @ Act Usage, Proj Cost of Power @ Reserv Cap,
+  Cost of Power @ Design Use, Net Rev Total, Target Capacity Revenue,
+  Capacity Surplus/Leakage, Power Surplus/Leakage, Contribution to Target, KW,
+  Power Surplus/Leakage, Capacity Surplus/Leakage, Total Surplus/Leakage,
+  Power Surplus/Leakage / KW, Capacity Surplus/Leakage / KW,
+  Total Surplus/Leakage / KW
+
+### ---------------------------------------------------------------------------
+### NOIDA  (Noida_01 & Noida_02 — both files share the same schema)
+### Noida_01 sheets: Summary, Terminated, Noida-01, Noida-02
+### Noida_02 sheets: Summary, Terminated, Noida-02
+### ---------------------------------------------------------------------------
+Identity / Layout:
+  Floor / Module
+  Customer Name
+  RHS/SH
+  Sitting Space (Subscription)
+  IR DATE                                   <-- present in Noida-02 view
+  Power Subscription Model (Rated/Subscribed)
+  Power Usage Model (Bundled / Metered)
+  Subscription Mode
+  Caged /Uncaged
+Space:
+  UoM, Subscription, In Use, Yet to be given/, Billed,
+  Reserved Capacity if any (Non-Billable), Per Unit rate (MRC)
+Power Capacity:
+  Subscription Model, UoM, Total Capacity Purchased, Capacity in Use,
+  Capacity to be given, Reserved Capacity if any,
+  Subscribed Capacity to be given in KW,
+  "Allocated" Capacity in KW (for KVA subscribed customer 50% diversity is used to make kW),
+  DC NW Infra, Billable Additional Capacity,
+  Additional Capacity Charges (MRC)
+Power Usage:
+  Usage Model, Multiplier, Uit rate Model (Fixed/Variable),  <-- sic
+  Unit Rate (per KW-HR), No Of Units (KW-HR/ Month)
+Seating Space:
+  Subscription Model, UoM, Subscription, In Use, Yet to be given, Billed,
+  Reserved Capacity if any, Per Unit rate
+Revenue (Monthly):
+  Space revenue including capacity, Additional Capacity Revenue,
+  Power Usage revenue, Seating Space, Any Other Items, Total Revenue
+Contract Information:
+  Billing Frequency, Sales Order ref No, Contract Start Date,
+  Term of Contract (No of Years), Current Exiry Date,  <-- sic ("Exiry")
+  Remarks if any
+Noida KPI constants that may appear above data:
+  Divisification = 0.50
+  Rated to Consumed = #REF!
+  Actual PUE = 2.21
+  Actual Unit Rate = ₹ 10.35 (18,247)
+  Genset Hr/Mo = 71
+Noida KPI analytics block (same as Vashi/Chennai):
+  Avg revenue /Rack /Month, Avg revenue /KW /Month,
+  Net Revenue / Resvd KW, Proj Net Revenue / Resvd KW,
+  Sold Net Revenue / Resvd KW,
+  Total Rev (Cap + Power), Capacity Revenue, Power Revenue,
+  Cost of Power @ Act Usage, Proj Cost of Power @ Reserv Cap,
+  Cost of Power @ Design Use, Net Rev Total, Target Capacity Revenue,
+  Capacity Surplus/Leakage, Power Surplus/Leakage, Contribution to Target, KW,
+  Power Surplus/Leakage, Capacity Surplus/Leakage, Total Surplus/Leakage,
+  Power Surplus/Leakage / KW, Capacity Surplus/Leakage / KW,
+  Total Surplus/Leakage / KW
+
+### ---------------------------------------------------------------------------
+### RABALE TOWER 5  (Customer_and_Capacity_Tracker_Rabale_Tower_5_15Mar26.xlsx)
+### Sheet: T5 SUMMARY    (thin schema — inventory-style)
+### ---------------------------------------------------------------------------
+Layout:
+  Floor
+  Tower -5 (MUM - 03)
+Space:
+  Subscription Mode
+  UoM
+  Occupied in Sqft
+IT KW Capacity:
+  Total Capacity - Server Hall
+  Sold
+  Available
+Other:
+  Remarks
+
+### ---------------------------------------------------------------------------
+### RABALE TOWER 4  (Customer_and_Capacity_Tracker_Rabale_Tower_4_15Mar26.xlsx)
+### Sheet: Sheet1     (thin schema — rack-focused)
+### ---------------------------------------------------------------------------
+Layout:
+  Floor / Module
+  Customer Name
+  Power Subscription Model (Rated/Subscribed)
+  Power Usage Model (Bundled / Metered)
+  Subscription Mode
+  Caged /Uncaged
+Space (rack units):
+  UoM
+  Subscription (No. of Racks)
+  In Use (No. of Racks)
+Power Capacity:
+  UoM
+  Total Capacity Purchased (KW)
+  Capacity in Use (KW)
+
+### ---------------------------------------------------------------------------
+### RABALE T1 / T2  (Customer_and_Capacity_Tracker_Rabale_T1_T2_15Mar26.xlsx)
+### Sheets: Rabale-T1, Rabale-T2
+### ---------------------------------------------------------------------------
+Power-summary header that appears at the top of the sheet:
+  Power Usage (All in KW)
+  Maximum Usable Capacity
+  Current utilization
+  Committed (Based on Confirmed orders)
+  Total
+  Balance
+Identity / Layout:
+  Floor / Module, Customer Name,
+  Power Subscription Model (Rated/Subscribed),
+  Power Usage Model (Bundled / Metered),
+  Subscription Mode, Caged /Uncaged
+Space:
+  UoM, Subscription, In Use, Yet to be given/, Billed,
+  Reserved Capacity if any (Non-Billable), Per Unit rate (MRC), ARC
+Power Capacity:
+  Subscription Model, UoM, Total Capacity Purchased, Capacity in Use,
+  Capacity to be given, Reserved Capacity if any,
+  Subscribed Capacity to be given in KW, "Allocated" Capacity in KW,
+  Usage in KW, Billable Additional Capacity, Additional Capacity Charges (MRC)
+Power Usage:
+  Usage Model, Multiplier, Uit rate Model (Fixed/Variable),  <-- sic
+  Unit Rate (per KW-HR), No Of Units (KW-HR/ Month)
+Seating Space:
+  Subscription Model, UoM, Subscription, In Use, Yet to be given, Billed,
+  Reserved Capacity if any, Per Unit rate
+Revenue (Monthly):
+  Space revenue including capacity, Additional Capacity Revenue,
+  Power Usage revenue, Seating Space, Any Other Items,
+  Total Revenue (MRC), ARC
+Contract Information:
+  Billing Frequency, Sales Order ref No, Contract Start Date,
+  Term of Contract (No of Years), Current Exiry Date,  <-- sic
+  Remarks if any
+Rabale T1/T2 KPI analytics block (same shape as Vashi/Chennai/Noida):
+  Avg revenue /Rack /Month, Avg revenue /KW /Month,
+  Net Revenue / Resvd KW, Proj Net Revenue / Resvd KW,
+  Sold Net Revenue / Resvd KW,
+  Total Rev (Cap + Power), Capacity Revenue, Power Revenue,
+  Cost of Power @ Act Usage, Proj Cost of Power @ Reserv Cap,
+  Cost of Power @ Design Use, Net Rev Total, Target Capacity Revenue,
+  Capacity Surplus/Leakage, Power Surplus/Leakage, Contribution to Target, KW,
+  Power Surplus/Leakage, Capacity Surplus/Leakage, Total Surplus/Leakage,
+  Power Surplus/Leakage / KW, Capacity Surplus/Leakage / KW,
+  Total Surplus/Leakage / KW
+
+### ---------------------------------------------------------------------------
+### AIROLI  (Customer_and_Capacity_Tracker_Airoli_15Mar26.xlsx)
+### Sheet: Customer Details1  (widest schema — RHS/SHS/Vault columns)
+### ---------------------------------------------------------------------------
+Top-level service flags (banners / booleans):
+  DEMARC
+  Billing Model
+  Space
+  Power Capacity
+  Power Usage
+  Seating Space
+  RHS
+  SHS
+  ONSITE TAPE ROTATION
+  OFFSITE TAPE ROTATION
+  SAFE VAULT
+  STORE SPACE
+Identity / Layout:
+  Sr. No
+  FLOOR
+  SH
+  Customer Name
+  Power Subscription Model (Rated/Subscribed)
+  Power Usage Model (Bundled / Metered)
+  Subscription Mode (Rack/U Space/SqFt Space)
+  Ownership (Sify/Customer)
+  Caged /Uncaged
+Space:
+  Subscription
+  In Use
+Power Capacity:
+  Subscription Model (Rated/Subscribed)
+  UoM (KVA/KW)
+  Total Capacity Purchased
+  Capacity in Use
+  Usage in KW
+  Billable Additional Capacity
+  Additional Capacity Charges (MRC)
+  Usage Model (Bundled/Metered)
+  Multiplier
+  Unit rate Model (Fixed/Variable)
+  Unit Rate (per KW-HR)
+  No Of Units (KW-HR/ Month)
+Seating Space:
+  Subscription Model (No. of Seats/Space)
+  Enclosed/Shared
+  Subscription
+  In Use
+RHS / SHS / Tape flags (values are YES/NO):
+  RHS           (YES/NO)
+  SHS           (YES/NO)
+  ONSITE TAPE ROTATION   (YES/NO)
+  OFFSITE TAPE ROTATION  (YES/NO)
+Safe Vault / Store Space:
+  UoM (VAULT/Chamber)
+  Subscription
+  SQ.FT
+
+## =============================================================================
+## CRITICAL RULES  (carried over from bmprompt + hardened)
+## =============================================================================
+1.  ZERO TOLERANCE FOR FABRICATION — every value, every row, every cell in the
+    output must be traceable to an actual cell in an actual sheet of one of the
+    10 files. If nothing matches, return an empty result with a clear
+    "No matching record found" message. NEVER invent data.
+2.  DECIMAL PRECISION IS SACRED — NEVER round, truncate, or approximate.
+    If a cell holds 530.0311160714285, preserve every digit.
+3.  ALL FILES, ALL SHEETS — by default every query scans all 10 files and every
+    sheet inside them. Restrict scope ONLY when the user explicitly names a
+    file, sheet, or location.
+4.  CASE-INSENSITIVE MATCHING — caged/CAGED/Caged are identical. Same for
+    rated/subscribed/bundled/metered and for every cell-value match.
+5.  RETURN ONLY a raw JSON array — no markdown, no prose, no code fences.
+    Output must be parseable by json.loads().
+6.  For a particular-customer query, show ONLY that customer's rows. Never
+    append all other customers. Never print a trailing
+    "📋 <CustomerName> Customer Details — N row(s)" that enumerates everyone.
+7.  CUSTOMER FILTER — when the query names a specific customer, filter rows
+    where the customer-name column matches (case-insensitive, partial allowed).
+    Output ONLY that customer's rows and columns. Never append others.
+8.  LOCATION FILTER — when the query names a specific location, return ONLY
+    rows whose source file/sheet maps to that location. No fallback data from
+    Airoli or any other default location may appear.
+9.  VALUE FILTER — when the query specifies a column value / condition, return
+    ONLY rows and columns satisfying that exact condition. Apply all stated
+    conditions with AND logic.
+10. NO DUPLICATES — de-duplicate across sheets/files. If the same record
+    appears in both Summary and Customer details, emit it ONCE. De-dupe key =
+    (source_file, source_sheet, customer_name, floor/module, caged/uncaged,
+    total_capacity_purchased), normalised to lowercase/stripped.
+11. NO HALLUCINATION — if a value does not exist in any sheet, say so. Do NOT
+    synthesise a plausible row. Do NOT copy a row from another customer and
+    relabel it.
+12. SCHEMA FIDELITY — when projecting columns, use the REAL column name from
+    the sheet's detected header row. Preserve original capitalisation,
+    punctuation and trailing spaces (e.g. "Yet to be given/" and "Reserved
+    Capacity        if any" are real values). Do NOT normalise them in output.
+13. SUB-HEADER MATCHING — when the user names a sub-header (e.g. "Subscription
+    in KW", "Capacity to be given", "Per Unit rate (MRC)"), match it against
+    the LOCATION-WISE COLUMN SCHEMA above BEFORE falling back to fuzzy
+    matching. Schema is authoritative.
+
+## =============================================================================
 ## JSON OUTPUT FORMAT
+## =============================================================================
 Return a JSON array. Each element is one operation:
 {
   "id": "op1",
-  "type": "list" | "aggregate" | "count",
+  "type": "list" | "aggregate" | "count" | "cell_lookup",
   "label": "short human-readable label for this result card",
   "filter": {
     "caged":      true | false | null,
@@ -1415,37 +1911,113 @@ Return a JSON array. Each element is one operation:
     "rhs":        true | false | null,
     "shs":        true | false | null
   },
-  "location": ["airoli","noida"] | null,
+  "location": ["any"] | null,
+  "files":   ["<exact file name>", ...] | null,
+  "sheets":  ["<exact sheet name>", ...] | null,
   "operation": "sum"|"avg"|"mean"|"min"|"max"|"count"|"std"|"median"|"variance"|"range"|"count_nonzero"|"top"|"bottom" | null,
   "field_hint": "<exact phrase from the list below>" | null,
   "top_n": integer | null,
-  "group_by_location": true | false
+  "group_by_location": true | false,
+  "customer_name": "<exact customer name from query>" | null,
+  "cell_value": "<exact cell value from query>" | null,
+  "target_column_hint": "<column keyword from query, e.g. 'floor','caged','uom','subscription model','per unit rate (mrc)','capacity to be given'>" | null,
+  "return_columns": ["<col1>","<col2>", ...] | null,
+  "match_mode": "exact" | "contains" | "regex" | null
 }
 
-## EXACT field_hint PHRASES (use verbatim — Python maps these to real columns):
+NEW FIELDS (vs bmprompt):
+- "files"  : optional list of exact file names to restrict the scan to
+             (use when the user says "from Bangalore file", "in the Airoli
+             tracker", etc.). null = all files in scope.
+- "sheets" : optional list of exact sheet names to restrict the scan to
+             (use when the user says "in the Customer details sheet",
+             "from NEW SUMMARY", etc.). null = all sheets in scope.
+If both files and sheets are provided, sheets are intersected within the
+selected files.
+
+## =============================================================================
+## EXACT field_hint PHRASES  (use verbatim — executor maps to real columns
+## via the LOCATION-WISE COLUMN SCHEMA above)
+## =============================================================================
 Power / Capacity:
-- "total capacity purchased"    — Total KW/KVA purchased (subscribed capacity)
-- "power in use"                — Capacity in Use (KW/KVA currently consumed)
-- "power allocated"             — Allocated / subscribed capacity in KW to be given
-- "power usage kw"              — Actual Usage in KW (metered consumption)
+  "total capacity purchased"    — Total KW/KVA purchased (subscribed capacity)
+  "power in use"                — Capacity in Use (KW/KVA currently consumed)
+  "power allocated"             — "Allocated" Capacity in KW
+  "power usage kw"              — Usage in KW (metered consumption)
+  "capacity to be given"        — Capacity to be given / Subscribed Capacity to be given in KW
+  "reserved capacity"           — Reserved Capacity if any / Reserved Capacity if any (Non-Billable)
+  "billable additional capacity"— Billable Additional Capacity
+  "dc nw infra"                 — DC NW Infra
 
-Space / Racks:
-- "total space"                 — Space Subscription (sqft)
-- "space in use"                — Space In Use (sqft)
-- "space billed"                — Space Billed (sqft)
-- "seating subscription"        — Seating Space Subscription (seats)
-- "seating in use"              — Seating Space In Use (seats)
+Space / Racks / Seating:
+  "total space"                 — Space Subscription (sqft)
+  "space in use"                — Space In Use (sqft)
+  "space billed"                — Billed (Space banner)
+  "space yet to be given"       — Yet to be given/ (Space banner)
+  "seating subscription"        — Seating Space Subscription (seats)
+  "seating in use"              — Seating Space In Use (seats)
+  "racks subscribed"            — Subscription (No. of Racks)  [Rabale T4]
+  "racks in use"                — In Use (No. of Racks)        [Rabale T4]
+  "occupied sqft"               — Occupied in Sqft             [Rabale T5]
 
-Revenue (all are ₹/month MRC):
-- "total revenue"               — Total Monthly Revenue (MRC)
-- "space revenue"               — Revenue from Space including capacity
-- "power revenue"               — Revenue from Power Usage
-- "seating revenue"             — Revenue from Seating Space
-- "additional capacity revenue" — Additional Capacity Revenue
-- "net revenue"                 — Net Revenue Total (Contract Information)
+Revenue (all ₹/month MRC unless stated):
+  "total revenue"               — Total Revenue / Total Revenue (MRC)
+  "space revenue"               — Space revenue including capacity
+  "power revenue"               — Power Usage revenue
+  "seating revenue"             — Seating Space (Revenue banner)
+  "additional capacity revenue" — Additional Capacity Revenue
+  "any other revenue"           — Any Other Items
+  "net revenue"                 — Net Rev Total / Net Revenue / Resvd KW
+  "capacity revenue"            — Capacity Revenue
+  "total rev cap plus power"    — Total Rev (Cap + Power)
+  "cost of power actual"        — Cost of Power @ Act Usage
+  "cost of power reserved"      — Proj Cost of Power @ Reserv Cap
+  "cost of power design"        — Cost of Power @ Design Use
+  "target capacity revenue"     — Target Capacity Revenue
+  "capacity surplus"            — Capacity Surplus/Leakage
+  "power surplus"               — Power Surplus/Leakage
+  "total surplus"               — Total Surplus/Leakage
+  "contribution to target"      — Contribution to Target
+  "avg revenue per rack"        — Avg revenue /Rack /Month
+  "avg revenue per kw"          — Avg revenue /KW /Month
 
 Rate:
-- "per unit rate"               — Per Unit Rate / tariff (₹/KW-HR)
+  "per unit rate"               — Per Unit rate (MRC) / Unit Rate (per KW-HR)
+  "per unit rate mrc"           — Per Unit rate (MRC)
+  "unit rate per kwhr"          — Unit Rate (per KW-HR)
+  "no of units"                 — No Of Units (KW-HR/ Month)
+
+Contract:
+  "billing frequency"           — Billing Frequency
+  "sales order"                 — Sales Order ref No
+  "contract start"              — Contract Start Date
+  "contract term"               — Term of Contract (No of Years)
+  "contract expiry"             — Current Expiry Date / Current Exiry Date
+  "remarks"                     — Remarks if any
+  "cross connect"               — Cross connect (Bangalore only)
+  "arc"                         — ARC (Rabale T1/T2 only)
+
+Identity / Classification:
+  "floor"                       — Floor / FLOOR / Floor / Module
+  "floor module"                — Floor / Module
+  "customer name"               — Customer Name / Customer
+  "rhs sh"                      — RHS/SH / SH / RHS / SHS
+  "power subscription model"    — Power Subscription Model (Rated/Subscribed)
+  "power usage model"           — Power Usage Model (Bundled / Metered)
+  "subscription mode"           — Subscription Mode / Subscription Mode (Rack/U Space/SqFt Space)
+  "caged uncaged"               — Caged /Uncaged
+  "uom"                         — UoM / UoM (KVA/KW) / UoM (VAULT/Chamber)
+  "ownership"                   — Ownership (Sify/Customer)        [Airoli]
+  "ir date"                     — IR DATE                          [Noida-02]
+  "sitting space subscription"  — Sitting Space (Subscription)     [Noida]
+  "enclosed shared"             — Enclosed/Shared                  [Airoli]
+  "usage model"                 — Usage Model / Usage Model (Bundled/Metered)
+  "unit rate model"             — Unit rate Model (Fixed/Variable) / Uit rate Model (Fixed/Variable)
+  "multiplier"                  — Multiplier
+  "onsite tape"                 — ONSITE TAPE ROTATION             [Airoli]
+  "offsite tape"                — OFFSITE TAPE ROTATION            [Airoli]
+  "safe vault"                  — SAFE VAULT                       [Airoli]
+  "store space"                 — STORE SPACE                      [Airoli]
 
 ## OPERATION → FUNCTION MAPPING
 | User says                                | operation value |
@@ -1462,23 +2034,45 @@ Rate:
 | range / spread                           | "range"         |
 | top N / largest N                        | "top" + top_n   |
 | bottom N / smallest N                    | "bottom" + top_n|
+| which rows have <col> = <val> / find     → type="cell_lookup", operation=null |
 
-## LOCATION ALIASES (resolve BROADLY — always include all sub-locations)
+## LOCATION ALIASES  (resolve BROADLY — always include all sub-locations)
 - "airoli"                          → ["airoli"]
 - "vashi"                           → ["vashi"]
-- "rabale" / "rabale tower"         → ["rabale"]   (matches T1, T2, Tower4, Tower5)
+- "rabale" / "rabale tower"         → ["rabale"]   (T1 + T2 + Tower4 + Tower5)
 - "rabale t1" / "rabale tower 1"    → ["rabale t1"]
 - "rabale t2" / "rabale tower 2"    → ["rabale t2"]
 - "rabale tower 4"                  → ["rabale tower 4"]
 - "rabale tower 5" / "rabale t5"    → ["rabale tower 5"]
-- "noida"                           → ["noida"]    (matches BOTH Noida 01 AND Noida 02)
+- "noida"                           → ["noida"]    (Noida_01 + Noida_02)
 - "noida 01" / "noida-01"           → ["noida 01"]
 - "noida 02" / "noida-02"           → ["noida 02"]
 - "bangalore" / "bengaluru"         → ["bangalore"]
 - "chennai"                         → ["chennai"]
 - "kolkata" / "calcutta"            → ["kolkata"]
 - "mumbai" / "mumbai region"        → ["airoli","rabale","vashi"]
-- no location mentioned             → null (query ALL locations)
+- no location mentioned             → null  (query ALL 10 files)
+
+## FILE / SHEET ALIASES  (for the new "files" and "sheets" JSON fields)
+Resolve a user phrase to the exact file name from the SCOPE list above:
+- "airoli file" / "airoli tracker"          → Customer_and_Capacity_Tracker_Airoli_15Mar26.xlsx
+- "bangalore file"                          → Customer_and_Capacity_Tracker_Bangalore_01_15Feb26.xlsx
+- "chennai file"                            → Customer_and_Capacity_Tracker_Chennai_01_15Feb26.xls
+- "kolkata file"                            → Customer_and_Capacity_Tracker_Kolkata_15Feb26.xlsx
+- "noida 01 file"                           → Customer_and_Capacity_Tracker_Noida_01_15Feb26.xlsx
+- "noida 02 file"                           → Customer_and_Capacity_Tracker_Noida_02_15Feb26.xlsx
+- "rabale t1 t2 file"                       → Customer_and_Capacity_Tracker_Rabale_T1_T2_15Mar26.xlsx
+- "rabale tower 4 file"                     → Customer_and_Capacity_Tracker_Rabale_Tower_4_15Mar26.xlsx
+- "rabale tower 5 file"                     → Customer_and_Capacity_Tracker_Rabale_Tower_5_15Mar26.xlsx
+- "vashi file"                              → Customer_and_Capacity_Tracker_Vashi_15Mar26.xls
+
+Sheet names must be resolved against the exact list in SCOPE — examples:
+- "customer details sheet in bangalore"     → files=["..._Bangalore_01_..."], sheets=["Customer details"]
+- "new summary in bangalore"                → sheets=["NEW SUMMARY"]
+- "t5 summary"                              → sheets=["T5 SUMMARY"]
+- "rabale t1 sheet"                         → sheets=["Rabale-T1"]
+- "terminated sheet in noida"               → sheets=["Terminated"]
+- "disconnection details"                   → sheets=["Disconnection details"]
 
 ## FILTER SEMANTICS
 - "caged customers"      → filter.caged = true
@@ -1487,66 +2081,195 @@ Rate:
 - "subscribed customers" → filter.subscribed = true (Power Subscription Model = Subscribed)
 - "metered customers"    → filter.metered = true (Power Usage Model = Metered)
 - "bundled customers"    → filter.bundled = true (Power Usage Model = Bundled)
+- "rhs customers"        → filter.rhs = true
+- "shs customers"        → filter.shs = true
 - Combine with AND: caged + rated → filter.caged=true AND filter.rated=true
 - "all customers" (no qualifier) → all filters null
 
 ## FILTER PROPAGATION RULE
-If sub-query N is a "list" with a filter, and sub-query N+1 is an "aggregate" on the SAME subject with no explicit filter, inherit the filter from sub-query N.
-Example: "list caged customers and sum their capacity in use" →
-  op1: type=list, filter.caged=true
-  op2: type=aggregate, filter.caged=true (inherited), field_hint="power in use", operation="sum"
+If sub-query N is a "list" with a filter, and sub-query N+1 is an "aggregate"
+on the SAME subject with no explicit filter, inherit the filter from N.
 
 ## COMPLEX QUERY DECOMPOSITION
-Queries joined by "and", "or", commas, semicolons, or "also" = multiple operations in the array.
-Execute each independently on the filtered dataset.
-- "and" between filters = intersection (BOTH must be true)
-- "or" between locations = union (include rows from EITHER location)
-- "and" between actions on the same filter = same filter, multiple operation objects
+Queries joined by "and", "or", commas, semicolons, or "also" = multiple
+operations in the array. Execute each independently on the filtered dataset.
+- "and" between filters   = intersection (BOTH must be true)
+- "or" between locations  = union (include rows from EITHER location)
+- "and" between actions on the same filter = same filter, multiple op objects
 
-## UNIT AWARENESS (inform the label — do NOT change field_hint)
-- Power/capacity columns → KW or KVA (varies per row's UoM column)
-- Space columns → Sq Ft
-- Rack/seating columns → Racks or Seats
-- Revenue columns → ₹/month (MRC)
-- Rate columns → ₹/KW-HR
-Always include the unit in the label string (e.g., "Total Power Purchased (KW)").
+## CUSTOMER / LOCATION / VALUE STRICT RULES
+(identical to bmprompt — filter to the matched set ONLY, never append
+fallback or default-location rows, never print a trailing "— N row(s)"
+footer that lists unrelated customers)
 
+## =============================================================================
+## CELL-VALUE QUERY RULES
+## =============================================================================
+Use type = "cell_lookup" whenever the user names a specific CELL VALUE in a
+specific sub-header and wants the rows that match it. Examples:
+- "show all rows where Floor = 3rd Floor"
+- "list customers whose UoM is KVA"
+- "find all entries where Caged/Uncaged = Caged in Bangalore"
+- "which customers are on RHS in Airoli"
+- "show rows where Power Subscription Model is Rated"
+- "give me everything where Ownership = Customer"   (Airoli)
+- "customers whose Subscription Mode = Rack"
+- "rows where Unit rate Model = Fixed"
+- "rows where Billing Frequency = Monthly in Kolkata"
+- "show entries where Capacity to be given > 0 in Noida"
+
+### Required JSON fields for cell_lookup
+- "type"               : "cell_lookup"
+- "target_column_hint" : the sub-header in the user's own words (e.g.
+                         "floor", "uom", "caged/uncaged", "ownership",
+                         "subscription mode", "power subscription model",
+                         "unit rate model", "rhs/sh", "enclosed/shared",
+                         "billing frequency", "per unit rate (mrc)",
+                         "capacity to be given"). Executor fuzzy-maps this
+                         via the LOCATION-WISE COLUMN SCHEMA.
+- "cell_value"         : the exact value the user typed (e.g. "3rd Floor",
+                         "KVA", "Caged", "Rated", "Rack", "Customer",
+                         "Fixed", "RHS", "Monthly").
+- "match_mode"         : "exact" (default) | "contains" | "regex"
+- "return_columns"     : OPTIONAL list of columns to return. If null,
+                         the executor returns a safe default projection:
+                         Source_File, Source_Sheet, Customer Name,
+                         Floor/Module, Caged/Uncaged, UoM,
+                         Total Capacity Purchased, Capacity in Use,
+                         plus the target column itself.
+- "location"           : honours LOCATION ALIASES — null = scan all 10 files.
+- "files" / "sheets"   : optional tight scope — see FILE / SHEET ALIASES.
+- "filter"             : may be combined with cell_lookup.
+- "customer_name"      : may be combined with cell_lookup.
+
+### Executor semantics for cell_lookup
+1. Load every sheet of every file in scope (respecting location / files /
+   sheets filters if any).
+2. For each sheet, fuzzy-map target_column_hint → the real column name in
+   that sheet's detected header row, using the LOCATION-WISE COLUMN SCHEMA
+   as the primary map. If the column does not exist in that sheet, SKIP
+   the sheet silently (do not fabricate a column).
+3. Normalise both the cell and the query value: strip whitespace, collapse
+   internal whitespace, casefold. Numeric-looking values are compared as
+   float after _robust_to_numeric.
+4. Apply match_mode:
+   - "exact"    : normalised cell == normalised query value
+   - "contains" : normalised query is a substring of normalised cell
+   - "regex"    : re.search(query, cell, re.I)
+5. Keep ONLY rows where the match succeeds. Never include non-matching rows.
+6. De-duplicate across sheets/files using the key in CRITICAL RULE 10.
+7. Project to return_columns (or the safe default). Always include
+   Source_File and Source_Sheet so the user can trace each row.
+8. If ZERO rows match across every sheet of every file in scope, return a
+   single empty result object with label
+   "No matching record found for <target_column_hint> = <cell_value>".
+   Do NOT fall back to any other dataset. Do NOT show unrelated rows.
+9. NEVER invent a column value that was not in the source cell. NEVER fuse
+   cells from different rows.
+
+### Forbidden behaviours
+- Returning rows whose target column value does NOT match cell_value.
+- Returning the same row twice because it appears in two sheets.
+- Returning rows from a location / file / sheet the user did not ask for.
+- Returning a "closest guess" row when no exact match exists.
+- Adding a trailing "— N row(s)" footer that lists extraneous customers.
+- Silently dropping a sheet that DOES contain the target column because
+  it is in an odd file.
+
+## UNIT AWARENESS  (inform the label — do NOT change field_hint)
+- Power/capacity → KW or KVA (varies per row's UoM column)
+- Space          → Sq Ft
+- Racks/seating  → Racks or Seats
+- Revenue        → ₹/month (MRC)
+- Rate           → ₹/KW-HR
+Always include the unit in the label string (e.g. "Total Power Purchased (KW)").
+
+## =============================================================================
 ## EXAMPLES
+## =============================================================================
+
+Query: "show customer name"
+→ show only the particular customer's details. No all-customers list.
+  No trailing "📋 <Customer> — N row(s)".
 
 Query: "sum of power purchased"
-→ [{"id":"op1","type":"aggregate","label":"Total Power Purchased (KW/KVA)","filter":null,"location":null,"operation":"sum","field_hint":"total capacity purchased","top_n":null,"group_by_location":false}]
+→ [{"id":"op1","type":"aggregate","label":"Total Power Purchased (KW/KVA)","filter":null,"location":null,"files":null,"sheets":null,"operation":"sum","field_hint":"total capacity purchased","top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
 
 Query: "total revenue by location"
-→ [{"id":"op1","type":"aggregate","label":"Total Revenue (₹/month) by Location","filter":null,"location":null,"operation":"sum","field_hint":"total revenue","top_n":null,"group_by_location":true}]
-
-Query: "std deviation of per unit rate"
-→ [{"id":"op1","type":"aggregate","label":"Std Dev of Per Unit Rate","filter":null,"location":null,"operation":"std","field_hint":"per unit rate","top_n":null,"group_by_location":false}]
+→ [{"id":"op1","type":"aggregate","label":"Total Revenue (₹/month) by Location","filter":null,"location":null,"files":null,"sheets":null,"operation":"sum","field_hint":"total revenue","top_n":null,"group_by_location":true,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
 
 Query: "list caged customers in noida"
-→ [{"id":"op1","type":"list","label":"Caged Customers — Noida","filter":{"caged":true,"uncaged":null,"rated":null,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":["noida"],"operation":null,"field_hint":null,"top_n":null,"group_by_location":false}]
+→ [{"id":"op1","type":"list","label":"Caged Customers — Noida","filter":{"caged":true,"uncaged":null,"rated":null,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":["noida"],"files":null,"sheets":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
+
+Query: "show Wipro customer details"
+→ [{"id":"op1","type":"list","label":"Wipro Customer Details","filter":{"caged":null,"uncaged":null,"rated":null,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":null,"files":null,"sheets":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":"Wipro","cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
+
+### Cell-value examples — matched against LOCATION-WISE COLUMN SCHEMA
+
+Query: "show all rows where Floor = 3rd Floor"
+→ [{"id":"op1","type":"cell_lookup","label":"Rows where Floor = 3rd Floor","filter":null,"location":null,"files":null,"sheets":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"3rd Floor","target_column_hint":"floor","return_columns":null,"match_mode":"exact"}]
+
+Query: "list all customers whose UoM is KVA"
+→ [{"id":"op1","type":"cell_lookup","label":"Customers with UoM = KVA","filter":null,"location":null,"files":null,"sheets":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"KVA","target_column_hint":"uom","return_columns":["Source_File","Source_Sheet","Customer Name","UoM","Total Capacity Purchased","Capacity in Use"],"match_mode":"exact"}]
+
+Query: "find rows where Caged/Uncaged = Caged in Bangalore Customer details sheet"
+→ [{"id":"op1","type":"cell_lookup","label":"Caged rows — Bangalore (Customer details)","filter":null,"location":["bangalore"],"files":["Customer_and_Capacity_Tracker_Bangalore_01_15Feb26.xlsx"],"sheets":["Customer details"],"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Caged","target_column_hint":"caged/uncaged","return_columns":null,"match_mode":"exact"}]
+
+Query: "which customers have Power Subscription Model = Rated in Airoli"
+→ [{"id":"op1","type":"cell_lookup","label":"Rated rows — Airoli","filter":null,"location":["airoli"],"files":null,"sheets":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Rated","target_column_hint":"power subscription model","return_columns":["Source_File","Source_Sheet","Customer Name","Power Subscription Model (Rated/Subscribed)","UoM (KVA/KW)","Total Capacity Purchased"],"match_mode":"exact"}]
+
+Query: "rows where Subscription Mode contains Rack"
+→ [{"id":"op1","type":"cell_lookup","label":"Rows where Subscription Mode contains 'Rack'","filter":null,"location":null,"files":null,"sheets":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Rack","target_column_hint":"subscription mode","return_columns":null,"match_mode":"contains"}]
+
+Query: "show Wipro rows where UoM = KVA"
+→ [{"id":"op1","type":"cell_lookup","label":"Wipro rows where UoM = KVA","filter":null,"location":null,"files":null,"sheets":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":"Wipro","cell_value":"KVA","target_column_hint":"uom","return_columns":null,"match_mode":"exact"}]
+
+Query: "rows where Ownership = Customer in Airoli and sum their capacity in use"
+→ [
+  {"id":"op1","type":"cell_lookup","label":"Ownership = Customer — Airoli","filter":null,"location":["airoli"],"files":null,"sheets":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Customer","target_column_hint":"ownership","return_columns":null,"match_mode":"exact"},
+  {"id":"op2","type":"aggregate","label":"Capacity in Use — Ownership=Customer, Airoli","filter":null,"location":["airoli"],"files":null,"sheets":null,"operation":"sum","field_hint":"power in use","top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Customer","target_column_hint":"ownership","return_columns":null,"match_mode":"exact"}
+]
+
+Query: "rows where Billing Frequency = Monthly in Kolkata"
+→ [{"id":"op1","type":"cell_lookup","label":"Billing Frequency = Monthly — Kolkata","filter":null,"location":["kolkata"],"files":null,"sheets":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Monthly","target_column_hint":"billing frequency","return_columns":null,"match_mode":"exact"}]
+
+Query: "rows where Unit rate Model = Fixed across all locations"
+→ [{"id":"op1","type":"cell_lookup","label":"Unit rate Model = Fixed (All Locations)","filter":null,"location":null,"files":null,"sheets":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"Fixed","target_column_hint":"unit rate model","return_columns":null,"match_mode":"exact"}]
+
+Query: "show RHS = YES rows in Airoli"
+→ [{"id":"op1","type":"cell_lookup","label":"RHS = YES — Airoli","filter":null,"location":["airoli"],"files":null,"sheets":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":"YES","target_column_hint":"rhs sh","return_columns":null,"match_mode":"exact"}]
 
 Query: "list all caged customers AND sum capacity in use AND total power used AND list rated customers AND show customers in airoli or noida"
 → [
-  {"id":"op1","type":"list","label":"Caged Customers (All Locations)","filter":{"caged":true,"uncaged":null,"rated":null,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false},
-  {"id":"op2","type":"aggregate","label":"Capacity in Use — Caged (KW/KVA)","filter":{"caged":true,"uncaged":null,"rated":null,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":null,"operation":"sum","field_hint":"power in use","top_n":null,"group_by_location":false},
-  {"id":"op3","type":"aggregate","label":"Total Power Purchased — Caged (KW/KVA)","filter":{"caged":true,"uncaged":null,"rated":null,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":null,"operation":"sum","field_hint":"total capacity purchased","top_n":null,"group_by_location":false},
-  {"id":"op4","type":"list","label":"Rated Customers (All Locations)","filter":{"caged":null,"uncaged":null,"rated":true,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false},
-  {"id":"op5","type":"aggregate","label":"Total Power Used — Rated (KW)","filter":{"caged":null,"uncaged":null,"rated":true,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":null,"operation":"sum","field_hint":"power in use","top_n":null,"group_by_location":false},
-  {"id":"op6","type":"list","label":"Customers in Airoli or Noida","filter":{"caged":null,"uncaged":null,"rated":null,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":["airoli","noida"],"operation":null,"field_hint":null,"top_n":null,"group_by_location":false}
+  {"id":"op1","type":"list","label":"Caged Customers (All Locations)","filter":{"caged":true,"uncaged":null,"rated":null,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":null,"files":null,"sheets":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null},
+  {"id":"op2","type":"aggregate","label":"Capacity in Use — Caged (KW/KVA)","filter":{"caged":true,"uncaged":null,"rated":null,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":null,"files":null,"sheets":null,"operation":"sum","field_hint":"power in use","top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null},
+  {"id":"op3","type":"aggregate","label":"Total Power Purchased — Caged (KW/KVA)","filter":{"caged":true,"uncaged":null,"rated":null,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":null,"files":null,"sheets":null,"operation":"sum","field_hint":"total capacity purchased","top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null},
+  {"id":"op4","type":"list","label":"Rated Customers (All Locations)","filter":{"caged":null,"uncaged":null,"rated":true,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":null,"files":null,"sheets":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null},
+  {"id":"op5","type":"aggregate","label":"Total Power Used — Rated (KW)","filter":{"caged":null,"uncaged":null,"rated":true,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":null,"files":null,"sheets":null,"operation":"sum","field_hint":"power in use","top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null},
+  {"id":"op6","type":"list","label":"Customers in Airoli or Noida","filter":{"caged":null,"uncaged":null,"rated":null,"subscribed":null,"bundled":null,"metered":null,"rhs":null,"shs":null},"location":["airoli","noida"],"files":null,"sheets":null,"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}
 ]
 
 Query: "how many customers per location"
-→ [{"id":"op1","type":"count","label":"Customer Count by Location","filter":null,"location":null,"operation":"count","field_hint":null,"top_n":null,"group_by_location":true}]
+→ [{"id":"op1","type":"count","label":"Customer Count by Location","filter":null,"location":null,"files":null,"sheets":null,"operation":"count","field_hint":null,"top_n":null,"group_by_location":true,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
 
 Query: "top 5 customers by revenue"
-→ [{"id":"op1","type":"aggregate","label":"Top 5 Customers by Revenue","filter":null,"location":null,"operation":"top","field_hint":"total revenue","top_n":5,"group_by_location":false}]
+→ [{"id":"op1","type":"aggregate","label":"Top 5 Customers by Revenue","filter":null,"location":null,"files":null,"sheets":null,"operation":"top","field_hint":"total revenue","top_n":5,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
 
 Query: "minimum per unit rate in bangalore"
-→ [{"id":"op1","type":"aggregate","label":"Min Per Unit Rate — Bangalore","filter":null,"location":["bangalore"],"operation":"min","field_hint":"per unit rate","top_n":null,"group_by_location":false}]
+→ [{"id":"op1","type":"aggregate","label":"Min Per Unit Rate — Bangalore","filter":null,"location":["bangalore"],"files":null,"sheets":null,"operation":"min","field_hint":"per unit rate","top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
 
 Query: "median power in use across all locations"
-→ [{"id":"op1","type":"aggregate","label":"Median Power In Use (KW/KVA)","filter":null,"location":null,"operation":"median","field_hint":"power in use","top_n":null,"group_by_location":true}]
+→ [{"id":"op1","type":"aggregate","label":"Median Power In Use (KW/KVA)","filter":null,"location":null,"files":null,"sheets":null,"operation":"median","field_hint":"power in use","top_n":null,"group_by_location":true,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":null,"match_mode":null}]
+
+Query: "show sold vs available KW in Rabale Tower 5"
+→ [{"id":"op1","type":"list","label":"Rabale Tower 5 — Sold vs Available (KW)","filter":null,"location":["rabale tower 5"],"files":["Customer_and_Capacity_Tracker_Rabale_Tower_5_15Mar26.xlsx"],"sheets":["T5 SUMMARY"],"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":["Source_File","Source_Sheet","Floor","Tower -5 (MUM - 03)","Total Capacity - Server Hall","Sold","Available","Remarks"],"match_mode":null}]
+
+Query: "list racks subscribed vs in use in Rabale Tower 4"
+→ [{"id":"op1","type":"list","label":"Rabale Tower 4 — Racks Subscribed vs In Use","filter":null,"location":["rabale tower 4"],"files":["Customer_and_Capacity_Tracker_Rabale_Tower_4_15Mar26.xlsx"],"sheets":["Sheet1"],"operation":null,"field_hint":null,"top_n":null,"group_by_location":false,"customer_name":null,"cell_value":null,"target_column_hint":null,"return_columns":["Source_File","Source_Sheet","Floor / Module","Customer Name","Subscription (No. of Racks)","In Use (No. of Racks)","Total Capacity Purchased (KW)","Capacity in Use (KW)"],"match_mode":null}]
 """
+
+
+
 
 
 def _robust_to_numeric(series: pd.Series) -> pd.Series:
@@ -1736,20 +2459,285 @@ def _apply_op_filters(df: pd.DataFrame,
 # ── Execute AI Operations ─────────────────────────────────────────────────────
 
 _EXTENDED_OPS = {
-    "sum":         lambda s: s.sum(),
-    "avg":         lambda s: s.mean(),
-    "mean":        lambda s: s.mean(),
-    "min":         lambda s: s.min(),
-    "max":         lambda s: s.max(),
-    "count":       lambda s: float(len(s)),
-    "std":         lambda s: s.std(ddof=1),
-    "median":      lambda s: s.median(),
-    "variance":    lambda s: s.var(ddof=1),
-    "var":         lambda s: s.var(ddof=1),
-    "range":       lambda s: s.max() - s.min(),
-    "sum_abs":     lambda s: s.abs().sum(),
+    "sum":           lambda s: s.sum(),
+    "total":         lambda s: s.sum(),
+    "avg":           lambda s: s.mean(),
+    "mean":          lambda s: s.mean(),
+    "average":       lambda s: s.mean(),
+    "min":           lambda s: s.min(),
+    "minimum":       lambda s: s.min(),
+    "max":           lambda s: s.max(),
+    "maximum":       lambda s: s.max(),
+    "count":         lambda s: float(len(s)),
+    "std":           lambda s: s.std(ddof=1),
+    "stddev":        lambda s: s.std(ddof=1),
+    "median":        lambda s: s.median(),
+    "variance":      lambda s: s.var(ddof=1),
+    "var":           lambda s: s.var(ddof=1),
+    "range":         lambda s: s.max() - s.min(),
+    "spread":        lambda s: s.max() - s.min(),
+    "sum_abs":       lambda s: s.abs().sum(),
     "count_nonzero": lambda s: float((s != 0).sum()),
-    "pct_nonzero": lambda s: float((s != 0).sum()) / max(len(s), 1) * 100,
+    "pct_nonzero":   lambda s: float((s != 0).sum()) / max(len(s), 1) * 100,
+    "multiply":      lambda s: s.prod(),
+    "product":       lambda s: s.prod(),
+    "percentage":    lambda s: s.sum(),
+    "cumulative":    lambda s: s.sum(),
+}
+
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CANONICAL COLUMN REGISTRY  (v3 — maps all 38 canonical two-level names to
+# real sub-header regex patterns as produced by _build_cols() from all 10
+# Sify DC Excel files across all archetypes: CUSTOMER_DETAILS, AIROLI_BANNER,
+# CAPACITY_GRID, FACILITY_GRID, SINGLE_LEVEL, CUSTOM_SUMMARY)
+# ─────────────────────────────────────────────────────────────────────────────
+_CANONICAL_REGISTRY: "dict[str, list[str]]" = {
+    # ── BILLING MODEL band ──────────────────────────────────────────────────
+    "Billing Model | Unnamed: 1_level_1": [
+        r"billing model.*power subscription",
+        r"power subscription model",
+        r"billing model.*subscription",
+        r"billing model.*model",
+        r"billing model",
+    ],
+    "Billing Model | Rated": [
+        r"billing model.*power subscription",
+        r"power subscription model",
+        r"billing model.*subscription",
+        r"billing model.*model",
+        r"billing model",
+    ],
+    "Billing Model | Subscribed": [
+        r"billing model.*power subscription",
+        r"power subscription model",
+        r"billing model.*subscription",
+        r"billing model.*model",
+        r"billing model",
+    ],
+    "Billing Model | Metered": [
+        r"power usage model",
+        r"billing model.*usage",
+        r"metered.*model",
+        r"usage model",
+    ],
+    # ── SPACE band ──────────────────────────────────────────────────────────
+    "Space | Seating Space": [
+        r"seating space.*subscription",
+        r"space.*seating.*subscription",
+        r"seating space",
+        r"seating.*subscription",
+    ],
+    "Space | Unnamed: 5_level_1": [
+        r"subscription mode",
+        r"space.*subscription.*mode",
+        r"space.*mode",
+    ],
+    "Space | Floor": [
+        r"space.*floor.*module",
+        r"space.*floor",
+        r"floor.*module",
+        r"floor",
+    ],
+    "Space | Caged/Uncaged": [
+        r"caged\s*/\s*uncaged",
+        r"caged.*uncaged",
+        r"space.*caged",
+        r"caged",
+    ],
+    # ── POWER CAPACITY band ─────────────────────────────────────────────────
+    "Power Capacity | Contracted": [
+        r"power capacity.*total capacity purchased",
+        r"total capacity purchased",
+        r"power capacity.*contracted",
+        r"contracted.*capacity",
+        r"total.*purchased",
+    ],
+    "Power Capacity | Consumed": [
+        r"power capacity.*capacity in use",
+        r"capacity in use",
+        r"power capacity.*consumed",
+        r"power.*consumed",
+        r"in use.*kw",
+    ],
+    "Power Capacity | Available": [
+        r"power capacity.*capacity to be given",
+        r"capacity to be given",
+        r"power capacity.*available",
+        r"power.*available",
+        r"to be given",
+    ],
+    "Power Capacity | Unnamed: 3_level_1": [
+        r"power capacity.*subscription.*kw",
+        r"power capacity.*kw.*kva",
+        r"power capacity.*subscription",
+        r"subscription.*kw",
+    ],
+    "Power Capacity | Rated Load": [
+        r"power capacity.*rated.*load",
+        r"power capacity.*subscription.*model.*value",
+        r"rated.*load",
+        r"subscription.*model.*value",
+        r"rated.*capacity",
+    ],
+    "Power Capacity | Actual Load": [
+        r"power capacity.*actual.*load",
+        r"actual.*load.*kw",
+        r"power capacity.*usage.*kw",
+        r"actual.*usage",
+        r"actual load",
+    ],
+    "Power Capacity | KW-HR/Month": [
+        r"power capacity.*no.*of.*units.*kw.*hr",
+        r"no.*of.*units.*kw.*hr",
+        r"kw.*hr.*month",
+        r"units.*kw.*hr",
+        r"kw-hr.*month",
+    ],
+    "Power Capacity | Unit Rate": [
+        r"power capacity.*unit rate.*per.*kw",
+        r"unit rate.*per.*kw",
+        r"per unit rate.*mrc",
+        r"per.*kw.*hr",
+        r"unit rate",
+    ],
+    "Power Capacity | No. of Units": [
+        r"power capacity.*no\.?\s*of\s*units",
+        r"no\.?\s*of\s*units.*kw",
+        r"number.*of.*units",
+        r"no.*units",
+    ],
+    "Power Capacity | Raw Power (Genset)": [
+        r"power capacity.*raw power.*genset",
+        r"raw power.*genset.*transformer",
+        r"raw power.*genset",
+        r"genset.*kw",
+        r"generator.*kw",
+    ],
+    "Power Capacity | Raw Power (Transformer)": [
+        r"power capacity.*raw power.*transformer",
+        r"raw power.*transformer",
+        r"transformer.*kw",
+        r"utility.*sanction.*load.*kva",
+        r"utility.*sanction",
+    ],
+    "Power Capacity | Raw Power (Demand)": [
+        r"power capacity.*raw power.*demand",
+        r"raw power.*demand",
+        r"contract.*demand",
+        r"utility.*demand",
+        r"sanction.*demand",
+    ],
+    # ── ACTUAL PUE ──────────────────────────────────────────────────────────
+    "Actual PUE | Power Usage": [
+        r"actual pue.*power usage",
+        r"actual pue",
+        r"pue.*power",
+        r"\bpue\b",
+    ],
+    # ── RATED TO CONSUMED ───────────────────────────────────────────────────
+    "Rated to Consumed | Ratio": [
+        r"rated to consumed.*ratio",
+        r"rated.*consumed.*ratio",
+        r"rated to consumed",
+        r"rated.*consumed",
+    ],
+    "Rated to Consumed | Unnamed: X_level_1": [
+        r"rated to consumed",
+        r"rated.*consumed",
+    ],
+    # ── GENSET HR/MO ────────────────────────────────────────────────────────
+    "Genset Hr/Mo | Seating Space": [
+        r"genset hr.*mo.*seating",
+        r"genset hr.*seating",
+        r"genset hr.*mo",
+        r"genset hr",
+        r"genset.*hour.*month",
+    ],
+    "Genset Hr/Mo | Unnamed: X_level_1": [
+        r"genset hr.*mo",
+        r"genset hr",
+        r"genset.*hour.*month",
+    ],
+    # ── REVENUE band ────────────────────────────────────────────────────────
+    "Revenue | Monthly": [
+        r"revenue.*total revenue",
+        r"total revenue",
+        r"revenue.*monthly",
+        r"monthly.*revenue",
+        r"revenue.*mrc",
+    ],
+    "Additional Charges | MRC": [
+        r"additional.*charges.*mrc",
+        r"additional capacity charges",
+        r"additional.*capacity.*mrc",
+        r"additional charges",
+        r"additional.*mrc",
+    ],
+    "Multiplier | Unnamed: X_level_1": [
+        r"multiplier",
+        r"revenue.*multiplier",
+    ],
+    # ── CAPACITY band (Rabale T1/T2 CAPACITY_GRID) ──────────────────────────
+    "Capacity | Total Purchased": [
+        r"capacity.*maximum usable",
+        r"maximum usable capacity",
+        r"capacity.*total.*purchased",
+        r"total.*purchased.*capacity",
+        r"max.*usable.*capacity",
+    ],
+    "Capacity | In Use": [
+        r"capacity.*current utilization",
+        r"current utilization",
+        r"capacity.*in use",
+        r"utilization.*kw",
+    ],
+    "Capacity | Reserved": [
+        r"capacity.*committed",
+        r"committed.*confirmed",
+        r"capacity.*reserved",
+        r"reserved.*capacity",
+        r"committed",
+    ],
+    "Capacity | Surplus": [
+        r"capacity.*surplus",
+        r"surplus.*balance",
+        r"surplus",
+        r"capacity.*balance.*positive",
+    ],
+    "Capacity | Leakage": [
+        r"capacity.*leakage",
+        r"leakage.*balance",
+        r"leakage",
+        r"capacity.*balance.*negative",
+    ],
+    # ── IDENTITY / LAYOUT columns (all archetypes) ──────────────────────────
+    "Customer Name | Unnamed: X_level_1": [
+        r"customer.*name.*customer",
+        r"customer name",
+        r"client name",
+        r"customer.*name",
+    ],
+    "Floor | Unnamed: X_level_1": [
+        r"floor.*module",
+        r"\bfloor\b",
+    ],
+    "Module | Unnamed: X_level_1": [
+        r"floor.*module",
+        r"\bmodule\b",
+        r"\bfloor\b",
+    ],
+    "Description | Unnamed: X_level_1": [
+        r"\bdescription\b",
+        r"facility.*description",
+    ],
+    "Remarks | Unnamed: X_level_1": [
+        r"remarks.*if.*any",
+        r"\bremarks\b",
+        r"remark",
+    ],
 }
 
 
@@ -1757,26 +2745,293 @@ def execute_ai_operations(operations: list, df: pd.DataFrame) -> list:
     results = []
 
     for op in operations:
-        op_type     = op.get("type", "list")
-        label       = op.get("label", "Result")
-        filter_dict = op.get("filter") or {}
-        locations   = op.get("location")
-        operation   = (op.get("operation") or "sum").lower().strip()
-        field_hint  = op.get("field_hint") or ""
-        top_n       = int(op.get("top_n") or 10)
-        grp_by_loc  = bool(op.get("group_by_location"))
+        op_type           = op.get("type", "list")
+        label             = op.get("label", "Result")
+        filter_dict       = op.get("filter") or {}
+        locations         = op.get("location")
+        operation         = (op.get("operation") or "sum").lower().strip()
+        field_hint        = op.get("field_hint") or ""
+        top_n             = int(op.get("top_n") or 10)
+        grp_by_loc        = bool(op.get("group_by_location"))
+        canonical_columns = op.get("canonical_columns") or []
+        files_scope       = op.get("files") or []
+        sheets_scope      = op.get("sheets") or []
+        customer_name     = op.get("customer_name") or ""
+        cell_value        = op.get("cell_value") or ""
+        target_col_hint   = op.get("target_column_hint") or ""
+        match_mode        = (op.get("match_mode") or "contains").lower().strip()
+        return_columns    = op.get("return_columns") or []
 
         filtered = _apply_op_filters(df, filter_dict, locations)
+
+        # Apply file/sheet scope restrictors
+        if files_scope and "_Location" in filtered.columns:
+            file_mask = pd.Series(False, index=filtered.index)
+            for fkw in files_scope:
+                file_mask |= filtered["_Location"].str.lower().str.contains(
+                    re.escape(fkw.lower()), na=False)
+            filtered = filtered[file_mask]
+
+        if sheets_scope and "_Sheet" in filtered.columns:
+            sheet_mask = pd.Series(False, index=filtered.index)
+            for skw in sheets_scope:
+                sheet_mask |= filtered["_Sheet"].str.lower().str.contains(
+                    re.escape(skw.lower()), na=False)
+            filtered = filtered[sheet_mask]
+
+        # Apply customer name filter
+        if customer_name:
+            cname_col = find_col(filtered, r"customer.*name|client.*name")
+            if cname_col and cname_col in filtered.columns:
+                filtered = filtered[
+                    filtered[cname_col].astype(str).str.lower().str.contains(
+                        re.escape(customer_name.lower()), na=False)]
 
         if filtered.empty:
             results.append({"type": "empty", "label": label,
                             "message": "No records match this filter."})
             continue
 
+        # ── CANONICAL COLUMN RESOLUTION ────────────────────────────────────────
+        def _resolve_canonical_column(df_: pd.DataFrame, canonical: str) -> "str | None":
+            """
+            Resolve a canonical two-level name 'Parent | Sub' to an actual DataFrame
+            column. Resolution order:
+              1. Exact match (column already named canonically)
+              2. _CANONICAL_REGISTRY regex patterns (precise per-archetype mapping)
+              3. Fuzzy parent+sub token matching (robust fallback)
+            Never fabricates — returns None if nothing matches.
+            """
+            # 1. Exact column name match
+            if canonical in df_.columns:
+                return canonical
+
+            # 2. Registry-driven regex matching (ordered by specificity)
+            patterns = _CANONICAL_REGISTRY.get(canonical, [])
+            for pat in patterns:
+                for c in df_.columns:
+                    try:
+                        if re.search(pat, c, re.I):
+                            return c
+                    except re.error:
+                        pass
+
+            # 3. Fuzzy fallback using parent / sub token overlap
+            if " | " in canonical:
+                parent_raw, sub_raw = canonical.split(" | ", 1)
+                parent = parent_raw.strip().lower()
+                sub    = sub_raw.strip().lower()
+                is_unnamed_sub = (sub.startswith("unnamed") or
+                                  sub.startswith("x_level") or
+                                  "level_1" in sub)
+
+                # 3a. Parent contains AND (sub contains OR sub is unnamed artifact)
+                for c in df_.columns:
+                    cl = c.lower()
+                    if parent in cl:
+                        if is_unnamed_sub or sub in cl:
+                            return c
+
+                # 3b. Parent-only when sub is an Unnamed artifact
+                if is_unnamed_sub:
+                    for c in df_.columns:
+                        if parent in c.lower():
+                            return c
+
+                # 3c. Token overlap — any parent word AND any meaningful sub word
+                parent_words = [w for w in re.split(r"\W+", parent) if len(w) > 2]
+                sub_words    = [w for w in re.split(r"\W+", sub) if len(w) > 2
+                                and w not in ("unnamed", "level", "level1")]
+                for c in df_.columns:
+                    cl = c.lower()
+                    p_match = any(w in cl for w in parent_words)
+                    s_match = any(w in cl for w in sub_words) if sub_words else True
+                    if p_match and s_match:
+                        return c
+
+                # 3d. Sub-word-only last resort for strong multi-word sub-headers
+                if sub_words and len(sub_words) >= 2:
+                    for c in df_.columns:
+                        if sum(1 for w in sub_words if w in c.lower()) >= 2:
+                            return c
+            else:
+                # Single-level canonical — keyword token match
+                kw    = canonical.strip().lower()
+                words = [w for w in re.split(r"\W+", kw) if len(w) > 2]
+                for c in df_.columns:
+                    if any(w in c.lower() for w in words):
+                        return c
+            return None
+
+        # ── COLUMN_FETCH ──────────────────────────────────────────────────────
+        if op_type == "column_fetch":
+            if not canonical_columns:
+                results.append({"type": "error", "label": label,
+                                "message": "column_fetch requires canonical_columns."})
+                continue
+
+            # Build per-sheet output
+            sheet_frames = []
+            for loc in filtered["_Location"].unique() if "_Location" in filtered.columns else [""]:
+                loc_df = filtered[filtered["_Location"] == loc] if "_Location" in filtered.columns else filtered
+                for sn in loc_df["_Sheet"].unique() if "_Sheet" in loc_df.columns else [""]:
+                    sn_df = loc_df[loc_df["_Sheet"] == sn] if "_Sheet" in loc_df.columns else loc_df
+                    if sn_df.empty:
+                        continue
+                    row_data = {}
+                    any_resolved = False
+                    for canonical in canonical_columns:
+                        real_col = _resolve_canonical_column(sn_df, canonical)
+                        if real_col:
+                            row_data[canonical] = sn_df[real_col].values
+                            any_resolved = True
+                        else:
+                            row_data[canonical] = [""] * len(sn_df)
+                    if not any_resolved:
+                        continue
+                    chunk = pd.DataFrame(row_data)
+                    if "_Location" in sn_df.columns:
+                        chunk.insert(0, "Source_File", sn_df["_Location"].values)
+                    if "_Sheet" in sn_df.columns:
+                        chunk.insert(1, "Source_Sheet", sn_df["_Sheet"].values)
+                    sheet_frames.append(chunk)
+
+            if not sheet_frames:
+                results.append({"type": "empty", "label": label,
+                                "message": "No matching columns found in any sheet."})
+                continue
+
+            combined_chunk = pd.concat(sheet_frames, ignore_index=True)
+            combined_chunk = combined_chunk.reset_index(drop=True)
+            combined_chunk.index += 1
+            results.append({"type": "table", "label": label,
+                            "data": combined_chunk, "row_count": len(combined_chunk)})
+            continue
+
+        # ── CELL_LOOKUP ────────────────────────────────────────────────────────
+        elif op_type == "cell_lookup":
+            if not target_col_hint and not canonical_columns:
+                results.append({"type": "error", "label": label,
+                                "message": "cell_lookup requires target_column_hint."})
+                continue
+
+            # Resolve target column
+            target_col = None
+            if target_col_hint and target_col_hint.lower() != "any":
+                # Try canonical resolution first
+                target_col = _resolve_canonical_column(filtered, target_col_hint)
+                if not target_col:
+                    # Fuzzy fallback
+                    target_col, _ = _resolve_col_by_semantic(filtered, target_col_hint)
+
+            any_col_mode = (not target_col_hint or target_col_hint.lower() == "any")
+
+            if not any_col_mode and (not target_col or target_col not in filtered.columns):
+                results.append({"type": "empty", "label": label,
+                                "message": f"Column '{target_col_hint}' not found in data."})
+                continue
+
+            # Match rows
+            if any_col_mode:
+                # Scan every column
+                mask = pd.Series(False, index=filtered.index)
+                matched_col_info = []
+                for c in filtered.columns:
+                    if c.startswith("_"):
+                        continue
+                    col_str = filtered[c].astype(str)
+                    if match_mode == "exact":
+                        col_mask = col_str.str.lower() == str(cell_value).lower()
+                    elif match_mode == "regex":
+                        try:
+                            col_mask = col_str.str.contains(str(cell_value), flags=re.I, na=False)
+                        except re.error:
+                            col_mask = col_str.str.lower().str.contains(
+                                re.escape(str(cell_value).lower()), na=False)
+                    else:
+                        col_mask = col_str.str.lower().str.contains(
+                            re.escape(str(cell_value).lower()), na=False)
+                    mask = mask | col_mask
+                matched_df = filtered[mask].copy()
+            else:
+                col_str = filtered[target_col].astype(str)
+                # Handle numeric/comparison operators in cell_value
+                cv = str(cell_value).strip()
+                if cv.startswith(">") or cv.startswith("<") or cv.startswith("="):
+                    try:
+                        num_series = _robust_to_numeric(filtered[target_col])
+                        import operator as op_mod
+                        ops_map = {
+                            ">=": op_mod.ge, "<=": op_mod.le,
+                            ">": op_mod.gt,  "<": op_mod.lt,  "=": op_mod.eq,
+                        }
+                        for sym, fn in sorted(ops_map.items(), key=lambda x: -len(x[0])):
+                            if cv.startswith(sym):
+                                num_val = float(cv[len(sym):].strip())
+                                mask = fn(num_series, num_val)
+                                matched_df = filtered[mask.fillna(False)].copy()
+                                break
+                        else:
+                            matched_df = filtered[pd.Series(False, index=filtered.index)].copy()
+                    except Exception:
+                        matched_df = filtered[pd.Series(False, index=filtered.index)].copy()
+                elif match_mode == "exact":
+                    mask = col_str.str.lower() == cv.lower()
+                    matched_df = filtered[mask].copy()
+                elif match_mode == "regex":
+                    try:
+                        mask = col_str.str.contains(cv, flags=re.I, na=False)
+                    except re.error:
+                        mask = col_str.str.lower().str.contains(
+                            re.escape(cv.lower()), na=False)
+                    matched_df = filtered[mask].copy()
+                else:
+                    mask = col_str.str.lower().str.contains(
+                        re.escape(cv.lower()), na=False)
+                    matched_df = filtered[mask].copy()
+
+            if matched_df.empty:
+                results.append({
+                    "type": "empty", "label": label,
+                    "message": f"No rows found where '{target_col_hint}' = '{cell_value}'."})
+                continue
+
+            # Build projection
+            if return_columns:
+                proj_cols = []
+                for rc in return_columns:
+                    real = _resolve_canonical_column(matched_df, rc)
+                    if real and real in matched_df.columns:
+                        proj_cols.append(real)
+                display_df = matched_df[
+                    [c for c in ["_Location", "_Sheet"] if c in matched_df.columns] + proj_cols
+                ].copy()
+            else:
+                meta = [c for c in ["_Location", "_Sheet"] if c in matched_df.columns]
+                data = [c for c in matched_df.columns if not c.startswith("_")][:30]
+                # Also add any resolved canonical columns
+                for canonical in canonical_columns:
+                    real = _resolve_canonical_column(matched_df, canonical)
+                    if real and real not in data and real in matched_df.columns:
+                        data.append(real)
+                display_df = matched_df[meta + data].copy()
+
+            display_df = display_df.rename(columns={"_Location": "Source_File", "_Sheet": "Source_Sheet"})
+            display_df = display_df.reset_index(drop=True)
+            display_df.index += 1
+            results.append({"type": "table", "label": label,
+                            "data": display_df, "row_count": len(display_df)})
+            continue
+
         # ── LIST ─────────────────────────────────────────────────────────────
         if op_type == "list":
             meta  = [c for c in ["_Location", "_Sheet"] if c in filtered.columns]
             data  = [c for c in filtered.columns if not c.startswith("_")][:30]
+            # Include requested canonical columns
+            for canonical in canonical_columns:
+                real = _resolve_canonical_column(filtered, canonical)
+                if real and real not in data and real in filtered.columns:
+                    data.append(real)
             disp  = filtered[meta + data].reset_index(drop=True)
             disp.index += 1
             results.append({"type": "table", "label": label,
@@ -1784,7 +3039,19 @@ def execute_ai_operations(operations: list, df: pd.DataFrame) -> list:
 
         # ── AGGREGATE / TOP / BOTTOM ─────────────────────────────────────────
         elif op_type in ("aggregate", "top", "bottom"):
-            col, reason = _resolve_col_by_semantic(filtered, field_hint)
+            # First try canonical columns for field resolution
+            col = None
+            reason = ""
+            if canonical_columns:
+                for canonical in canonical_columns:
+                    real = _resolve_canonical_column(filtered, canonical)
+                    if real and real in filtered.columns:
+                        col = real
+                        reason = f"canonical '{canonical}' → '{real}'"
+                        break
+
+            if not col:
+                col, reason = _resolve_col_by_semantic(filtered, field_hint)
 
             if not col or col not in filtered.columns:
                 results.append({"type": "error", "label": label,
@@ -1792,8 +3059,6 @@ def execute_ai_operations(operations: list, df: pd.DataFrame) -> list:
                 continue
 
             unit   = _detect_unit(col)
-
-            # Use _robust_to_numeric to handle all decimal/string/currency formats
             series = _robust_to_numeric(filtered[col])
             valid  = series.dropna()
             total  = len(series)
@@ -1829,20 +3094,23 @@ def execute_ai_operations(operations: list, df: pd.DataFrame) -> list:
                                 "message": f"Column '{col}' has no numeric values."})
                 continue
 
-            # Compute with full precision
-            op_fn = _EXTENDED_OPS.get(operation)
-            if op_fn is None:
-                # Try known aliases
-                for alias_key in ("sum",):
-                    if alias_key in operation:
-                        op_fn = _EXTENDED_OPS[alias_key]
-                        break
+            # Percentage: compute as % of total sum
+            if operation in ("percentage", "percent", "pct"):
+                total_sum = _robust_to_numeric(df[col]).sum() if col in df.columns else valid.sum()
+                val = (valid.sum() / total_sum * 100) if total_sum else 0.0
+                unit = "%"
+            else:
+                op_fn = _EXTENDED_OPS.get(operation)
                 if op_fn is None:
-                    op_fn = _EXTENDED_OPS["sum"]
+                    for alias_key in ("sum",):
+                        if alias_key in operation:
+                            op_fn = _EXTENDED_OPS[alias_key]
+                            break
+                    if op_fn is None:
+                        op_fn = _EXTENDED_OPS["sum"]
+                val = op_fn(valid)
 
-            val = op_fn(valid)
-
-            # Per-location breakdown using _robust_to_numeric
+            # Per-location breakdown
             loc_breakdown = None
             if grp_by_loc and "_Location" in filtered.columns:
                 grp = (
@@ -1858,12 +3126,12 @@ def execute_ai_operations(operations: list, df: pd.DataFrame) -> list:
 
             # Auto per-location breakdown for sum/avg/std/median
             auto_loc = None
-            if operation in ("sum", "avg", "mean", "median", "std") \
+            if operation in ("sum", "total", "avg", "average", "mean", "median", "std") \
                     and "_Location" in filtered.columns:
                 grp2 = (
                     filtered.groupby("_Location")[col]
                     .apply(lambda x: _robust_to_numeric(x).sum()
-                           if operation == "sum" else
+                           if operation in ("sum", "total") else
                            _robust_to_numeric(x).mean())
                     .reset_index()
                 )
@@ -3457,7 +4725,7 @@ def _sk_build_per_loc_profile(gdf: "pd.DataFrame") -> "pd.DataFrame":
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TAB 4 – SMART QUERY
+# TAB 4 – SMART QUERY  (merged: AI query + customer name-wise full row search)
 # ─────────────────────────────────────────────────────────────────────────────
 with T[4]:
     st.markdown('<div class="section-title">🧠 Smart Query — AI-Powered Structured Query Engine</div>',
@@ -3517,70 +4785,984 @@ with T[4]:
                 f'</div>',
                 unsafe_allow_html=True)
 
-    # ── Query input ───────────────────────────────────────────────────────────
-    query = st.text_area(
-        "🔍 Enter your query",
-        placeholder=(
-            "e.g. List all caged customers AND sum capacity in use AND total power used "
-            "AND list rated customers AND show customers in airoli or noida"
-        ),
-        key="sq_q",
-        height=90,
+    # ── NEW STRUCTURED QUERY ENGINE (no AI — 100 % accurate, direct DataFrame ops) ──
+    # Two query modes:
+    #   Mode A: Customer Name Search  — find ALL rows matching a customer across every file & sheet
+    #   Mode B: Column & Operations  — pick a real column, apply operations, optional filters
+    # Location-wise column headers derived from locationheaders.txt (actual Excel sub-headers)
+    # ─────────────────────────────────────────────────────────────────────────────────
+
+    # ── Embedded location-wise canonical column headers (from locationheaders.txt) ──
+    _LOC_CANON_HEADERS = {
+        "Airoli": [
+            "Sr. No", "FLOOR", "SH", "Customer Name",
+            "Power Subscription Model (Rated/Subscribed)",
+            "Power Usage Model (Bundled / Metered)",
+            "Subscription Mode (Rack/U Space/SqFt Space)",
+            "Ownership(Sify/Customer)", "Caged /Uncaged",
+            "Space | Subscription", "Space | In Use",
+            "Power Capacity | Subscription Model (Rated/Subscribed)",
+            "Power Capacity | UoM (KVA/KW)",
+            "Power Capacity | Total Capacity Purchased",
+            "Power Capacity | Capacity in Use",
+            "Power Capacity | Usage in KW",
+            "Power Capacity | Billable Additional Capacity",
+            "Power Capacity | Additional Capacity Charges (MRC)",
+            "Power Capacity | Usage Model (Bundled/Metered)",
+            "Power Capacity | Multiplier",
+            "Power Capacity | Unit rate Model (Fixed/Variable)",
+            "Power Capacity | Unit Rate (per KW-HR)",
+            "Power Capacity | No Of Units (KW-HR/ Month)",
+            "Seating Space | Subscription Model (No. of Seats/Space)",
+            "Seating Space | Enclosed/Shared",
+            "Seating Space | Subscription", "Seating Space | In Use",
+        ],
+        "Bangalore 01": [
+            "Floor", "Floor / Module", "Customer Name", "RHS/SH",
+            "Power Subscription Model (Rated/Subscribed)",
+            "Power Usage Model (Bundled / Metered)",
+            "Subscription Mode", "Caged /Uncaged",
+            "Space | UoM", "Space | Subscription", "Space | In Use",
+            "Space | Yet to be given/", "Space | Billed",
+            "Space | Reserved Capacity if any (Non-Billable)",
+            "Space | Per Unit rate (MRC)",
+            "Power Capacity | Subscription Model",
+            "Power Capacity | UoM",
+            "Power Capacity | Total Capacity Purchased",
+            "Power Capacity | Capacity in Use",
+            "Power Capacity | Capacity to be given",
+            "Power Capacity | Reserved Capacity if any",
+            "Power Capacity | Subscribed Capacity to be given in KW",
+            "Power Capacity | Allocated Capacity in KW",
+            "Power Capacity | DC NW Infra",
+            "Power Capacity | Usage in KW",
+            "Power Capacity | Billable Additional Capacity",
+            "Power Capacity | Additional Capacity Charges (MRC)",
+            "Power Usage | Usage Model", "Power Usage | Multiplier",
+            "Power Usage | Unit rate Model (Fixed/Variable)",
+            "Power Usage | Unit Rate (per KW-HR)",
+            "Power Usage | No Of Units (KW-HR/ Month)",
+            "Seating Space | Subscription Model", "Seating Space | UoM",
+            "Seating Space | Subscription", "Seating Space | In Use",
+            "Seating Space | Yet to be given", "Seating Space | Billed",
+            "Seating Space | Reserved Capacity if any",
+            "Seating Space | Per Unit rate",
+            "Revenue | Space revenue including capacity",
+            "Revenue | Additional Capacity Revenue",
+            "Revenue | Power Usage revenue",
+            "Revenue | Seating Space", "Revenue | Any Other Items",
+            "Revenue | Total Revenue", "Revenue | Billing Frequency",
+            "Contract | Sales Order ref No",
+            "Contract | Contract Start Date",
+            "Contract | Term of Contract (No of Years)",
+            "Contract | Current Expiry Date",
+            "Contract | Remarks if any", "Contract | Cross connect",
+        ],
+        "Chennai 01": [
+            "Floor / Module", "Customer Name",
+            "Power Subscription Model (Rated/Subscribed)",
+            "Power Usage Model (Bundled / Metered)",
+            "Subscription Mode", "Caged /Uncaged",
+            "Space | UoM", "Space | Subscription", "Space | In Use",
+            "Space | Yet to be given/", "Space | Billed",
+            "Space | Reserved Capacity if any (Non-Billable)",
+            "Space | Per Unit rate (MRC)",
+            "Power Capacity | Subscription Model",
+            "Power Capacity | UoM",
+            "Power Capacity | Total Capacity Purchased",
+            "Power Capacity | Capacity in Use",
+            "Power Capacity | Capacity to be given",
+            "Power Capacity | Reserved Capacity if any",
+            "Power Capacity | Subscribed Capacity to be given in KW",
+            "Power Capacity | Allocated Capacity in KW",
+            "Power Capacity | Usage in KW",
+            "Power Capacity | Billable Additional Capacity",
+            "Power Capacity | Additional Capacity Charges (MRC)",
+            "Power Usage | Usage Model", "Power Usage | Multiplier",
+            "Power Usage | Unit rate Model (Fixed/Variable)",
+            "Power Usage | Unit Rate (per KW-HR)",
+            "Power Usage | No Of Units (KW-HR/ Month)",
+            "Seating Space | Subscription Model", "Seating Space | UoM",
+            "Seating Space | Subscription", "Seating Space | In Use",
+            "Seating Space | Yet to be given", "Seating Space | Billed",
+            "Seating Space | Reserved Capacity if any",
+            "Seating Space | Per Unit rate",
+            "Revenue | Space revenue including capacity",
+            "Revenue | Additional Capacity Revenue",
+            "Revenue | Power Usage revenue",
+            "Revenue | Seating Space", "Revenue | Any Other Items",
+            "Revenue | Total Revenue", "Revenue | Billing Frequency",
+            "Contract | Sales Order ref No",
+            "Contract | Contract Start Date",
+            "Contract | Term of Contract (No of Years)",
+            "Contract | Current Expiry Date",
+            "Contract | Remarks if any",
+            "Analytics | Avg revenue /Rack /Month",
+            "Analytics | Avg revenue /KW /Month",
+            "Analytics | Net Revenue / Resvd KW",
+            "Analytics | Total Rev (Cap + Power)",
+            "Analytics | Capacity Revenue", "Analytics | Power Revenue",
+            "Analytics | Net Rev Total",
+            "Analytics | Power Surplus/Leakage",
+            "Analytics | Capacity Surplus/Leakage",
+            "Analytics | Total Surplus/Leakage",
+        ],
+        "Kolkata": [
+            "Floor", "Floor / Module", "Customer Name", "RHS/SH",
+            "Power Subscription Model (Rated/Subscribed)",
+            "Power Usage Model (Bundled / Metered)",
+            "Subscription Mode", "Caged /Uncaged",
+            "Space | UoM", "Space | Subscription", "Space | In Use",
+            "Space | Yet to be given/", "Space | Billed",
+            "Space | Reserved Capacity if any (Non-Billable)",
+            "Space | Per Unit rate (MRC)",
+            "Power Capacity | Subscription Model",
+            "Power Capacity | UoM",
+            "Power Capacity | Total Capacity Purchased",
+            "Power Capacity | Capacity in Use",
+            "Power Capacity | Capacity to be given",
+            "Power Capacity | Reserved Capacity if any",
+            "Power Capacity | Subscribed Capacity to be given in KW",
+            "Power Capacity | Allocated Capacity in KW",
+            "Power Capacity | DC NW Infra",
+            "Power Capacity | Usage in KW",
+            "Power Capacity | Billable Additional Capacity",
+            "Power Capacity | Additional Capacity Charges (MRC)",
+            "Power Usage | Usage Model", "Power Usage | Multiplier",
+            "Power Usage | Unit rate Model (Fixed/Variable)",
+            "Power Usage | Unit Rate (per KW-HR)",
+            "Power Usage | No Of Units (KW-HR/ Month)",
+            "Seating Space | Subscription Model", "Seating Space | UoM",
+            "Seating Space | Subscription", "Seating Space | In Use",
+            "Seating Space | Yet to be given", "Seating Space | Billed",
+            "Seating Space | Reserved Capacity if any",
+            "Seating Space | Per Unit rate",
+            "Revenue | Space revenue including capacity",
+            "Revenue | Additional Capacity Revenue",
+            "Revenue | Power Usage revenue",
+            "Revenue | Seating Space", "Revenue | Any Other Items",
+            "Revenue | Total Revenue", "Revenue | Billing Frequency",
+            "Contract | Sales Order ref No",
+            "Contract | Contract Start Date",
+            "Contract | Term of Contract (No of Years)",
+            "Contract | Current Expiry Date",
+            "Contract | Remarks if any",
+        ],
+        "Vashi": [
+            "Floor / Module", "Customer",
+            "Power Subscription Model (Rated/Subscribed)",
+            "Power Usage Model (Bundled / Metered)",
+            "Subscription Mode", "Caged /Uncaged",
+            "Space | UoM", "Space | Subscription", "Space | In Use",
+            "Space | Yet to be given/", "Space | Billed",
+            "Space | Reserved Capacity if any (Non-Billable)",
+            "Space | Per Unit rate (MRC)",
+            "Power Capacity | Subscription Model",
+            "Power Capacity | UoM",
+            "Power Capacity | Total Capacity Purchased",
+            "Power Capacity | Capacity in Use",
+            "Power Capacity | Capacity to be given",
+            "Power Capacity | Reserved Capacity if any",
+            "Power Capacity | Subscribed Capacity to be given in KW",
+            "Power Capacity | Allocated Capacity in KW",
+            "Power Capacity | Usage in KW",
+            "Power Capacity | Billable Additional Capacity",
+            "Power Capacity | Additional Capacity Charges (MRC)",
+            "Power Usage | Usage Model", "Power Usage | Multiplier",
+            "Power Usage | Uit rate Model (Fixed/Variable)",
+            "Power Usage | Unit Rate (per KW-HR)",
+            "Power Usage | No Of Units (KW-HR/ Month)",
+            "Seating Space | Subscription Model", "Seating Space | UoM",
+            "Seating Space | Subscription", "Seating Space | In Use",
+            "Seating Space | Yet to be given", "Seating Space | Billed",
+            "Seating Space | Reserved Capacity if any",
+            "Seating Space | Per Unit rate",
+            "Revenue | Space revenue including capacity",
+            "Revenue | Additional Capacity Revenue",
+            "Revenue | Power Usage revenue",
+            "Revenue | Seating Space", "Revenue | Any Other Items",
+            "Revenue | Total Revenue", "Revenue | Billing Frequency",
+            "Contract | Sales Order ref No",
+            "Contract | Contract Start Date",
+            "Contract | Term of Contract (No of Years)",
+            "Contract | Current Expiry Date",
+            "Contract | Remarks if any",
+            "Analytics | Avg revenue /Rack /Month",
+            "Analytics | Avg revenue /KW /Month",
+            "Analytics | Net Revenue / Resvd KW",
+            "Analytics | Total Rev (Cap + Power)",
+            "Analytics | Capacity Revenue", "Analytics | Power Revenue",
+            "Analytics | Net Rev Total",
+            "Analytics | Power Surplus/Leakage",
+            "Analytics | Capacity Surplus/Leakage",
+            "Analytics | Total Surplus/Leakage",
+        ],
+        "Noida 01": [
+            "Floor / Module", "Customer Name", "RHS/SH",
+            "Sitting Space (Subscription)", "IR DATE",
+            "Power Subscription Model (Rated/Subscribed)",
+            "Power Usage Model (Bundled / Metered)",
+            "Subscription Mode", "Caged /Uncaged",
+            "Space | UoM", "Space | Subscription", "Space | In Use",
+            "Space | Yet to be given/", "Space | Billed",
+            "Space | Reserved Capacity if any (Non-Billable)",
+            "Space | Per Unit rate (MRC)",
+            "Power Capacity | Subscription Model", "Power Capacity | UoM",
+            "Power Capacity | Total Capacity Purchased",
+            "Power Capacity | Capacity in Use",
+            "Power Capacity | Capacity to be given",
+            "Power Capacity | Reserved Capacity if any",
+            "Power Capacity | Subscribed Capacity to be given in KW",
+            "Power Capacity | Allocated Capacity in KW (for KVA subscribed customer 50% diversity)",
+            "Power Capacity | DC NW Infra",
+            "Power Capacity | Billable Additional Capacity",
+            "Power Capacity | Additional Capacity Charges (MRC)",
+            "Power Usage | Usage Model", "Power Usage | Multiplier",
+            "Power Usage | Uit rate Model (Fixed/Variable)",
+            "Power Usage | Unit Rate (per KW-HR)",
+            "Power Usage | No Of Units (KW-HR/ Month)",
+            "Seating Space | Subscription Model", "Seating Space | UoM",
+            "Seating Space | Subscription", "Seating Space | In Use",
+            "Seating Space | Yet to be given", "Seating Space | Billed",
+            "Seating Space | Reserved Capacity if any",
+            "Seating Space | Per Unit rate",
+            "Revenue | Space revenue including capacity",
+            "Revenue | Additional Capacity Revenue",
+            "Revenue | Power Usage revenue",
+            "Revenue | Seating Space", "Revenue | Any Other Items",
+            "Revenue | Total Revenue", "Revenue | Billing Frequency",
+            "Contract | Sales Order ref No",
+            "Contract | Contract Start Date",
+            "Contract | Term of Contract (No of Years)",
+            "Contract | Current Expiry Date",
+            "Contract | Remarks if any",
+            "Analytics | Avg revenue /Rack /Month",
+            "Analytics | Avg revenue /KW /Month",
+            "Analytics | Net Revenue / Resvd KW",
+            "Analytics | Total Rev (Cap + Power)",
+            "Analytics | Capacity Revenue", "Analytics | Power Revenue",
+            "Analytics | Net Rev Total",
+            "Analytics | Power Surplus/Leakage",
+            "Analytics | Capacity Surplus/Leakage",
+            "Analytics | Total Surplus/Leakage",
+        ],
+        "Noida 02": [
+            "Floor / Module", "Customer Name", "RHS/SH",
+            "Sitting Space (Subscription)", "IR DATE",
+            "Power Subscription Model (Rated/Subscribed)",
+            "Power Usage Model (Bundled / Metered)",
+            "Subscription Mode", "Caged /Uncaged",
+            "Space | UoM", "Space | Subscription", "Space | In Use",
+            "Space | Yet to be given/", "Space | Billed",
+            "Space | Reserved Capacity if any (Non-Billable)",
+            "Space | Per Unit rate (MRC)",
+            "Power Capacity | Subscription Model", "Power Capacity | UoM",
+            "Power Capacity | Total Capacity Purchased",
+            "Power Capacity | Capacity in Use",
+            "Power Capacity | Capacity to be given",
+            "Power Capacity | Reserved Capacity if any",
+            "Power Capacity | Subscribed Capacity to be given in KW",
+            "Power Capacity | Allocated Capacity in KW (for KVA subscribed customer 50% diversity)",
+            "Power Capacity | DC NW Infra",
+            "Power Capacity | Billable Additional Capacity",
+            "Power Capacity | Additional Capacity Charges (MRC)",
+            "Power Usage | Usage Model", "Power Usage | Multiplier",
+            "Power Usage | Uit rate Model (Fixed/Variable)",
+            "Power Usage | Unit Rate (per KW-HR)",
+            "Power Usage | No Of Units (KW-HR/ Month)",
+            "Seating Space | Subscription Model", "Seating Space | UoM",
+            "Seating Space | Subscription", "Seating Space | In Use",
+            "Seating Space | Yet to be given", "Seating Space | Billed",
+            "Seating Space | Reserved Capacity if any",
+            "Seating Space | Per Unit rate",
+            "Revenue | Space revenue including capacity",
+            "Revenue | Additional Capacity Revenue",
+            "Revenue | Power Usage revenue",
+            "Revenue | Seating Space", "Revenue | Any Other Items",
+            "Revenue | Total Revenue", "Revenue | Billing Frequency",
+            "Contract | Sales Order ref No",
+            "Contract | Contract Start Date",
+            "Contract | Term of Contract (No of Years)",
+            "Contract | Current Expiry Date",
+            "Contract | Remarks if any",
+        ],
+        "Rabale T1 T2": [
+            "Floor / Module", "Customer Name",
+            "Power Subscription Model (Rated/Subscribed)",
+            "Power Usage Model (Bundled / Metered)",
+            "Subscription Mode", "Caged /Uncaged",
+            "Space | UoM", "Space | Subscription", "Space | In Use",
+            "Space | Yet to be given/", "Space | Billed",
+            "Space | Reserved Capacity if any (Non-Billable)",
+            "Space | Per Unit rate (MRC)", "Space | ARC",
+            "Power Capacity | Subscription Model", "Power Capacity | UoM",
+            "Power Capacity | Total Capacity Purchased",
+            "Power Capacity | Capacity in Use",
+            "Power Capacity | Capacity to be given",
+            "Power Capacity | Reserved Capacity if any",
+            "Power Capacity | Subscribed Capacity to be given in KW",
+            "Power Capacity | Allocated Capacity in KW",
+            "Power Capacity | Usage in KW",
+            "Power Capacity | Billable Additional Capacity",
+            "Power Capacity | Additional Capacity Charges (MRC)",
+            "Power Usage | Usage Model", "Power Usage | Multiplier",
+            "Power Usage | Uit rate Model (Fixed/Variable)",
+            "Power Usage | Unit Rate (per KW-HR)",
+            "Power Usage | No Of Units (KW-HR/ Month)",
+            "Seating Space | Subscription Model", "Seating Space | UoM",
+            "Seating Space | Subscription", "Seating Space | In Use",
+            "Seating Space | Yet to be given", "Seating Space | Billed",
+            "Seating Space | Reserved Capacity if any",
+            "Seating Space | Per Unit rate",
+            "Revenue | Space revenue including capacity",
+            "Revenue | Additional Capacity Revenue",
+            "Revenue | Power Usage revenue",
+            "Revenue | Seating Space", "Revenue | Any Other Items",
+            "Revenue | Total Revenue (MRC)", "Revenue | ARC",
+            "Revenue | Billing Frequency",
+            "Contract | Sales Order ref No",
+            "Contract | Contract Start Date",
+            "Contract | Term of Contract (No of Years)",
+            "Contract | Current Expiry Date",
+            "Contract | Remarks if any",
+            "Analytics | Avg revenue /Rack /Month",
+            "Analytics | Avg revenue /KW /Month",
+            "Analytics | Net Revenue / Resvd KW",
+            "Analytics | Total Rev (Cap + Power)",
+            "Analytics | Capacity Revenue", "Analytics | Power Revenue",
+            "Analytics | Net Rev Total",
+            "Analytics | Power Surplus/Leakage",
+            "Analytics | Capacity Surplus/Leakage",
+            "Analytics | Total Surplus/Leakage",
+            "Power Usage (KW) | Maximum Usable Capacity",
+            "Power Usage (KW) | Current utilization",
+            "Power Usage (KW) | Committed (Based on Confirmed orders)",
+            "Power Usage (KW) | Total", "Power Usage (KW) | Balance",
+        ],
+        "Rabale Tower 4": [
+            "Floor / Module", "Customer Name",
+            "Power Subscription Model (Rated/Subscribed)",
+            "Power Usage Model (Bundled / Metered)",
+            "Subscription Mode", "Caged /Uncaged",
+            "Space | UoM",
+            "Space | Subscription(No. of Racks)", "Space | In Use(No. of Racks)",
+            "Power Capacity | UoM",
+            "Power Capacity | Total Capacity Purchased (KW)",
+            "Power Capacity | Capacity in Use (KW)",
+        ],
+        "Rabale Tower 5": [
+            "Floor", "Tower -5 (MUM - 03)",
+            "Space | Subscription Mode", "Space | UoM",
+            "Space | Occupied in Sqft",
+            "IT KW CAPACITY | Total Capacity - Server Hall",
+            "IT KW CAPACITY | Sold", "IT KW CAPACITY | Available",
+            "Remarks",
+        ],
+    }
+
+    # ── Operations map (all supported numeric operations) ─────────────────────
+    _SQ_ALL_OPS = {
+        "Sum":                   ("sum",      lambda s: s.sum()),
+        "Average (Mean)":        ("avg",      lambda s: s.mean()),
+        "Median":                ("median",   lambda s: s.median()),
+        "Min":                   ("min",      lambda s: s.min()),
+        "Max":                   ("max",      lambda s: s.max()),
+        "Count":                 ("count",    lambda s: float(len(s))),
+        "Count Non-Zero":        ("count_nz", lambda s: float((s != 0).sum())),
+        "Std Deviation":         ("std",      lambda s: s.std(ddof=1)),
+        "Variance":              ("var",      lambda s: s.var(ddof=1)),
+        "Range (Max − Min)":     ("range",    lambda s: s.max() - s.min()),
+        "Product (Multiply)":    ("prod",     lambda s: s.prod()),
+        "% of Grand Total":      ("pct",      lambda s: (s.sum() / s.sum() * 100) if s.sum() != 0 else 0.0),
+        "Cumulative Sum":        ("cumsum",   lambda s: s.cumsum().iloc[-1] if not s.empty else 0.0),
+        "Top 10 Values":         ("top10",    None),
+        "Bottom 10 Values":      ("bot10",    None),
+        "Show All Matching Rows": ("rows",   None),
+    }
+
+    def _sq_fuzzy_col(df_: pd.DataFrame, canonical: str) -> "str | None":
+        """Fuzzy-match a canonical column hint to a real column in df_."""
+        if canonical in df_.columns:
+            return canonical
+        c_lo = canonical.lower()
+        # Try progressively looser matches
+        # 1. Contains the full canonical name (case-insensitive)
+        for c in df_.columns:
+            if c_lo in c.lower() or c.lower() in c_lo:
+                return c
+        # 2. Strip pipe grouping — match sub-header part only
+        sub = c_lo.split("|")[-1].strip() if "|" in c_lo else c_lo
+        if len(sub) > 3:
+            for c in df_.columns:
+                if sub in c.lower():
+                    return c
+        # 3. All words match
+        words = [w for w in re.split(r"\W+", c_lo) if len(w) > 3]
+        for c in df_.columns:
+            if words and all(w in c.lower() for w in words):
+                return c
+        return None
+
+    # ── Mode selector ─────────────────────────────────────────────────────────
+    _sq_mode_opts = [
+        "🔍 Customer Name Search",
+        "📊 Column & Operations Query",
+    ]
+    _sq_mode = st.radio(
+        "Select Query Mode",
+        _sq_mode_opts,
+        horizontal=True,
+        key="sq_mode_select",
     )
 
     sq_locs = st.multiselect(
-        "📍 Restrict to locations (optional)",
+        "📍 Restrict to locations (optional — leave blank for all)",
         options=sorted(fdata.keys()),
         default=[],
-        key="sq_locs"
+        key="sq_locs",
     )
-
-    c_run, _ = st.columns([1, 6])
-    with c_run:
-        run_clicked = st.button("🚀 Run Query", key="sq_run")
 
     if "sq_results_history" not in st.session_state:
         st.session_state["sq_results_history"] = []
 
-    # ── Run ───────────────────────────────────────────────────────────────────
-    if run_clicked and query.strip():
-        if pool_base.empty:
-            st.error("No data loaded. Please check your Excel files.")
-        else:
-            pool = pool_base.copy()
-            if sq_locs and "_Location" in pool.columns:
-                pool = pool[pool["_Location"].isin(sq_locs)]
-            if pool.empty:
-                st.warning("No records for selected locations.")
-            else:
-                with st.spinner("🤖 Parsing and executing query…"):
-                    ops_raw = parse_query_with_ai(query.strip())
+    # ══════════════════════════════════════════════════════════════════════════
+    # MODE A — CUSTOMER NAME SEARCH
+    # Searches every file, every sheet for rows where Customer Name column
+    # contains the entered text (case-insensitive, partial match).
+    # Returns ALL columns for every matching row — zero hallucination.
+    # ══════════════════════════════════════════════════════════════════════════
+    if _sq_mode == "🔍 Customer Name Search":
+        st.markdown(
+            f'<div style="font-size:.82rem;color:{MUTED};margin-bottom:8px">'
+            f'Enter a customer name (or part of it) to search <b>all 10 Excel files</b> '
+            f'and <b>all sheets</b>. Every matching row with all its columns is returned.'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
-                if isinstance(ops_raw, tuple):
-                    err_type, err_msg = ops_raw
-                    st.error(f"**{'Config' if err_type == 'config_error' else 'Parse'} Error**: {err_msg}")
-                elif not ops_raw:
-                    st.warning("Could not parse query. Please try rephrasing.")
+        _cust_col1, _cust_col2 = st.columns([3, 1])
+        with _cust_col1:
+            _cust_input = st.text_input(
+                "👤 Customer Name",
+                placeholder="e.g.  Wipro  |  Oracle  |  YES BANK  |  CISCO  |  Tata",
+                key="sq_cust_input",
+            )
+        with _cust_col2:
+            _cust_match = st.selectbox(
+                "Match Mode",
+                ["Contains (partial)", "Exact", "Starts with"],
+                key="sq_cust_match",
+            )
+
+        _cust_sheets_opts = sorted({
+            sn for loc in (sq_locs if sq_locs else fdata.keys())
+            for sn in fdata.get(loc, {})
+        })
+        _cust_sheets_sel = st.multiselect(
+            "📄 Filter by sheets (optional)",
+            options=_cust_sheets_opts,
+            default=[],
+            key="sq_cust_sheets",
+        )
+
+        _cust_additional_col = st.multiselect(
+            "📋 Show only these columns in results (leave blank = show all columns)",
+            options=[c for c in pool_base.columns if not c.startswith("_")] if not pool_base.empty else [],
+            default=[],
+            key="sq_cust_cols",
+        )
+
+        _crun_c, _ = st.columns([1, 6])
+        with _crun_c:
+            _cust_run_btn = st.button("🔍 Search Customer", key="sq_cust_run")
+
+        if _cust_run_btn and _cust_input.strip():
+            _search_pool = combined_df(ALL)  # ALL files, ALL sheets
+            if sq_locs and "_Location" in _search_pool.columns:
+                _search_pool = _search_pool[_search_pool["_Location"].isin(sq_locs)]
+            if _cust_sheets_sel and "_Sheet" in _search_pool.columns:
+                _search_pool = _search_pool[_search_pool["_Sheet"].isin(_cust_sheets_sel)]
+
+            # Find customer name column
+            _cn_col = find_col(_search_pool, r"customer.*name|client.*name|^customer$")
+            if _cn_col is None:
+                # Also try bare "Customer" for Vashi
+                _cn_col = find_col(_search_pool, r"\bcustomer\b")
+            _srch = _cust_input.strip()
+            _srch_lo = _srch.lower()
+
+            if _cn_col and _cn_col in _search_pool.columns:
+                _vals = _search_pool[_cn_col].astype(str)
+                if _cust_match == "Exact":
+                    _mask = _vals.str.lower() == _srch_lo
+                elif _cust_match == "Starts with":
+                    _mask = _vals.str.lower().str.startswith(_srch_lo)
                 else:
-                    results = _sq_execute_with_schema(ops_raw, pool)
+                    _mask = _vals.str.lower().str.contains(re.escape(_srch_lo), na=False)
+                _found = _search_pool[_mask].copy()
+            else:
+                # Fallback: search all text columns
+                _str_cols = [c for c in _search_pool.columns
+                             if not c.startswith("_") and _search_pool[c].dtype == object]
+                _mask2 = pd.Series(False, index=_search_pool.index)
+                for _sc in _str_cols:
+                    _mask2 |= _search_pool[_sc].astype(str).str.lower().str.contains(
+                        re.escape(_srch_lo), na=False)
+                _found = _search_pool[_mask2].copy()
 
-                    # ── Customer-wise lookup: detect & prepend (additive) ────
-                    _sq_cust_name, _sq_field_part = _sq_detect_customer_query(query.strip())
-                    if _sq_cust_name:
-                        _sq_cust_rows = _sq_find_customers(_sq_cust_name, pool)
-                        if not _sq_cust_rows.empty:
-                            _sq_cust_res = _sq_build_customer_profile(
-                                _sq_cust_rows, _sq_cust_name, _sq_field_part
-                            )
-                            results = [_sq_cust_res] + results
-                    # ────────────────────────────────────────────────────────
+            if _found.empty:
+                st.warning(f"No rows found for customer **'{_srch}'** in the selected scope.")
+            else:
+                # Display summary card
+                _f_locs  = sorted(_found["_Location"].unique()) if "_Location" in _found.columns else []
+                _f_sheets = sorted(_found["_Sheet"].unique())   if "_Sheet"    in _found.columns else []
+                st.markdown(
+                    f'<div style="background:{DARK2};border:2px solid {CYAN};'
+                    f'border-radius:14px;padding:20px 26px;margin:14px 0">'
+                    f'<div style="font-size:1.05rem;font-weight:900;color:{WHITE}">'
+                    f'✅ Found: <span style="color:{CYAN}">{_srch}</span></div>'
+                    f'<div style="font-size:.84rem;color:{TEXT};margin-top:6px">'
+                    f'<b style="color:{CYAN}">{len(_found):,}</b> matching row(s) across '
+                    f'<b style="color:{CYAN}">{len(_f_locs)}</b> location(s) · '
+                    f'<b style="color:{CYAN}">{len(_f_sheets)}</b> sheet(s)</div>'
+                    f'<div style="margin-top:8px;font-size:.77rem;color:{MUTED}">Locations: '
+                    + (", ".join(f'<span style="color:{GREEN}">{l}</span>' for l in _f_locs) or "—")
+                    + f'</div><div style="font-size:.77rem;color:{MUTED};margin-top:3px">Sheets: '
+                    + (", ".join(f'<span style="color:{AMBER}">{s}</span>' for s in _f_sheets[:20]) or "—")
+                    + f'</div></div>',
+                    unsafe_allow_html=True,
+                )
 
+                # Row-count validation breakdown
+                with st.expander("🔬 Validation — row count per file & sheet", expanded=False):
+                    if "_Location" in _found.columns and "_Sheet" in _found.columns:
+                        _val_df = (
+                            _found.groupby(["_Location", "_Sheet"])
+                            .size().reset_index(name="Row Count")
+                            .sort_values(["_Location", "_Sheet"])
+                        )
+                        _val_df.index = range(1, len(_val_df) + 1)
+                        st.dataframe(_val_df, use_container_width=True)
+
+                # Build display dataframe
+                _meta_c = [c for c in ["_Location", "_Sheet"] if c in _found.columns]
+                _data_c = (
+                    _cust_additional_col
+                    if _cust_additional_col
+                    else [c for c in _found.columns if not c.startswith("_")]
+                )
+                _disp = _found[_meta_c + [c for c in _data_c if c in _found.columns]].copy()
+                _disp.index = range(1, len(_disp) + 1)
+
+                st.markdown(
+                    f'<div style="font-size:.8rem;color:{CYAN};font-weight:700;'
+                    f'text-transform:uppercase;letter-spacing:.05em;margin:14px 0 6px">'
+                    f'📋 All Data — {len(_found):,} row(s) for "{_srch}"</div>',
+                    unsafe_allow_html=True,
+                )
+                st.dataframe(_disp, use_container_width=True)
+                st.download_button(
+                    f"⬇️ Download CSV — {_srch[:40]}",
+                    _disp.to_csv(index=False).encode("utf-8"),
+                    f"customer_{_srch.replace(' ','_')[:40]}.csv",
+                    "text/csv",
+                    key="sq_cust_dl",
+                )
+
+                # Save to results history (table format compatible with display block)
+                _res_entry = {
+                    "type": "table", "label": f"Customer Search: {_srch}",
+                    "data": _disp, "row_count": len(_found),
+                }
+                st.session_state["sq_results_history"].append({
+                    "query":   f"Customer search: {_srch}",
+                    "source":  sq_src,
+                    "records": len(_found),
+                    "results": [_res_entry],
+                })
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # MODE B — COLUMN & OPERATIONS QUERY
+    # User selects: location → column (from real loaded columns, guided by
+    # locationheaders.txt) → operation → optional filters.
+    # 100 % accurate — executed directly on the real DataFrames. No AI/LLM.
+    # ══════════════════════════════════════════════════════════════════════════
+    else:
+        st.markdown(
+            f'<div style="font-size:.82rem;color:{MUTED};margin-bottom:8px">'
+            f'Select a location, column, and operation to run directly on the real Excel data. '
+            f'All columns listed are real sub-headers from the actual Excel files. '
+            f'No guessing — 100% accurate results.</div>',
+            unsafe_allow_html=True,
+        )
+
+        _op_r1, _op_r2 = st.columns([2, 3])
+        with _op_r1:
+            _op_loc = st.selectbox(
+                "📍 Location",
+                ["All Locations"] + sorted(fdata.keys()),
+                key="sq_op_loc",
+            )
+
+        # Build the working pool for this location
+        if _op_loc == "All Locations":
+            _op_pool = pool_base.copy()
+            if sq_locs and "_Location" in _op_pool.columns:
+                _op_pool = _op_pool[_op_pool["_Location"].isin(sq_locs)]
+        else:
+            _op_frames = []
+            for _sn, _df_loc in fdata.get(_op_loc, {}).items():
+                _tmp = _df_loc.copy()
+                _tmp.insert(0, "_Sheet", _sn)
+                _tmp.insert(0, "_Location", _op_loc)
+                _op_frames.append(_tmp)
+            _op_pool = pd.concat(_op_frames, ignore_index=True, sort=False) if _op_frames else pd.DataFrame()
+
+        # Real columns from loaded data
+        _op_real_cols = [c for c in _op_pool.columns if not c.startswith("_")] if not _op_pool.empty else []
+        _op_num_cols  = [c for c in _op_real_cols if pd.api.types.is_numeric_dtype(_op_pool[c])] if not _op_pool.empty else []
+        _op_txt_cols  = [c for c in _op_real_cols if c not in _op_num_cols]
+
+        with _op_r2:
+            _op_col_type = st.radio(
+                "Column type",
+                ["📊 Numeric columns", "📝 Text / Category columns"],
+                horizontal=True, key="sq_op_col_type",
+            )
+
+        _col_list = _op_num_cols if "Numeric" in _op_col_type else _op_txt_cols
+
+        _op_r3, _op_r4 = st.columns([3, 2])
+        with _op_r3:
+            # Search box to filter column list
+            _col_search = st.text_input(
+                "🔎 Search column (partial match)",
+                placeholder="e.g. Revenue | Capacity | Customer | Subscription",
+                key="sq_col_search",
+            )
+            _col_filtered = (
+                [c for c in _col_list if _col_search.strip().lower() in c.lower()]
+                if _col_search.strip() else _col_list
+            )
+            _sel_col = st.selectbox(
+                f"📋 Select Column — {len(_col_filtered)} available",
+                ["— pick a column —"] + _col_filtered,
+                key="sq_sel_col",
+            )
+        with _op_r4:
+            if "Numeric" in _op_col_type:
+                _sel_op_name = st.selectbox(
+                    "⚙️ Operation",
+                    list(_SQ_ALL_OPS.keys()),
+                    key="sq_sel_op",
+                )
+            else:
+                _sel_op_name = st.selectbox(
+                    "⚙️ Operation",
+                    ["Count (non-null)", "Unique Count", "Value Counts", "Show All Rows"],
+                    key="sq_sel_op",
+                )
+
+        # Optional filters row
+        _op_f1, _op_f2, _op_f3 = st.columns([2, 2, 1])
+        with _op_f1:
+            _op_cust_filter = st.text_input(
+                "👤 Customer Name Filter (optional)",
+                placeholder="e.g.  Wipro  |  Oracle",
+                key="sq_op_cust_filter",
+            )
+        with _op_f2:
+            _op_sheet_opts = sorted({
+                sn for loc in (sq_locs if sq_locs else (
+                    [_op_loc] if _op_loc != "All Locations" else fdata.keys()))
+                for sn in fdata.get(loc, {})
+            })
+            _op_sheets = st.multiselect(
+                "📄 Sheets (optional)",
+                options=_op_sheet_opts, default=[],
+                key="sq_op_sheets",
+            )
+        with _op_f3:
+            _op_grp_loc = st.checkbox("Group by Location", value=True, key="sq_op_grp")
+
+        _op_top_n = 10
+        if _sel_op_name in ("Top 10 Values", "Bottom 10 Values"):
+            _op_top_n = st.number_input(
+                "N", min_value=1, max_value=100, value=10, step=5, key="sq_op_top_n"
+            )
+
+        _run_op_c, _ = st.columns([1, 6])
+        with _run_op_c:
+            _op_run_btn = st.button("▶ Run Query", key="sq_op_run")
+
+        if _op_run_btn and _sel_col != "— pick a column —":
+            # Apply sheet filter
+            _work = _op_pool.copy()
+            if _op_sheets and "_Sheet" in _work.columns:
+                _work = _work[_work["_Sheet"].isin(_op_sheets)]
+
+            # Apply customer name filter
+            if _op_cust_filter.strip():
+                _cn_c2 = find_col(_work, r"customer.*name|client.*name|^customer$")
+                if _cn_c2 and _cn_c2 in _work.columns:
+                    _work = _work[
+                        _work[_cn_c2].astype(str).str.lower().str.contains(
+                            re.escape(_op_cust_filter.strip().lower()), na=False)
+                    ]
+
+            if _work.empty:
+                st.warning("No records match the applied filters.")
+            elif _sel_col not in _work.columns:
+                st.error(f"Column '{_sel_col}' not found in selected scope.")
+            else:
+                _q_label = (
+                    f"{_sel_op_name} of '{_sel_col}'"
+                    + (f" [Customer: {_op_cust_filter}]" if _op_cust_filter.strip() else "")
+                    + (f" [{_op_loc}]" if _op_loc != "All Locations" else " [All Locations]")
+                )
+
+                # ── Text column operations ─────────────────────────────────────
+                if "Numeric" not in _op_col_type:
+                    _tc_data = _work[_sel_col].dropna().astype(str)
+                    if _sel_op_name == "Count (non-null)":
+                        st.metric("Count (non-null)", f"{len(_tc_data):,}")
+                    elif _sel_op_name == "Unique Count":
+                        st.metric("Unique Values", f"{_tc_data.nunique():,}")
+                    elif _sel_op_name == "Value Counts":
+                        _vc = _tc_data.value_counts().reset_index()
+                        _vc.columns = [_sel_col, "Count"]
+                        _vc.index = range(1, len(_vc) + 1)
+                        st.dataframe(_vc, use_container_width=True)
+                    else:  # Show All Rows
+                        _meta_r = [c for c in ["_Location", "_Sheet"] if c in _work.columns]
+                        _cn_txt_r = find_col(_work, r"customer.*name|client.*name|^customer$")
+                        _txt_extra = [_cn_txt_r] if (_cn_txt_r and _cn_txt_r not in _meta_r and _cn_txt_r in _work.columns) else []
+                        _disp_r = _work[_meta_r + _txt_extra + [_sel_col]].copy()
+                        _disp_r.index = range(1, len(_disp_r) + 1)
+                        st.dataframe(_disp_r, use_container_width=True)
+                        st.download_button(
+                            "⬇️ Download CSV",
+                            _disp_r.to_csv(index=False).encode(),
+                            f"query_{_sel_col[:30]}.csv", "text/csv",
+                            key="sq_txt_dl",
+                        )
+                    _res_txt = {
+                        "type": "table", "label": _q_label,
+                        "data": _work[[c for c in ["_Location", "_Sheet", _sel_col] if c in _work.columns]],
+                        "row_count": len(_work),
+                    }
                     st.session_state["sq_results_history"].append({
-                        "query":   query.strip(),
-                        "source":  sq_src,
-                        "records": len(pool),
-                        "results": results,
+                        "query": _q_label, "source": sq_src,
+                        "records": len(_work), "results": [_res_txt],
                     })
+
+                # ── Numeric column operations ──────────────────────────────────
+                else:
+                    _num_s = _robust_to_numeric(_work[_sel_col]).dropna()
+                    _total_rows = len(_work)
+                    _valid_rows = len(_num_s)
+
+                    if _num_s.empty:
+                        st.warning(
+                            f"Column **'{_sel_col}'** has no numeric values in the current scope."
+                        )
+                    else:
+                        _op_key, _op_fn = _SQ_ALL_OPS[_sel_op_name][0], _SQ_ALL_OPS[_sel_op_name][1]
+                        _unit = _detect_unit(_sel_col)
+
+                        # Special handling: Top N / Bottom N / Show All Rows
+                        if _sel_op_name in ("Top 10 Values", "Bottom 10 Values", "Show All Matching Rows"):
+                            _meta_c2 = [c for c in ["_Location", "_Sheet"] if c in _work.columns]
+                            _cn_c3   = find_col(_work, r"customer.*name|client.*name|^customer$")
+                            _show_c  = _meta_c2 + ([_cn_c3] if _cn_c3 else []) + [_sel_col]
+                            _show_df = _work[[c for c in _show_c if c in _work.columns]].copy()
+                            _show_df[_sel_col] = _robust_to_numeric(_show_df[_sel_col])
+                            _show_df = _show_df.dropna(subset=[_sel_col])
+                            if _sel_op_name == "Top 10 Values":
+                                _show_df = _show_df.nlargest(int(_op_top_n), _sel_col)
+                            elif _sel_op_name == "Bottom 10 Values":
+                                _show_df = _show_df.nsmallest(int(_op_top_n), _sel_col)
+                            _show_df = _show_df.reset_index(drop=True)
+                            _show_df.index = range(1, len(_show_df) + 1)
+                            st.dataframe(_show_df, use_container_width=True)
+                            st.download_button(
+                                f"⬇️ Download {_sel_op_name} CSV",
+                                _show_df.to_csv(index=False).encode(),
+                                f"query_{_sel_op_name.replace(' ','_')[:20]}.csv",
+                                "text/csv", key="sq_topn_dl",
+                            )
+                            _res_e = {
+                                "type": "table", "label": _q_label,
+                                "data": _show_df, "row_count": len(_show_df),
+                            }
+                            st.session_state["sq_results_history"].append({
+                                "query": _q_label, "source": sq_src,
+                                "records": len(_work), "results": [_res_e],
+                            })
+
+                        elif _sel_op_name == "% of Grand Total":
+                            # Each location's share of the grand total
+                            _grand = _num_s.sum()
+                            if _op_grp_loc and "_Location" in _work.columns:
+                                _pct_rows = []
+                                for _ploc, _pgrp in _work.groupby("_Location"):
+                                    _ps = _robust_to_numeric(_pgrp[_sel_col]).dropna()
+                                    _pct_rows.append({
+                                        "Location": _ploc,
+                                        f"{_sel_col} (Sum)": round(_ps.sum(), 4),
+                                        "% of Grand Total": round(_ps.sum() / _grand * 100, 2) if _grand else 0,
+                                    })
+                                _pct_df = pd.DataFrame(_pct_rows).sort_values(
+                                    "% of Grand Total", ascending=False
+                                ).reset_index(drop=True)
+                                _pct_df.index = range(1, len(_pct_df) + 1)
+                                st.dataframe(_pct_df, use_container_width=True)
+                            else:
+                                st.metric(
+                                    f"Grand Total of '{_sel_col}'",
+                                    f"{_grand:,.2f} {_unit}".strip(),
+                                )
+                            _res_pct = {
+                                "type": "scalar", "label": _q_label,
+                                "value": float(_grand), "unit": _unit,
+                                "column": _sel_col, "col_reason": "sum for % calc",
+                                "row_count": _total_rows,
+                                "valid_count": _valid_rows,
+                                "operation": "pct", "loc_breakdown": None, "auto_loc": None,
+                            }
+                            st.session_state["sq_results_history"].append({
+                                "query": _q_label, "source": sq_src,
+                                "records": _total_rows, "results": [_res_pct],
+                            })
+
+                        elif _sel_op_name == "Cumulative Sum":
+                            _cn_cum = find_col(_work, r"customer.*name|client.*name|^customer$")
+                            _cum_base = _work.copy()
+                            _cum_base[_sel_col] = _robust_to_numeric(_cum_base[_sel_col])
+                            _cum_base = _cum_base.dropna(subset=[_sel_col]).reset_index(drop=True)
+                            _cum_dict = {"Row #": range(1, len(_cum_base) + 1)}
+                            if _cn_cum and _cn_cum in _cum_base.columns:
+                                _cum_dict["Customer Name"] = _cum_base[_cn_cum].astype(str).values
+                            _cum_dict[_sel_col] = _cum_base[_sel_col].values
+                            _cum_dict["Cumulative Sum"] = _cum_base[_sel_col].cumsum().values
+                            _cum_df = pd.DataFrame(_cum_dict)
+                            st.dataframe(_cum_df, use_container_width=True)
+                            _res_cum = {
+                                "type": "table", "label": _q_label,
+                                "data": _cum_df, "row_count": len(_cum_df),
+                            }
+                            st.session_state["sq_results_history"].append({
+                                "query": _q_label, "source": sq_src,
+                                "records": _total_rows, "results": [_res_cum],
+                            })
+
+                        else:
+                            # Standard scalar operation
+                            _val = float(_op_fn(_num_s))
+                            _pct_v = _valid_rows / _total_rows * 100 if _total_rows else 0
+
+                            # Format display value
+                            if _unit == "₹":
+                                if abs(_val) >= 1_00_00_000:
+                                    _val_disp = f"₹ {_val/1_00_00_000:,.2f} Cr"
+                                elif abs(_val) >= 1_00_000:
+                                    _val_disp = f"₹ {_val/1_00_000:,.2f} L"
+                                else:
+                                    _val_disp = f"₹ {_val:,.2f}"
+                            else:
+                                _val_disp = f"{_val:,.4f} {_unit}".strip() if abs(_val) < 1e10 else f"{_val:.4e}"
+
+                            st.markdown(f"""
+                            <div style="background:{DARK2};border:1px solid {BORD};
+                                 border-radius:14px;padding:22px 30px;margin:10px 0">
+                              <div style="font-size:.72rem;color:{MUTED};font-weight:700;
+                                   text-transform:uppercase;letter-spacing:.07em;
+                                   margin-bottom:8px">{_sel_op_name}</div>
+                              <div style="font-size:2.2rem;font-weight:900;color:{CYAN};
+                                   line-height:1.1">{_val_disp}</div>
+                              <div style="font-size:.74rem;color:{MUTED};margin-top:10px;
+                                   border-top:1px solid {BORD};padding-top:8px">
+                                📊 Column: <b style="color:{TEXT}">{_sel_col}</b><br>
+                                ✅ <b style="color:{GREEN}">{_valid_rows:,}</b> of
+                                <b style="color:{TEXT}">{_total_rows:,}</b> rows had numeric values
+                                ({_pct_v:.0f}%)
+                                {"⚠️ Many blank/text values — result may be partial" if _pct_v < 50 else ""}
+                              </div>
+                            </div>""", unsafe_allow_html=True)
+
+                            # Per-location breakdown
+                            if _op_grp_loc and "_Location" in _work.columns:
+                                _loc_rows_2 = []
+                                for _ll, _lg in _work.groupby("_Location"):
+                                    _ls = _robust_to_numeric(_lg[_sel_col]).dropna()
+                                    if not _ls.empty:
+                                        _lv = float(_op_fn(_ls))
+                                        _loc_rows_2.append({
+                                            "Location": _ll,
+                                            f"{_sel_op_name} of {_sel_col}": round(_lv, 4),
+                                            "Valid Rows": len(_ls),
+                                        })
+                                if _loc_rows_2:
+                                    _loc_df2 = pd.DataFrame(_loc_rows_2).sort_values(
+                                        f"{_sel_op_name} of {_sel_col}", ascending=False
+                                    ).reset_index(drop=True)
+                                    _loc_df2.index = range(1, len(_loc_df2) + 1)
+                                    with st.expander("📍 Per-location breakdown", expanded=True):
+                                        st.dataframe(_loc_df2, use_container_width=True)
+
+                            # Per-customer breakdown (mandatory customer name in results)
+                            _cn_sc2 = find_col(_work, r"customer.*name|client.*name|^customer$")
+                            if _cn_sc2 and _cn_sc2 in _work.columns:
+                                _cust_sc_rows = []
+                                for _cc, _cg in _work.groupby(_cn_sc2):
+                                    _cs2 = _robust_to_numeric(_cg[_sel_col]).dropna()
+                                    if not _cs2.empty:
+                                        _cust_sc_rows.append({
+                                            "Customer Name": _cc,
+                                            f"{_sel_op_name} of {_sel_col}": round(float(_op_fn(_cs2)), 4),
+                                            "Valid Rows": len(_cs2),
+                                        })
+                                if _cust_sc_rows:
+                                    _cust_sc_df = pd.DataFrame(_cust_sc_rows).sort_values(
+                                        f"{_sel_op_name} of {_sel_col}", ascending=False
+                                    ).reset_index(drop=True)
+                                    _cust_sc_df.index = range(1, len(_cust_sc_df) + 1)
+                                    with st.expander("👤 Per-customer breakdown", expanded=True):
+                                        st.dataframe(_cust_sc_df, use_container_width=True)
+                                        st.download_button(
+                                            "⬇️ Download Customer Breakdown CSV",
+                                            _cust_sc_df.to_csv(index=False).encode("utf-8"),
+                                            f"customer_breakdown_{_sel_col[:30].replace(' ','_')}.csv",
+                                            "text/csv",
+                                            key="sq_cust_sc_dl",
+                                        )
+
+                            # Save to history
+                            _auto_loc2 = None
+                            if _op_grp_loc and "_Location" in _work.columns:
+                                _grp2b = _work.groupby("_Location")[_sel_col].apply(
+                                    lambda x: _robust_to_numeric(x).sum()
+                                ).reset_index()
+                                _grp2b.columns = ["Location", _sel_col]
+                                _grp2b = _grp2b.sort_values(_sel_col, ascending=False).reset_index(drop=True)
+                                _grp2b.index += 1
+                                _auto_loc2 = _grp2b
+                            _res_sc = {
+                                "type": "scalar", "label": _q_label,
+                                "value": _val, "unit": _unit,
+                                "column": _sel_col, "col_reason": "direct selection",
+                                "row_count": _total_rows,
+                                "valid_count": _valid_rows,
+                                "operation": _sel_op_name.lower(),
+                                "loc_breakdown": None, "auto_loc": _auto_loc2,
+                            }
+                            st.session_state["sq_results_history"].append({
+                                "query": _q_label, "source": sq_src,
+                                "records": _total_rows, "results": [_res_sc],
+                            })
+
+    run_clicked = False  # Compatibility — old AI path disabled in this mode
+
 
     # ── Display ───────────────────────────────────────────────────────────────
     if st.session_state.get("sq_results_history"):
@@ -3778,6 +5960,442 @@ with T[4]:
           </div>
         </div>""", unsafe_allow_html=True)
 
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # COLUMN HEADER LOOKUP — Find any column by exact/partial header name
+    # across all 10 DC Excel files and all sheets, with optional aggregations
+    # ══════════════════════════════════════════════════════════════════════════
+
+    st.markdown(f"<hr style='border-color:{BORD};margin:32px 0 20px'>",
+                unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-title">🔎 Column Header Lookup — Search Any Column Across All Files & Sheets</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div style="font-size:.85rem;color:{MUTED};margin-bottom:16px">'
+        f'Type a column header name (exact or partial) to find and retrieve data from '
+        f'<b>all matching columns across all 10 DC Excel files and all sheets</b>. '
+        f'Numeric columns support aggregation metrics (Sum, Avg, Min, Max …); '
+        f'text columns support Count, Unique Count, and Value Counts.</div>',
+        unsafe_allow_html=True,
+    )
+
+    _chl_all_cols = sorted(
+        [c for c in CUST.columns if not c.startswith("_")]
+    ) if not CUST.empty else []
+
+    _chl_r1a, _chl_r1b = st.columns([4, 2])
+    with _chl_r1a:
+        _chl_header_search = st.text_input(
+            "🔍 Column Header Name (partial match, case-insensitive)",
+            placeholder="e.g.  Customer Name  |  Subscription  |  Power Capacity  |  MRC  |  Revenue",
+            key="chl_header_search",
+        )
+    with _chl_r1b:
+        _chl_loc_sel = st.selectbox(
+            "📍 Location Filter",
+            ["All Locations"] + sorted(fdata.keys()),
+            key="chl_loc_sel",
+        )
+
+    _chl_search_lower = _chl_header_search.strip().lower()
+    _chl_matched = (
+        [c for c in _chl_all_cols if _chl_search_lower in c.lower()]
+        if _chl_search_lower else _chl_all_cols
+    )
+
+    _chl_r2a, _chl_r2b = st.columns([4, 2])
+    with _chl_r2a:
+        _chl_selected_col = st.selectbox(
+            f"📋 Matched Columns — {len(_chl_matched)} found",
+            ["— pick a column —"] + _chl_matched,
+            key="chl_selected_col",
+        )
+    with _chl_r2b:
+        _chl_sheet_opts = ["All Sheets"]
+        if _chl_loc_sel != "All Locations":
+            _chl_sheet_opts += sorted(fdata.get(_chl_loc_sel, {}).keys())
+        _chl_sheet_sel = st.selectbox("📄 Sheet Filter", _chl_sheet_opts, key="chl_sheet_sel")
+
+    _chl_is_numeric = False
+    if _chl_selected_col != "— pick a column —" and not CUST.empty and _chl_selected_col in CUST.columns:
+        _chl_probe = CUST[_chl_selected_col].dropna()
+        _chl_is_numeric = (
+            pd.to_numeric(_chl_probe, errors="coerce").notna().sum() /
+            max(len(_chl_probe), 1) > 0.4
+        )
+
+    _chl_r3a, _chl_r3b, _chl_r3c = st.columns([3, 2, 1])
+    with _chl_r3a:
+        if _chl_is_numeric:
+            _chl_metric = st.selectbox(
+                "📐 Metric (optional — numeric column)",
+                ["— none (show raw data) —", "Sum", "Average", "Min", "Max",
+                 "Count", "Median", "Std Dev", "Count Non-Zero"],
+                key="chl_metric",
+            )
+        else:
+            _chl_metric = st.selectbox(
+                "📐 Operation (optional — text column)",
+                ["— none (show raw data) —", "Count (non-null)", "Unique Count", "Value Counts"],
+                key="chl_metric",
+            )
+    with _chl_r3b:
+        _chl_max_rows = st.number_input(
+            "Max rows to show", min_value=10, max_value=500, value=50, step=10,
+            key="chl_max_rows",
+        )
+    with _chl_r3c:
+        st.markdown("<br>", unsafe_allow_html=True)
+        _chl_run = st.button("🔎 Lookup", key="chl_run", use_container_width=True)
+
+    _chl_val_filter = st.text_input(
+        "🔑 Value Filter — enter any value to filter rows in the selected column (optional, partial match)",
+        placeholder="e.g.  Colt  |  100  |  Caged  |  Bangalore  |  MRC",
+        key="chl_val_filter",
+    )
+
+    if _chl_run:
+        if _chl_selected_col == "— pick a column —":
+            st.warning("Please search for and select a column header to look up.")
+        elif CUST.empty:
+            st.warning("No data loaded. Check that the Excel files are accessible.")
+        else:
+            _chl_df = CUST.copy()
+            if _chl_loc_sel != "All Locations" and "_Location" in _chl_df.columns:
+                _chl_df = _chl_df[_chl_df["_Location"] == _chl_loc_sel]
+            if _chl_sheet_sel != "All Sheets" and "_Sheet" in _chl_df.columns:
+                _chl_df = _chl_df[_chl_df["_Sheet"] == _chl_sheet_sel]
+            if _chl_val_filter.strip() and _chl_selected_col in _chl_df.columns:
+                _chl_mask = (
+                    _chl_df[_chl_selected_col]
+                    .astype(str)
+                    .str.contains(re.escape(_chl_val_filter.strip()), case=False, na=False)
+                )
+                _chl_df = _chl_df[_chl_mask]
+
+            if _chl_selected_col not in _chl_df.columns:
+                st.error(
+                    f"Column ‘{_chl_selected_col}’ not found "
+                    f"in the selected scope."
+                )
+            else:
+                _chl_col_data = _chl_df[_chl_selected_col].dropna()
+                _chl_scope = (
+                    _chl_loc_sel if _chl_loc_sel != "All Locations"
+                    else "All Locations"
+                )
+                if _chl_sheet_sel != "All Sheets":
+                    _chl_scope += f" / {_chl_sheet_sel}"
+
+                _chl_no_metric = _chl_metric == "— none (show raw data) —"
+
+                if not _chl_no_metric:
+                    if _chl_is_numeric:
+                        _chl_num = pd.to_numeric(_chl_col_data, errors="coerce").dropna()
+                        _chl_num_ops = {
+                            "Sum":            _chl_num.sum(),
+                            "Average":        _chl_num.mean(),
+                            "Min":            _chl_num.min(),
+                            "Max":            _chl_num.max(),
+                            "Count":          float(len(_chl_num)),
+                            "Median":         _chl_num.median(),
+                            "Std Dev":        _chl_num.std(ddof=1),
+                            "Count Non-Zero": float((_chl_num != 0).sum()),
+                        }
+                        _chl_result = _chl_num_ops.get(_chl_metric, "N/A")
+                        _chl_fmt = (
+                            f"{_chl_result:,.2f}"
+                            if isinstance(_chl_result, float) else str(_chl_result)
+                        )
+                        st.markdown(f"""
+        <div class="result-box">
+          <div style="font-size:.82rem;color:{MUTED};margin-bottom:6px">
+            <b>{_chl_metric}</b> of
+            <b style="color:{CYAN}">{_chl_selected_col}</b>
+            &nbsp;·&nbsp; {_chl_scope}
+          </div>
+          <div class="result-big">{_chl_fmt}</div>
+          <div style="font-size:.78rem;color:{MUTED};margin-top:8px">
+            Based on <b style="color:{CYAN}">{len(_chl_num):,}</b> numeric records
+          </div>
+        </div>""", unsafe_allow_html=True)
+
+                        if _chl_loc_sel == "All Locations" and "_Location" in CUST.columns:
+                            _chl_num_op_fn = {
+                                "Sum":            lambda s: s.sum(),
+                                "Average":        lambda s: s.mean(),
+                                "Min":            lambda s: s.min(),
+                                "Max":            lambda s: s.max(),
+                                "Count":          lambda s: float(len(s)),
+                                "Median":         lambda s: s.median(),
+                                "Std Dev":        lambda s: s.std(ddof=1),
+                                "Count Non-Zero": lambda s: float((s != 0).sum()),
+                            }
+                            _chl_grp_rows = []
+                            for _chl_gloc, _chl_gdf in CUST.groupby("_Location"):
+                                _chl_gs = pd.to_numeric(
+                                    _chl_gdf.get(_chl_selected_col, pd.Series()),
+                                    errors="coerce",
+                                ).dropna()
+                                if not _chl_gs.empty:
+                                    _chl_grp_rows.append({
+                                        "Location":     _chl_gloc,
+                                        _chl_metric:    _chl_num_op_fn[_chl_metric](_chl_gs),
+                                        "Records Used": len(_chl_gs),
+                                    })
+                            if _chl_grp_rows:
+                                _chl_grp_df = (
+                                    pd.DataFrame(_chl_grp_rows)
+                                    .sort_values(_chl_metric, ascending=False)
+                                    .reset_index(drop=True)
+                                )
+                                st.markdown(
+                                    f'<div style="font-size:.85rem;color:{MUTED};'
+                                    f'margin:14px 0 6px"><b>Per-Location Breakdown:</b></div>',
+                                    unsafe_allow_html=True,
+                                )
+                                st.dataframe(_chl_grp_df, use_container_width=True)
+                    else:
+                        if _chl_metric == "Count (non-null)":
+                            st.markdown(f"""
+        <div class="result-box">
+          <div style="font-size:.82rem;color:{MUTED};margin-bottom:6px">
+            <b>Count (non-null)</b> in
+            <b style="color:{CYAN}">{_chl_selected_col}</b>
+            &nbsp;·&nbsp; {_chl_scope}
+          </div>
+          <div class="result-big">{len(_chl_col_data):,}</div>
+        </div>""", unsafe_allow_html=True)
+                        elif _chl_metric == "Unique Count":
+                            st.markdown(f"""
+        <div class="result-box">
+          <div style="font-size:.82rem;color:{MUTED};margin-bottom:6px">
+            <b>Unique Count</b> in
+            <b style="color:{CYAN}">{_chl_selected_col}</b>
+            &nbsp;·&nbsp; {_chl_scope}
+          </div>
+          <div class="result-big">{_chl_col_data.nunique():,}</div>
+        </div>""", unsafe_allow_html=True)
+                        elif _chl_metric == "Value Counts":
+                            _chl_vc = (
+                                _chl_col_data.astype(str)
+                                .value_counts()
+                                .reset_index()
+                            )
+                            _chl_vc.columns = [_chl_selected_col, "Count"]
+                            st.markdown(
+                                f'<div style="font-size:.85rem;color:{MUTED};margin:8px 0 4px">'
+                                f'<b>Value Counts — {_chl_selected_col}</b>'
+                                f' · {_chl_scope}</div>',
+                                unsafe_allow_html=True,
+                            )
+                            st.dataframe(
+                                _chl_vc.head(int(_chl_max_rows)),
+                                use_container_width=True,
+                            )
+
+                _chl_show_cols = [
+                    c for c in ["_Location", "_Sheet", _chl_selected_col]
+                    if c in _chl_df.columns
+                ]
+                _chl_display_df = (
+                    _chl_df[_chl_show_cols]
+                    .dropna(subset=[_chl_selected_col])
+                    .reset_index(drop=True)
+                )
+                st.markdown(
+                    f'<div style="font-size:.85rem;color:{MUTED};margin:12px 0 6px">'
+                    f'<b>Raw Data</b> — '
+                    f'<b style="color:{CYAN}">{_chl_selected_col}</b> '
+                    f'({min(int(_chl_max_rows), len(_chl_display_df))} of '
+                    f'{len(_chl_display_df)} rows · {_chl_scope})</div>',
+                    unsafe_allow_html=True,
+                )
+                st.dataframe(
+                    _chl_display_df.head(int(_chl_max_rows)),
+                    use_container_width=True,
+                )
+                st.download_button(
+                    "⬇ Download Column Data CSV",
+                    _chl_display_df.to_csv(index=False).encode("utf-8"),
+                    f"col_{'_'.join(_chl_selected_col[:25].split()).replace('|','_')}.csv",
+                    "text/csv",
+                    key="chl_dl",
+                )
+
+
+
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # FETCH ANY CELL VALUE — by VALUE (not by position)
+    # Search for a specific value across ALL 10 DC Excel files and ALL sheets.
+    # Returns every cell (file, sheet, row, column) that contains the value.
+    # ══════════════════════════════════════════════════════════════════════════
+
+    st.markdown(f"<hr style='border-color:{BORD};margin:32px 0 20px'>",
+                unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-title">📌 Fetch Any Cell Value — By Value Across All Files & Sheets</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div style="font-size:.85rem;color:{MUTED};margin-bottom:16px">'
+        f'Enter a value (text, number, date, or partial string) to find every cell that '
+        f'contains it across <b>all 10 DC Excel files and all sheets</b>. '
+        f'Results show the exact file, sheet, row and column for each match — '
+        f'no need to know the row position in advance.</div>',
+        unsafe_allow_html=True,
+    )
+
+    _fcv_vc1, _fcv_vc2 = st.columns([4, 1])
+    with _fcv_vc1:
+        _fcv_val_input = st.text_input(
+            "🔍 Value to search (partial match, case-insensitive)",
+            placeholder="e.g.  530.031   |   YES BANK   |   2024-03-15   |   CAGED   |   Rated",
+            key="fcv_val_input",
+        )
+    with _fcv_vc2:
+        st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
+        _fcv_val_run = st.button("🔍 Find Value", key="fcv_val_run", use_container_width=True)
+
+    # Optional filters: restrict to a specific file or sheet
+    _fcv_opt_c1, _fcv_opt_c2 = st.columns([2, 2])
+    with _fcv_opt_c1:
+        _fcv_filter_locs = st.multiselect(
+            "🏢 Limit to DC file(s) (leave empty = ALL)",
+            options=sorted(ALL.keys()),
+            default=[],
+            key="fcv_filter_locs",
+        )
+    with _fcv_opt_c2:
+        _fcv_opt_sheets_all: list = []
+        _for_locs = _fcv_filter_locs if _fcv_filter_locs else sorted(ALL.keys())
+        for _fl in _for_locs:
+            _fcv_opt_sheets_all += sorted(ALL.get(_fl, {}).keys())
+        _fcv_opt_sheets_all = sorted(set(_fcv_opt_sheets_all))
+        _fcv_filter_sheets = st.multiselect(
+            "📄 Limit to sheet(s) (leave empty = ALL)",
+            options=_fcv_opt_sheets_all,
+            default=[],
+            key="fcv_filter_sheets",
+        )
+
+    if _fcv_val_run:
+        if not _fcv_val_input.strip():
+            st.warning("Please enter a value to search.")
+        else:
+            _fcv_search_term = _fcv_val_input.strip().lower()
+            _fcv_hit_rows: list = []   # list of dicts: {File, Sheet, Row, Column, Value}
+
+            # Iterate over all files and sheets
+            _fcv_search_locs = _fcv_filter_locs if _fcv_filter_locs else sorted(ALL.keys())
+            for _fcv_loc in _fcv_search_locs:
+                _fcv_loc_sheets = ALL.get(_fcv_loc, {})
+                _fcv_search_sheets = (
+                    [s for s in _fcv_filter_sheets if s in _fcv_loc_sheets]
+                    if _fcv_filter_sheets else sorted(_fcv_loc_sheets.keys())
+                )
+                for _fcv_sh in _fcv_search_sheets:
+                    _fcv_df = _fcv_loc_sheets.get(_fcv_sh)
+                    if _fcv_df is None or _fcv_df.empty:
+                        continue
+                    _fcv_data_cols = [c for c in _fcv_df.columns if not c.startswith("_")]
+                    for _fcv_col in _fcv_data_cols:
+                        # Vectorised substring search across the column
+                        _fcv_col_str = _fcv_df[_fcv_col].astype(str).str.lower()
+                        _fcv_match_mask = _fcv_col_str.str.contains(
+                            re.escape(_fcv_search_term), na=False
+                        )
+                        for _fcv_ridx in _fcv_df.index[_fcv_match_mask]:
+                            _fcv_raw_val = _fcv_df.at[_fcv_ridx, _fcv_col]
+                            _fcv_hit_rows.append({
+                                "File (Location)": _fcv_loc,
+                                "Sheet": _fcv_sh,
+                                "Row": int(_fcv_ridx) + 1,
+                                "Column": _fcv_col,
+                                "Cell Value": str(_fcv_raw_val),
+                            })
+
+            if not _fcv_hit_rows:
+                st.warning(
+                    f"**'{_fcv_val_input}'** not found in any cell across "
+                    f"{'selected' if (_fcv_filter_locs or _fcv_filter_sheets) else 'all'} "
+                    f"Excel files and sheets. Try a shorter or partial value."
+                )
+            else:
+                _fcv_hits_df = pd.DataFrame(_fcv_hit_rows)
+                _fcv_n_hits  = len(_fcv_hits_df)
+                _fcv_n_files = _fcv_hits_df["File (Location)"].nunique()
+                _fcv_n_sheets = _fcv_hits_df["Sheet"].nunique()
+                _fcv_n_cols  = _fcv_hits_df["Column"].nunique()
+
+                st.markdown(
+                    f'<div style="background:{DARK2};border:2px solid {CYAN};'
+                    f'border-radius:14px;padding:20px 26px;margin:14px 0">'
+                    f'<div style="font-size:1.1rem;font-weight:900;color:{WHITE};margin-bottom:6px">'
+                    f'📌 Found <span style="color:{CYAN}">{_fcv_n_hits}</span> cell(s) '
+                    f'matching <i>"{_fcv_val_input}"</i></div>'
+                    f'<div style="font-size:.82rem;color:{TEXT}">'
+                    f'Across <b style="color:{CYAN}">{_fcv_n_files}</b> DC file(s) · '
+                    f'<b style="color:{CYAN}">{_fcv_n_sheets}</b> sheet(s) · '
+                    f'<b style="color:{CYAN}">{_fcv_n_cols}</b> unique column(s)</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+                # Summary: count per file + sheet
+                with st.expander("🔬 Validation — Match count per file & sheet", expanded=False):
+                    _fcv_val_sum = (
+                        _fcv_hits_df.groupby(["File (Location)", "Sheet"])
+                        .size().reset_index(name="Matches")
+                        .sort_values(["File (Location)", "Sheet"])
+                    )
+                    _fcv_val_sum.index = range(1, len(_fcv_val_sum) + 1)
+                    st.dataframe(_fcv_val_sum, use_container_width=True)
+
+                # Full results table
+                st.markdown(
+                    f'<div style="font-size:.8rem;color:{CYAN};font-weight:700;'
+                    f'text-transform:uppercase;letter-spacing:.05em;margin:16px 0 6px">'
+                    f'📋 All Matching Cells ({_fcv_n_hits})</div>',
+                    unsafe_allow_html=True,
+                )
+                _fcv_hits_df.index = range(1, len(_fcv_hits_df) + 1)
+                st.dataframe(_fcv_hits_df, use_container_width=True)
+
+                # Full row context for first N matches
+                with st.expander(
+                    f"🔎 Full row context for first {min(5, _fcv_n_hits)} match(es)",
+                    expanded=False,
+                ):
+                    for _fi, _frow in enumerate(_fcv_hit_rows[:5]):
+                        _fctx_loc   = _frow["File (Location)"]
+                        _fctx_sh    = _frow["Sheet"]
+                        _fctx_ridx  = _frow["Row"] - 1   # 0-based
+                        _fctx_col   = _frow["Column"]
+                        _fctx_df    = ALL.get(_fctx_loc, {}).get(_fctx_sh)
+                        if _fctx_df is None or _fctx_ridx >= len(_fctx_df):
+                            continue
+                        _fctx_data_cols = [c for c in _fctx_df.columns if not c.startswith("_")]
+                        _fctx_row_df = _fctx_df.iloc[[_fctx_ridx]][_fctx_data_cols].T.reset_index()
+                        _fctx_row_df.columns = ["Column", "Value"]
+                        _fctx_row_df.index   = range(1, len(_fctx_row_df) + 1)
+                        st.markdown(
+                            f'**Match {_fi+1}** — '
+                            f'`{_fctx_loc}` › `{_fctx_sh}` › Row {_frow["Row"]} › '
+                            f'`{_fctx_col}`'
+                        )
+                        st.dataframe(_fctx_row_df, use_container_width=True)
+
+                st.download_button(
+                    f"⬇️ Download all {_fcv_n_hits} matching cells (CSV)",
+                    _fcv_hits_df.to_csv(index=False).encode("utf-8"),
+                    f"cell_search_{_fcv_val_input.replace(' ','_')[:30]}.csv",
+                    "text/csv",
+                    key="fcv_dl_hits",
+                )
     # ══════════════════════════════════════════════════════════════════════════
     # SHAMBHUSHIV — ENHANCED CUSTOMER LOOKUP
     # • Searches ALL 10 DC Excel files and ALL sheets regardless of the
